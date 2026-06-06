@@ -22,6 +22,11 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - DATA_DIR=/data
       - CONFIG_DIR=/app/configs
+      - MINIO_URL=${MINIO_URL:-}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-}
+      - MINIO_BUCKET=${MINIO_BUCKET:-mnemo}
+      - WORK_DIR=${WORK_DIR:-/tmp/mnemo-work}
       - API_TOKEN=${API_TOKEN:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
     security_opt:
@@ -41,6 +46,11 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - DATA_DIR=/data
       - CONFIG_DIR=/app/configs
+      - MINIO_URL=${MINIO_URL:-}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-}
+      - MINIO_BUCKET=${MINIO_BUCKET:-mnemo}
+      - WORK_DIR=${WORK_DIR:-/tmp/mnemo-work}
     security_opt:
       - no-new-privileges:true
     labels:
@@ -58,6 +68,11 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - DATA_DIR=/data
       - CONFIG_DIR=/app/configs
+      - MINIO_URL=${MINIO_URL:-}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-}
+      - MINIO_BUCKET=${MINIO_BUCKET:-mnemo}
+      - WORK_DIR=${WORK_DIR:-/tmp/mnemo-work}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
     security_opt:
       - no-new-privileges:true
@@ -76,6 +91,11 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - DATA_DIR=/data
       - CONFIG_DIR=/app/configs
+      - MINIO_URL=${MINIO_URL:-}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-}
+      - MINIO_BUCKET=${MINIO_BUCKET:-mnemo}
+      - WORK_DIR=${WORK_DIR:-/tmp/mnemo-work}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
@@ -113,6 +133,20 @@ services:
     depends_on:
       - api
 
+  # 对象存储:分布式 worker 模式下的共享产物存储(单机本地存储用不到,故 profile 隔离)。
+  # 启用:docker compose --profile distributed up -d,并在 .env 设 MINIO_URL=minio:9000 + 账号。
+  # 数据落 MINIO_DATA_DIR(默认命名卷;放独立磁盘填绝对路径让对象存本机)。
+  minio:
+    image: minio/minio
+    restart: unless-stopped
+    profiles: ["distributed"]
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-mnemo}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-mnemochangeme}
+    volumes:
+      - ${MINIO_DATA_DIR:-minio-data}:/data
+
   # CD：每 120s 查 ghcr，只更新带 watchtower.enable 标签的容器，自动 pull+重建+清理旧镜像。
   watchtower:
     image: containrrr/watchtower
@@ -124,3 +158,4 @@ services:
 volumes:
   redis-data:
   mnemo-data:
+  minio-data:

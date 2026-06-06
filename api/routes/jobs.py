@@ -63,17 +63,15 @@ async def create_job(
     db: Database = Depends(get_db),
     redis: RedisClient = Depends(get_redis),
     config: AppConfig = Depends(get_config),
+    storage: StorageBackend = Depends(get_storage),
 ):
     content_type = req.content_type or _detect_content_type(req.url)
     pipeline = _pipeline_for(content_type)
     source = detect_source(req.url) if req.url else "upload"
 
     job_id = generate_job_id()
-    job_dir = config.jobs_dir / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
-    (job_dir / "input").mkdir(exist_ok=True)
-
-    (job_dir / "job.json").write_text(json.dumps({
+    # 初始 job.json 经存储写入(本地或 MinIO),远程 worker 才能 pull 到 url 等信息。
+    job_json = json.dumps({
         "id": job_id,
         "url": req.url,
         "source": source,
@@ -81,7 +79,8 @@ async def create_job(
         "domain": req.domain,
         "style_tags": req.style_tags,
         "created_at": _now_iso(),
-    }, ensure_ascii=False, indent=2))
+    }, ensure_ascii=False, indent=2)
+    await storage.write_file(job_id, "job.json", job_json.encode("utf-8"))
 
     job = Job(
         id=job_id,

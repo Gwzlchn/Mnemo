@@ -50,6 +50,12 @@ class TestLocalStorage:
         assert await storage.read_file("j_xxx", "output/notes_smart.md") == b"note"
         assert await storage.read_file("j_xxx", "output/missing.md") is None
 
+    @pytest.mark.asyncio
+    async def test_write_file_roundtrip(self, storage, tmp_path):
+        await storage.write_file("j_w", "job.json", b'{"id":"j_w"}')
+        assert (tmp_path / "j_w" / "job.json").read_bytes() == b'{"id":"j_w"}'
+        assert await storage.read_file("j_w", "job.json") == b'{"id":"j_w"}'
+
 
 class TestCreateStorage:
     def test_default_local(self, tmp_path, monkeypatch):

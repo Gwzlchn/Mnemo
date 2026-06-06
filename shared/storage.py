@@ -21,6 +21,8 @@ class StorageBackend(Protocol):
     async def cleanup(self, job_id: str, step: str, work_dir: Path) -> None: ...
     # 供 api 按需取单个产物(笔记/日志等);找不到返回 None。
     async def read_file(self, job_id: str, rel_path: str) -> bytes | None: ...
+    # 供 api 写入 job 初始文件(job.json、上传源文件等),worker 才能 pull 到。
+    async def write_file(self, job_id: str, rel_path: str, data: bytes) -> None: ...
 
 
 class LocalStorage:
@@ -43,6 +45,15 @@ class LocalStorage:
         if not path.is_file():
             return None
         return await asyncio.to_thread(path.read_bytes)
+
+    async def write_file(self, job_id: str, rel_path: str, data: bytes) -> None:
+        path = self.jobs_dir / job_id / rel_path
+
+        def _write() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+
+        await asyncio.to_thread(_write)
 
 
 class RemoteStorage:
@@ -128,6 +139,16 @@ class RemoteStorage:
     def _cleanup_sync(self, work_dir: Path) -> None:
         self._snapshots.pop(str(work_dir), None)
         shutil.rmtree(work_dir, ignore_errors=True)
+
+    async def write_file(self, job_id: str, rel_path: str, data: bytes) -> None:
+        await asyncio.to_thread(self._write_file_sync, job_id, rel_path, data)
+
+    def _write_file_sync(self, job_id: str, rel_path: str, data: bytes) -> None:
+        import io
+
+        self._client().put_object(
+            self._bucket, f"{job_id}/{rel_path}", io.BytesIO(data), length=len(data),
+        )
 
     async def read_file(self, job_id: str, rel_path: str) -> bytes | None:
         return await asyncio.to_thread(self._read_file_sync, job_id, rel_path)
