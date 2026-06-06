@@ -1,0 +1,107 @@
+"""Profile 管理路由。"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import yaml
+from fastapi import APIRouter, Depends, HTTPException
+
+from shared.config import AppConfig
+from api.deps import get_config, verify_token
+from api.schemas import ProfileUpdateRequest, TermAddRequest
+
+router = APIRouter(prefix="/api/profiles", tags=["profiles"], dependencies=[Depends(verify_token)])
+
+
+def _validate_domain(domain: str) -> None:
+    if ".." in domain or "/" in domain or "\x00" in domain:
+        raise HTTPException(400, "invalid domain name")
+
+
+def _profiles_dir(config: AppConfig) -> Path:
+    return config.prompts_dir / "profiles"
+
+
+@router.get("")
+async def list_profiles(config: AppConfig = Depends(get_config)):
+    pdir = _profiles_dir(config)
+    if not pdir.exists():
+        return []
+    profiles = []
+    for f in sorted(pdir.glob("*.yaml")):
+        data = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+        profiles.append({
+            "domain": f.stem,
+            "role": data.get("role", ""),
+            "terminology_count": len(data.get("terminology", [])),
+        })
+    return profiles
+
+
+@router.get("/{domain}")
+async def get_profile(domain: str, config: AppConfig = Depends(get_config)):
+    _validate_domain(domain)
+    path = _profiles_dir(config) / f"{domain}.yaml"
+    if not path.exists():
+        raise HTTPException(404, f"profile '{domain}' not found")
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+@router.put("/{domain}")
+async def update_profile(domain: str, req: ProfileUpdateRequest, config: AppConfig = Depends(get_config)):
+    _validate_domain(domain)
+    pdir = _profiles_dir(config)
+    pdir.mkdir(parents=True, exist_ok=True)
+    path = pdir / f"{domain}.yaml"
+
+    data = {}
+    if path.exists():
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+    data["domain"] = domain
+    if req.role is not None:
+        data["role"] = req.role
+    if req.domain_context is not None:
+        data["domain_context"] = req.domain_context
+    if req.output_style is not None:
+        data["output_style"] = req.output_style
+    if req.terminology is not None:
+        data["terminology"] = req.terminology
+    if req.do_not is not None:
+        data["do_not"] = req.do_not
+
+    path.write_text(yaml.dump(data, allow_unicode=True, default_flow_style=False), encoding="utf-8")
+    return data
+
+
+@router.post("/{domain}/terms")
+async def add_term(domain: str, req: TermAddRequest, config: AppConfig = Depends(get_config)):
+    _validate_domain(domain)
+    path = _profiles_dir(config) / f"{domain}.yaml"
+    if not path.exists():
+        raise HTTPException(404, f"profile '{domain}' not found")
+
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    terms = data.get("terminology", [])
+    if req.term not in terms:
+        terms.append(req.term)
+        data["terminology"] = terms
+        path.write_text(yaml.dump(data, allow_unicode=True, default_flow_style=False), encoding="utf-8")
+
+    return {"terminology": terms}
+
+
+@router.delete("/{domain}/terms/{term}")
+async def delete_term(domain: str, term: str, config: AppConfig = Depends(get_config)):
+    _validate_domain(domain)
+    path = _profiles_dir(config) / f"{domain}.yaml"
+    if not path.exists():
+        raise HTTPException(404, f"profile '{domain}' not found")
+
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    terms = data.get("terminology", [])
+    terms = [t for t in terms if t != term]
+    data["terminology"] = terms
+    path.write_text(yaml.dump(data, allow_unicode=True, default_flow_style=False), encoding="utf-8")
+    return {"terminology": terms}
