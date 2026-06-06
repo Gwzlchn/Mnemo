@@ -110,7 +110,7 @@ async function confirmDelete() {
       <!-- Step progress -->
       <div class="bg-white border border-gray-200 rounded-xl p-4">
         <h3 class="text-sm font-semibold text-gray-700 mb-4">步骤进度</h3>
-        <StepProgressBar :steps="steps" />
+        <StepProgressBar :steps="steps" :job-id="jobId" />
       </div>
 
       <!-- Actions -->

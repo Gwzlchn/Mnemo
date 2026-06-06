@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import PlainTextResponse
 
 from shared.config import AppConfig
 from shared.db import Database
@@ -204,6 +205,30 @@ async def get_job(job_id: str, db: Database = Depends(get_db)):
             for s in steps
         ],
     )
+
+
+@router.get("/{job_id}/steps/{step}/log")
+async def get_step_log(
+    job_id: str,
+    step: str,
+    config: AppConfig = Depends(get_config),
+):
+    """返回某步骤的运行日志(尾部截断),供前端展开排错。"""
+    _validate_job_id(job_id)
+    if "/" in step or ".." in step or "\x00" in step:
+        raise HTTPException(400, "invalid step")
+    log_path = config.jobs_dir / job_id / "logs" / f"{step}.log"
+    if not log_path.exists():
+        raise HTTPException(404, "log not found")
+
+    def _read_tail() -> str:
+        max_bytes = 256 * 1024
+        data = log_path.read_bytes()
+        if len(data) > max_bytes:
+            data = b"...(truncated, last 256KB)...\n" + data[-max_bytes:]
+        return data.decode("utf-8", errors="replace")
+
+    return PlainTextResponse(await asyncio.to_thread(_read_tail))
 
 
 @router.delete("/{job_id}", status_code=204)
