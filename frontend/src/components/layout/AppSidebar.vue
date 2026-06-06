@@ -20,7 +20,7 @@ function isActive(path: string) {
 <template>
   <aside class="w-56 bg-white border-r border-gray-200 flex flex-col h-screen sticky top-0">
     <div class="p-4 border-b border-gray-200">
-      <h1 class="text-lg font-bold text-gray-800">AI 知识库</h1>
+      <h1 class="text-lg font-bold text-gray-800">Mnemo</h1>
     </div>
     <nav class="flex-1 py-2">
       <router-link
