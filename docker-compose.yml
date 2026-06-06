@@ -1,0 +1,115 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+
+  api:
+    image: ai-kb:latest
+    restart: unless-stopped
+    command: python -m api.main
+    ports:
+      - "8000:8000"
+    volumes:
+      - data:/data
+      - db-data:/data/db
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/data
+      - CONFIG_DIR=/data/configs
+      - API_TOKEN=${API_TOKEN:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - redis
+
+  scheduler:
+    image: ai-kb:latest
+    restart: unless-stopped
+    command: python -m scheduler.main
+    volumes:
+      - data:/data
+      - db-data:/data/db
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/data
+      - CONFIG_DIR=/data/configs
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - redis
+
+  worker-download:
+    image: ai-kb:latest
+    restart: unless-stopped
+    command: python -m worker.main --type download
+    volumes:
+      - data:/data
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/data
+      - CONFIG_DIR=/data/configs
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - redis
+
+  worker-cpu:
+    image: ai-kb:latest
+    restart: unless-stopped
+    command: python -m worker.main --type cpu
+    volumes:
+      - data:/data
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/data
+      - CONFIG_DIR=/data/configs
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    depends_on:
+      - redis
+
+  worker-ai:
+    image: ai-kb:latest
+    restart: unless-stopped
+    command: python -m worker.main --type ai
+    volumes:
+      - data:/data
+      - db-data:/data/db
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/data
+      - CONFIG_DIR=/data/configs
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - DRY_RUN=${DRY_RUN:-0}
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      replicas: 2
+    depends_on:
+      - redis
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - api
+
+volumes:
+  redis-data:
+  data:
+  db-data:

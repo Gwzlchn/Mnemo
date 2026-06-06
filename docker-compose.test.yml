@@ -1,0 +1,15 @@
+services:
+  test:
+    build:
+      context: .
+      dockerfile: docker/base.Dockerfile
+    volumes:
+      - ./shared:/app/shared
+      - ./steps:/app/steps
+      - ./api:/app/api
+      - ./scheduler:/app/scheduler
+      - ./worker:/app/worker
+      - ./tests:/app/tests
+      - ./configs:/app/configs
+    command: >
+      sh -c "pip install --quiet 'fakeredis[lua]>=2.25' pytest pytest-asyncio && pytest -v -p no:cacheprovider"

@@ -1,0 +1,1171 @@
+"""tests for scheduler — 使用 fakeredis + 临时 DB。"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from pathlib import Path
+
+import pytest
+import fakeredis.aioredis
+
+from shared.config import AppConfig
+from shared.db import Database
+from shared.models import Job, JobStatus, StepStatus, AIUsage
+from shared.redis_client import RedisClient
+from scheduler.scheduler import Scheduler
+
+
+# ── Fixtures ──
+
+
+@pytest.fixture
+def tmp_jobs_dir(tmp_path):
+    jobs = tmp_path / "jobs"
+    jobs.mkdir()
+    return jobs
+
+
+@pytest.fixture
+def db(tmp_path):
+    d = Database(tmp_path / "test.db")
+    d.init_schema()
+    yield d
+    d.close()
+
+
+@pytest.fixture
+async def redis():
+    client = RedisClient.__new__(RedisClient)
+    client._url = "redis://fake"
+    client._redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    yield client
+    await client.close()
+
+
+@pytest.fixture
+def simple_pipelines():
+    """三步线性 pipeline: A → B → C"""
+    return {
+        "test": {
+            "steps": [
+                {"name": "A", "pool": "cpu", "depends_on": [], "retries": 2},
+                {"name": "B", "pool": "cpu", "depends_on": ["A"], "retries": 1},
+                {"name": "C", "pool": "cpu", "depends_on": ["B"], "retries": 0},
+            ]
+        }
+    }
+
+
+@pytest.fixture
+def parallel_pipelines():
+    """A → {B, C} → D"""
+    return {
+        "par": {
+            "steps": [
+                {"name": "A", "pool": "cpu", "depends_on": []},
+                {"name": "B", "pool": "cpu", "depends_on": ["A"]},
+                {"name": "C", "pool": "io", "depends_on": ["A"]},
+                {"name": "D", "pool": "cpu", "depends_on": ["B", "C"]},
+            ]
+        }
+    }
+
+
+@pytest.fixture
+def video_pipelines(configs_dir):
+    """使用真实 pipelines.yaml"""
+    from shared.config import load_yaml
+    return load_yaml(configs_dir / "pipelines.yaml")
+
+
+@pytest.fixture
+def config(tmp_path, tmp_jobs_dir, simple_pipelines, configs_dir):
+    return AppConfig(
+        data_dir=tmp_path,
+        db_path=tmp_path / "test.db",
+        jobs_dir=tmp_jobs_dir,
+        config_dir=configs_dir,
+        prompts_dir=tmp_path / "prompts",
+        pipelines=simple_pipelines,
+        pools={"pools": {"cpu": {"limit": 3}, "io": {"limit": 999}}},
+        providers={},
+    )
+
+
+def make_config(tmp_path, tmp_jobs_dir, pipelines, configs_dir):
+    return AppConfig(
+        data_dir=tmp_path,
+        db_path=tmp_path / "test.db",
+        jobs_dir=tmp_jobs_dir,
+        config_dir=configs_dir,
+        prompts_dir=tmp_path / "prompts",
+        pipelines=pipelines,
+        pools={"pools": {"cpu": {"limit": 3}, "io": {"limit": 999}, "scene": {"limit": 1}}},
+        providers={},
+    )
+
+
+def _stub_workers_present(s):
+    """让 scheduler 视所有 pool 都有 worker，跳过 skip_no_worker 死锁打破逻辑。"""
+    async def _has_workers(_pool):
+        return True
+    s._pool_has_workers = _has_workers
+    return s
+
+
+@pytest.fixture
+def scheduler(redis, db, config):
+    return _stub_workers_present(Scheduler(redis, db, config))
+
+
+def make_job(pipeline="test", job_id="j_test_001"):
+    return Job(
+        id=job_id,
+        content_type="video",
+        pipeline=pipeline,
+        domain="general",
+    )
+
+
+# ── Tests ──
+
+
+class TestSubmitJob:
+    @pytest.mark.asyncio
+    async def test_initializes_all_steps(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        statuses = await redis.get_all_step_statuses("j_test_001")
+        assert set(statuses.keys()) == {"A", "B", "C"}
+
+    @pytest.mark.asyncio
+    async def test_enqueues_root_steps(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        status_a = await redis.get_step_status("j_test_001", "A")
+        assert status_a == "ready"
+        status_b = await redis.get_step_status("j_test_001", "B")
+        assert status_b == "waiting"
+
+        queue = await redis.get_queue_info("cpu")
+        assert queue["length"] == 1
+
+    @pytest.mark.asyncio
+    async def test_adds_to_active_jobs(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        active = await redis.get_active_jobs()
+        assert "j_test_001" in active
+
+    @pytest.mark.asyncio
+    async def test_unknown_pipeline_fails_job(self, scheduler, redis, db):
+        """Submitting a job with unknown pipeline should mark it as FAILED."""
+        job = make_job(pipeline="nonexistent")
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        db_job = db.get_job("j_test_001")
+        assert db_job.status == JobStatus.FAILED
+        active = await redis.get_active_jobs()
+        assert "j_test_001" not in active
+
+
+class TestSkipNoWorker:
+    """覆盖 skip_no_worker 死锁打破器（_check_downstream 末段）。
+    只在『剩余未完成步骤全部为 ready 且其 pool 无 worker』时介入，并用
+    CAS(ready→skipped) 避免覆盖被 worker 抢成 running 的步骤。用真实
+    _pool_has_workers，不走 scheduler fixture 的桩。"""
+
+    @pytest.mark.asyncio
+    async def test_pool_has_workers_reflects_registration(self, redis, db, config):
+        s = Scheduler(redis, db, config)
+        assert await s._pool_has_workers("cpu") is False
+        await redis.register_worker(
+            "w1", {"type": "cpu", "pools": "cpu,io", "status": "idle"}
+        )
+        assert await s._pool_has_workers("cpu") is True
+        assert await s._pool_has_workers("gpu") is False
+
+    @pytest.mark.asyncio
+    async def test_all_ready_no_worker_gets_skipped(self, redis, db, config):
+        # 仅剩 A=ready、其余 done/skipped、且 cpu 无 worker → A 被 skip，job 收尾
+        s = Scheduler(redis, db, config)
+        job = make_job()
+        db.create_job(job)
+        await s.submit_job(job)
+        await redis.set_step_status("j_test_001", "B", "skipped")
+        await redis.set_step_status("j_test_001", "C", "skipped")
+        await s._check_downstream("j_test_001")
+        assert await redis.get_step_status("j_test_001", "A") == "skipped"
+
+    @pytest.mark.asyncio
+    async def test_running_step_blocks_eager_skip(self, redis, db, config):
+        # 存在 running 在途步骤时，no-worker 的 ready 兄弟不被误 skip（守卫核心）
+        s = Scheduler(redis, db, config)
+        job = make_job()
+        db.create_job(job)
+        await s.submit_job(job)
+        await redis.set_step_status("j_test_001", "A", "done")
+        await redis.set_step_status("j_test_001", "B", "running")
+        await redis.set_step_status("j_test_001", "C", "ready")
+        await s._check_downstream("j_test_001")
+        assert await redis.get_step_status("j_test_001", "C") == "ready"
+
+    @pytest.mark.asyncio
+    async def test_waiting_step_not_skipped(self, redis, db, config):
+        # 仍有 waiting（依赖未满足）属正常等待，不是死锁，不触发 skip
+        s = Scheduler(redis, db, config)
+        job = make_job()
+        db.create_job(job)
+        await s.submit_job(job)  # A=ready, B/C=waiting
+        await s._check_downstream("j_test_001")
+        assert await redis.get_step_status("j_test_001", "A") == "ready"
+        assert await redis.get_step_status("j_test_001", "B") == "waiting"
+
+    @pytest.mark.asyncio
+    async def test_ready_won_by_worker_during_skip_not_skipped(self, redis, db, config):
+        # CAS 保护：判定无 worker 后该步骤被 worker 抢成 running，skip 应放弃
+        s = Scheduler(redis, db, config)
+
+        async def _no_workers(_pool):
+            return False
+        s._pool_has_workers = _no_workers
+
+        job = make_job()
+        db.create_job(job)
+        await s.submit_job(job)
+        await redis.set_step_status("j_test_001", "B", "skipped")
+        await redis.set_step_status("j_test_001", "C", "skipped")
+
+        real_cas = redis.cas_step_status
+
+        async def _racing_cas(job_id, step, expected, new):
+            if step == "A" and expected == "ready" and new == "skipped":
+                await redis.set_step_status(job_id, "A", "running")  # worker 抢先
+                return False
+            return await real_cas(job_id, step, expected, new)
+        redis.cas_step_status = _racing_cas
+
+        await s._check_downstream("j_test_001")
+        assert await redis.get_step_status("j_test_001", "A") == "running"
+
+    @pytest.mark.asyncio
+    async def test_ready_step_survives_when_pool_has_worker(self, redis, db, config):
+        s = Scheduler(redis, db, config)
+        await redis.register_worker(
+            "w1", {"type": "cpu", "pools": "cpu,io", "status": "idle"}
+        )
+        job = make_job()
+        db.create_job(job)
+        await s.submit_job(job)
+        await redis.set_step_status("j_test_001", "B", "skipped")
+        await redis.set_step_status("j_test_001", "C", "skipped")
+        await s._check_downstream("j_test_001")
+        assert await redis.get_step_status("j_test_001", "A") == "ready"
+
+
+class TestDAGProgression:
+    @pytest.mark.asyncio
+    async def test_linear_chain(self, scheduler, redis, db):
+        """A done → B ready → B done → C ready"""
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        await redis.set_step_status("j_test_001", "A", "running")
+        await scheduler.on_step_done("j_test_001", "A")
+
+        assert await redis.get_step_status("j_test_001", "B") == "ready"
+        assert await redis.get_step_status("j_test_001", "C") == "waiting"
+
+        await redis.set_step_status("j_test_001", "B", "running")
+        await scheduler.on_step_done("j_test_001", "B")
+
+        assert await redis.get_step_status("j_test_001", "C") == "ready"
+
+    @pytest.mark.asyncio
+    async def test_parallel_join(self, scheduler, redis, db, tmp_path, tmp_jobs_dir, parallel_pipelines, configs_dir):
+        """A → {B, C} → D. D waits for both B and C."""
+        config = make_config(tmp_path, tmp_jobs_dir, parallel_pipelines, configs_dir)
+        sched = _stub_workers_present(Scheduler(redis, db, config))
+
+        job = make_job(pipeline="par")
+        db.create_job(job)
+        await sched.submit_job(job)
+
+        await redis.set_step_status("j_test_001", "A", "running")
+        await sched.on_step_done("j_test_001", "A")
+
+        assert await redis.get_step_status("j_test_001", "B") == "ready"
+        assert await redis.get_step_status("j_test_001", "C") == "ready"
+        assert await redis.get_step_status("j_test_001", "D") == "waiting"
+
+        await redis.set_step_status("j_test_001", "B", "running")
+        await sched.on_step_done("j_test_001", "B")
+        assert await redis.get_step_status("j_test_001", "D") == "waiting"
+
+        await redis.set_step_status("j_test_001", "C", "running")
+        await sched.on_step_done("j_test_001", "C")
+        assert await redis.get_step_status("j_test_001", "D") == "ready"
+
+    @pytest.mark.asyncio
+    async def test_mark_job_done_when_all_complete(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        for step in ["A", "B", "C"]:
+            await redis.set_step_status("j_test_001", step, "running")
+            await scheduler.on_step_done("j_test_001", step)
+
+        db_job = db.get_job("j_test_001")
+        assert db_job.status == JobStatus.DONE
+
+        active = await redis.get_active_jobs()
+        assert "j_test_001" not in active
+
+
+class TestSkipPropagation:
+    @pytest.mark.asyncio
+    async def test_skipped_unblocks_downstream(self, scheduler, redis, db):
+        """A done, B skipped → C should become ready (skipped counts as done for deps)."""
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        await redis.set_step_status("j_test_001", "A", "running")
+        await scheduler.on_step_done("j_test_001", "A")
+
+        await scheduler.mark_skipped("j_test_001", "B")
+
+        assert await redis.get_step_status("j_test_001", "C") == "ready"
+
+    @pytest.mark.asyncio
+    async def test_all_skipped_marks_job_done(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        await redis.set_step_status("j_test_001", "A", "running")
+        await scheduler.on_step_done("j_test_001", "A")
+        await scheduler.mark_skipped("j_test_001", "B")
+
+        await redis.set_step_status("j_test_001", "C", "running")
+        await scheduler.on_step_done("j_test_001", "C")
+
+        db_job = db.get_job("j_test_001")
+        assert db_job.status == JobStatus.DONE
+
+
+class TestConditions:
+    @pytest.mark.asyncio
+    async def test_has_subtitle_true(self, scheduler, tmp_jobs_dir):
+        job_dir = tmp_jobs_dir / "j_cond"
+        (job_dir / "input").mkdir(parents=True)
+        (job_dir / "input" / "test.srt").write_text("subtitle")
+
+        assert await scheduler.check_condition("j_cond", "has_subtitle") is True
+        assert await scheduler.check_condition("j_cond", "no_subtitle") is False
+
+    @pytest.mark.asyncio
+    async def test_has_subtitle_false(self, scheduler, tmp_jobs_dir):
+        job_dir = tmp_jobs_dir / "j_cond2"
+        (job_dir / "input").mkdir(parents=True)
+
+        assert await scheduler.check_condition("j_cond2", "has_subtitle") is False
+        assert await scheduler.check_condition("j_cond2", "no_subtitle") is True
+
+    @pytest.mark.asyncio
+    async def test_has_danmaku(self, scheduler, tmp_jobs_dir):
+        job_dir = tmp_jobs_dir / "j_cond3"
+        (job_dir / "input").mkdir(parents=True)
+        (job_dir / "input" / "danmaku.ass").write_text("ass")
+
+        assert await scheduler.check_condition("j_cond3", "has_danmaku") is True
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_dir(self, scheduler):
+        assert await scheduler.check_condition("j_nodir", "has_subtitle") is False
+        assert await scheduler.check_condition("j_nodir", "no_subtitle") is True
+
+    @pytest.mark.asyncio
+    async def test_unknown_condition_returns_true(self, scheduler):
+        """Unknown conditions should default to True."""
+        result = await scheduler.check_condition("j_any", "some_new_condition")
+        assert result is True
+
+
+class TestWhisperPunctuateRecheck:
+    @pytest.mark.asyncio
+    async def test_skipped_revives_when_condition_met(
+        self, redis, db, tmp_path, tmp_jobs_dir, configs_dir
+    ):
+        """00b_whisper generates srt → skipped 06_punctuate revives to ready."""
+        pipelines = {
+            "video_mini": {
+                "steps": [
+                    {"name": "00_download", "pool": "io", "depends_on": []},
+                    {"name": "00b_whisper", "pool": "gpu", "depends_on": ["00_download"],
+                     "condition": "no_subtitle", "tags": ["gpu"]},
+                    {"name": "06_punctuate", "pool": "ai", "depends_on": ["00_download"],
+                     "condition": "has_subtitle"},
+                    {"name": "07_mechanical", "pool": "io",
+                     "depends_on": ["06_punctuate"]},
+                ]
+            }
+        }
+        config = make_config(tmp_path, tmp_jobs_dir, pipelines, configs_dir)
+        sched = _stub_workers_present(Scheduler(redis, db, config))
+
+        job = make_job(pipeline="video_mini")
+        db.create_job(job)
+        await sched.submit_job(job)
+
+        job_dir = tmp_jobs_dir / "j_test_001"
+        (job_dir / "input").mkdir(parents=True)
+
+        await redis.set_step_status("j_test_001", "00_download", "running")
+        await sched.on_step_done("j_test_001", "00_download")
+
+        assert await redis.get_step_status("j_test_001", "00b_whisper") == "ready"
+        assert await redis.get_step_status("j_test_001", "06_punctuate") == "skipped"
+
+        (job_dir / "input" / "generated.srt").write_text("whisper output")
+
+        await redis.set_step_status("j_test_001", "00b_whisper", "running")
+        await sched.on_step_done("j_test_001", "00b_whisper")
+
+        assert await redis.get_step_status("j_test_001", "06_punctuate") == "ready"
+
+
+class TestRetry:
+    @pytest.mark.asyncio
+    async def test_retry_within_limit(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        await redis.set_step_status("j_test_001", "A", "running")
+        await scheduler.on_step_failed("j_test_001", "A", "some error", "processing")
+
+        assert await redis.get_step_status("j_test_001", "A") == "ready"
+        assert await redis.get_step_retries("j_test_001", "A") == 1
+
+    @pytest.mark.asyncio
+    async def test_retry_exhausted(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        await redis.set_step_status("j_test_001", "C", "running")
+        await scheduler.on_step_failed("j_test_001", "C", "fatal", "processing")
+
+        assert await redis.get_step_status("j_test_001", "C") == "failed"
+        db_job = db.get_job("j_test_001")
+        assert db_job.status == JobStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_input_missing_no_retry(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        await redis.set_step_status("j_test_001", "A", "running")
+        await scheduler.on_step_failed("j_test_001", "A", "missing file", "input_missing")
+
+        assert await redis.get_step_status("j_test_001", "A") == "failed"
+
+
+class TestIdempotent:
+    @pytest.mark.asyncio
+    async def test_duplicate_step_done(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        await redis.dequeue_step("cpu")  # drain A from queue (simulate Worker take)
+        await redis.set_step_status("j_test_001", "A", "running")
+        await scheduler.on_step_done("j_test_001", "A")
+        await scheduler.on_step_done("j_test_001", "A")  # duplicate — should be no-op
+
+        queue = await redis.get_queue_info("cpu")
+        assert queue["length"] == 1  # only B, not B+B
+
+    @pytest.mark.asyncio
+    async def test_step_done_wrong_status_ignored(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        await scheduler.on_step_done("j_test_001", "A")
+
+        assert await redis.get_step_status("j_test_001", "A") == "ready"
+
+
+class TestOrphanScan:
+    @pytest.mark.asyncio
+    async def test_reclaims_lost_worker(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        await redis.set_step_status("j_test_001", "A", "running")
+        await redis.set_step_worker("j_test_001", "A", "cpu-dead")
+
+        received = []
+
+        async def collect():
+            async for msg in redis.subscribe("step_failed"):
+                received.append(msg)
+                break
+
+        import asyncio
+        task = asyncio.create_task(collect())
+        await asyncio.sleep(0.05)
+        await scheduler.orphan_scan()
+        await asyncio.wait_for(task, timeout=2.0)
+
+        assert len(received) == 1
+        assert "orphan reclaimed" in received[0]["error"]
+
+    @pytest.mark.asyncio
+    async def test_skips_alive_worker(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        await redis.set_step_status("j_test_001", "A", "running")
+        await redis.set_step_worker("j_test_001", "A", "cpu-alive")
+        await redis.register_worker("cpu-alive", {"type": "cpu", "status": "busy"})
+
+        await scheduler.orphan_scan()
+
+        assert await redis.get_step_status("j_test_001", "A") == "running"
+
+    @pytest.mark.asyncio
+    async def test_reclaim_releases_pool_slot(self, scheduler, redis, db, tmp_path, tmp_jobs_dir, configs_dir):
+        """Orphan reclaim should release the pool slot."""
+        pipelines = {
+            "test": {
+                "steps": [
+                    {"name": "A", "pool": "cpu", "depends_on": [], "retries": 2},
+                    {"name": "B", "pool": "cpu", "depends_on": ["A"], "retries": 1},
+                    {"name": "C", "pool": "cpu", "depends_on": ["B"], "retries": 0},
+                ]
+            }
+        }
+        config = make_config(tmp_path, tmp_jobs_dir, pipelines, configs_dir)
+        sched = Scheduler(redis, db, config)
+
+        job = make_job()
+        db.create_job(job)
+        await sched.submit_job(job)
+
+        await redis.set_step_status("j_test_001", "A", "running")
+        await redis.set_step_worker("j_test_001", "A", "cpu-dead")
+        await redis.try_acquire_slot("cpu", limit=3)
+        assert await redis.get_pool_count("cpu") == 1
+
+        received = []
+        async def collect():
+            async for msg in redis.subscribe("step_failed"):
+                received.append(msg)
+                break
+
+        task = asyncio.create_task(collect())
+        await asyncio.sleep(0.05)
+        await sched.orphan_scan()
+        await asyncio.wait_for(task, timeout=2.0)
+
+        # Pool slot should be released
+        assert await redis.get_pool_count("cpu") == 0
+
+
+class TestCheckStuck:
+    @pytest.mark.asyncio
+    async def test_detects_stale_progress(self, scheduler, redis, db, tmp_jobs_dir):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+        await redis.set_step_status("j_test_001", "A", "running")
+
+        job_dir = tmp_jobs_dir / "j_test_001"
+        job_dir.mkdir(exist_ok=True)
+        import time
+        progress = {"source": "step", "updated_at": time.time() - 120, "current": 5, "total": 10}
+        (job_dir / ".A.progress").write_text(json.dumps(progress))
+
+        received = []
+
+        async def collect():
+            async for msg in redis.subscribe("step_failed"):
+                received.append(msg)
+                break
+
+        import asyncio
+        task = asyncio.create_task(collect())
+        await asyncio.sleep(0.05)
+        await scheduler.check_stuck()
+        await asyncio.wait_for(task, timeout=2.0)
+
+        assert "progress stale" in received[0]["error"]
+
+    @pytest.mark.asyncio
+    async def test_ignores_fresh_progress(self, scheduler, redis, db, tmp_jobs_dir):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+        await redis.set_step_status("j_test_001", "A", "running")
+
+        job_dir = tmp_jobs_dir / "j_test_001"
+        job_dir.mkdir(exist_ok=True)
+        import time
+        progress = {"source": "step", "updated_at": time.time(), "current": 5, "total": 10}
+        (job_dir / ".A.progress").write_text(json.dumps(progress))
+
+        await scheduler.check_stuck()
+        assert await redis.get_step_status("j_test_001", "A") == "running"
+
+    @pytest.mark.asyncio
+    async def test_ignores_no_updated_at(self, scheduler, redis, db, tmp_jobs_dir):
+        """Steps without report_progress (no updated_at) are not flagged."""
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+        await redis.set_step_status("j_test_001", "A", "running")
+
+        job_dir = tmp_jobs_dir / "j_test_001"
+        job_dir.mkdir(exist_ok=True)
+        import time
+        progress = {"worker_heartbeat_at": time.time()}
+        (job_dir / ".A.progress").write_text(json.dumps(progress))
+
+        await scheduler.check_stuck()
+        assert await redis.get_step_status("j_test_001", "A") == "running"
+
+    @pytest.mark.asyncio
+    async def test_worker_heartbeat_prevents_stuck(self, scheduler, redis, db, tmp_jobs_dir):
+        """If step has stale updated_at but fresh worker_heartbeat_at, don't flag as stuck."""
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+        await redis.set_step_status("j_test_001", "A", "running")
+
+        job_dir = tmp_jobs_dir / "j_test_001"
+        job_dir.mkdir(exist_ok=True)
+        import time
+        progress = {
+            "updated_at": time.time() - 120,  # stale
+            "worker_heartbeat_at": time.time(),  # fresh
+        }
+        (job_dir / ".A.progress").write_text(json.dumps(progress))
+
+        await scheduler.check_stuck()
+        # Should NOT be flagged as stuck because worker_heartbeat_at is fresh
+        assert await redis.get_step_status("j_test_001", "A") == "running"
+
+
+class TestPriority:
+    @pytest.mark.asyncio
+    async def test_advanced_job_higher_priority(self, scheduler, redis, db):
+        job_a = make_job(job_id="j_advanced")
+        job_b = make_job(job_id="j_fresh")
+        db.create_job(job_a)
+        db.create_job(job_b)
+        await scheduler.submit_job(job_a)
+        await scheduler.submit_job(job_b)
+
+        # Drain initial A entries from queue (simulate Workers taking them)
+        await redis.dequeue_step("cpu")  # j_advanced A or j_fresh A
+        await redis.dequeue_step("cpu")  # the other A
+
+        for step in ["A", "B"]:
+            await redis.set_step_status("j_advanced", step, "running")
+            await scheduler.on_step_done("j_advanced", step)
+
+        await redis.set_step_status("j_fresh", "A", "running")
+        await scheduler.on_step_done("j_fresh", "A")
+
+        # j_advanced C (score=-2) should be higher priority than j_fresh B (score=-1)
+        item1, score1 = await redis.dequeue_step("cpu")
+        assert item1["job_id"] == "j_advanced"
+        assert item1["step"] == "C"
+
+        item2, score2 = await redis.dequeue_step("cpu")
+        assert score1 < score2  # -2 < -1
+
+
+class TestRerun:
+    @pytest.mark.asyncio
+    async def test_resets_downstream(self, scheduler, redis, db, tmp_jobs_dir):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        for step in ["A", "B", "C"]:
+            await redis.set_step_status("j_test_001", step, "running")
+            await scheduler.on_step_done("j_test_001", step)
+
+        job_dir = tmp_jobs_dir / "j_test_001"
+        job_dir.mkdir(exist_ok=True)
+        for step in ["B", "C"]:
+            (job_dir / f".{step}.done").write_text("{}")
+
+        reset = await scheduler.rerun("j_test_001", "B")
+        assert set(reset) == {"B", "C"}
+
+        assert await redis.get_step_status("j_test_001", "A") == "done"
+        assert await redis.get_step_status("j_test_001", "B") == "ready"
+        assert await redis.get_step_status("j_test_001", "C") == "waiting"
+
+        assert not (job_dir / ".B.done").exists()
+        assert not (job_dir / ".C.done").exists()
+
+
+class TestRecover:
+    @pytest.mark.asyncio
+    async def test_recovers_orphaned_running(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        await redis.set_step_status("j_test_001", "A", "running")
+        await redis.set_step_worker("j_test_001", "A", "cpu-gone")
+
+        received = []
+
+        async def collect():
+            async for msg in redis.subscribe("step_failed"):
+                received.append(msg)
+                break
+
+        import asyncio
+        task = asyncio.create_task(collect())
+        await asyncio.sleep(0.05)
+        await scheduler._recover()
+        await asyncio.wait_for(task, timeout=2.0)
+
+        assert len(received) == 1
+
+    @pytest.mark.asyncio
+    async def test_recovers_ready_steps(self, scheduler, redis, db):
+        """If deps are satisfied but step is still waiting, _recover pushes it."""
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        await redis.set_step_status("j_test_001", "A", "done")
+        await redis.set_step_status("j_test_001", "B", "waiting")
+
+        await scheduler._recover()
+
+        assert await redis.get_step_status("j_test_001", "B") == "ready"
+
+
+class TestDelayedRetry:
+    @pytest.mark.asyncio
+    async def test_delayed_enqueue_with_ai_error(self, scheduler, redis, db):
+        """error_type="ai" has delay=[30,60,120]. Verify delayed enqueue is triggered."""
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+        await redis.dequeue_step("cpu")  # drain A
+
+        await redis.set_step_status("j_test_001", "A", "running")
+
+        captured_delays = []
+
+        async def mock_delayed_enqueue(delay, job_id, step):
+            captured_delays.append(delay)
+            await scheduler.enqueue_step(job_id, step)
+
+        scheduler._delayed_enqueue = mock_delayed_enqueue
+        await scheduler.on_step_failed("j_test_001", "A", "rate limit", "ai")
+        # _delayed_enqueue is called via create_task; yield control
+        await asyncio.sleep(0)
+
+        assert captured_delays == [30]
+        assert await redis.get_step_status("j_test_001", "A") == "ready"
+        assert await redis.get_step_retries("j_test_001", "A") == 1
+
+
+class TestDelayedTaskTracking:
+    """覆盖延迟重试任务的跟踪与取消（防泄漏 / shutdown / rerun 串台）。"""
+
+    async def _trigger_delayed(self, scheduler, redis, db, hang):
+        """触发一个 ai 延迟重试 task，并用 hang 替换 _delayed_enqueue 控制其存活。"""
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+        await redis.dequeue_step("cpu")  # drain A
+        await redis.set_step_status("j_test_001", "A", "running")
+        scheduler._delayed_enqueue = hang
+        await scheduler.on_step_failed("j_test_001", "A", "rate limit", "ai")
+        await asyncio.sleep(0)
+
+    @pytest.mark.asyncio
+    async def test_task_added_to_set(self, scheduler, redis, db):
+        async def _never(delay, job_id, step):
+            await asyncio.Event().wait()
+        await self._trigger_delayed(scheduler, redis, db, _never)
+        assert len(scheduler._delayed_tasks) == 1
+        task = next(iter(scheduler._delayed_tasks))
+        assert task.get_name() == "delayed_enqueue:j_test_001:A"
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cancels_delayed_tasks(self, scheduler, redis, db):
+        async def _sleep(delay, job_id, step):
+            await asyncio.sleep(3600)
+        await self._trigger_delayed(scheduler, redis, db, _sleep)
+        task = next(iter(scheduler._delayed_tasks))
+        await scheduler.shutdown()
+        await asyncio.sleep(0)  # 让 done_callback（discard）执行
+        assert task.cancelled()
+        assert task.done()
+        assert len(scheduler._delayed_tasks) == 0
+
+    @pytest.mark.asyncio
+    async def test_cancel_is_clean_no_enqueue(self, scheduler, redis, db):
+        # 真实 _delayed_enqueue：delay 未到就取消 → enqueue 不发生，A 不被改回 ready
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+        await redis.dequeue_step("cpu")
+        await redis.set_step_status("j_test_001", "A", "running")
+        await scheduler.on_step_failed("j_test_001", "A", "rate limit", "ai")
+        await asyncio.sleep(0)
+        task = next(iter(scheduler._delayed_tasks))
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert task.cancelled()
+        assert await redis.get_step_status("j_test_001", "A") != "ready"
+
+    @pytest.mark.asyncio
+    async def test_rerun_cancels_pending_delayed(self, scheduler, redis, db, tmp_jobs_dir):
+        async def _sleep(delay, job_id, step):
+            await asyncio.sleep(3600)
+        await self._trigger_delayed(scheduler, redis, db, _sleep)
+        task = next(iter(scheduler._delayed_tasks))
+        (tmp_jobs_dir / "j_test_001").mkdir(parents=True, exist_ok=True)
+        await scheduler.rerun("j_test_001", "A")
+        await asyncio.sleep(0)
+        assert task.cancelled()
+        assert await redis.get_step_status("j_test_001", "A") == "ready"
+
+
+class TestConcurrentCAS:
+    """覆盖跨进程并发的 CAS / 去重不变量（fakeredis + gather 验证返回值分支与最终态）。"""
+
+    @pytest.mark.asyncio
+    async def test_cas_ready_to_running_only_one_wins(self, redis):
+        await redis.set_step_status("j_cas", "A", "ready")
+        results = await asyncio.gather(
+            redis.cas_step_status("j_cas", "A", "ready", "running"),
+            redis.cas_step_status("j_cas", "A", "ready", "running"),
+        )
+        assert sorted(results) == [False, True]  # 仅一个 worker 抢到 ready→running
+        assert await redis.get_step_status("j_cas", "A") == "running"
+
+    @pytest.mark.asyncio
+    async def test_duplicate_on_step_done_idempotent(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+        await redis.dequeue_step("cpu")  # drain A 的入队
+        await redis.set_step_status("j_test_001", "A", "running")
+        await asyncio.gather(
+            scheduler.on_step_done("j_test_001", "A"),
+            scheduler.on_step_done("j_test_001", "A"),
+        )
+        # 重复 done 只推进一次：CAS 仅一个成功 → B 仅入队一次
+        assert await redis.get_step_status("j_test_001", "A") == "done"
+        assert await redis.get_step_status("j_test_001", "B") == "ready"
+        queue = await redis.get_queue_info("cpu")
+        assert queue["length"] == 1
+
+    @pytest.mark.asyncio
+    async def test_record_ai_usage_exec_id_dedup(self, db):
+        u1 = AIUsage(exec_id="e1", provider="kimi", model="k2", job_id="j", step="08_smart")
+        u2 = AIUsage(exec_id="e1", provider="kimi", model="k2", job_id="j", step="08_smart")
+        results = await asyncio.gather(
+            asyncio.to_thread(db.record_ai_usage, u1),
+            asyncio.to_thread(db.record_ai_usage, u2),
+        )
+        assert set(results) == {True, False}  # exec_id UNIQUE → 一成一败
+
+
+class TestResubmit:
+    @pytest.mark.asyncio
+    async def test_adds_new_steps(self, scheduler, redis, db, tmp_path, tmp_jobs_dir, configs_dir):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        for step in ["A", "B", "C"]:
+            await redis.set_step_status("j_test_001", step, "running")
+            await scheduler.on_step_done("j_test_001", step)
+
+        # Add step D to pipeline
+        new_pipelines = {
+            "test": {
+                "steps": [
+                    {"name": "A", "pool": "cpu", "depends_on": [], "retries": 2},
+                    {"name": "B", "pool": "cpu", "depends_on": ["A"], "retries": 1},
+                    {"name": "C", "pool": "cpu", "depends_on": ["B"], "retries": 0},
+                    {"name": "D", "pool": "io", "depends_on": ["C"]},
+                ]
+            }
+        }
+        scheduler.config = make_config(tmp_path, tmp_jobs_dir, new_pipelines, configs_dir)
+        scheduler.reload_config = lambda: None  # skip file reload
+
+        await scheduler.resubmit("j_test_001")
+
+        assert await redis.get_step_status("j_test_001", "A") == "done"
+        assert await redis.get_step_status("j_test_001", "B") == "done"
+        assert await redis.get_step_status("j_test_001", "C") == "done"
+        assert await redis.get_step_status("j_test_001", "D") == "ready"
+
+    @pytest.mark.asyncio
+    async def test_removes_deleted_steps(self, scheduler, redis, db, tmp_path, tmp_jobs_dir, configs_dir):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        # Shrink pipeline: remove C
+        new_pipelines = {
+            "test": {
+                "steps": [
+                    {"name": "A", "pool": "cpu", "depends_on": []},
+                    {"name": "B", "pool": "cpu", "depends_on": ["A"]},
+                ]
+            }
+        }
+        scheduler.config = make_config(tmp_path, tmp_jobs_dir, new_pipelines, configs_dir)
+        scheduler.reload_config = lambda: None
+
+        await scheduler.resubmit("j_test_001")
+
+        assert await redis.get_step_status("j_test_001", "C") is None
+
+
+class TestRetryFailed:
+    @pytest.mark.asyncio
+    async def test_retries_from_first_failed(self, scheduler, redis, db, tmp_jobs_dir):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        for step in ["A", "B", "C"]:
+            await redis.set_step_status("j_test_001", step, "running")
+            await scheduler.on_step_done("j_test_001", step)
+
+        job_dir = tmp_jobs_dir / "j_test_001"
+        job_dir.mkdir(exist_ok=True)
+
+        await redis.set_step_status("j_test_001", "B", "failed")
+        await redis.set_step_status("j_test_001", "C", "failed")
+
+        await scheduler._retry_failed("j_test_001")
+
+        assert await redis.get_step_status("j_test_001", "A") == "done"
+        assert await redis.get_step_status("j_test_001", "B") == "ready"
+        assert await redis.get_step_status("j_test_001", "C") == "waiting"
+
+
+class TestDispatch:
+    @pytest.mark.asyncio
+    async def test_dispatch_new_job(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+
+        await scheduler._dispatch({"command": "new_job", "job_id": "j_test_001"})
+
+        statuses = await redis.get_all_step_statuses("j_test_001")
+        assert "A" in statuses
+
+    @pytest.mark.asyncio
+    async def test_dispatch_rerun(self, scheduler, redis, db, tmp_jobs_dir):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        for step in ["A", "B", "C"]:
+            await redis.set_step_status("j_test_001", step, "running")
+            await scheduler.on_step_done("j_test_001", step)
+
+        job_dir = tmp_jobs_dir / "j_test_001"
+        job_dir.mkdir(exist_ok=True)
+
+        await scheduler._dispatch({
+            "command": "rerun", "job_id": "j_test_001", "from_step": "C",
+        })
+
+        assert await redis.get_step_status("j_test_001", "C") == "ready"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_retry(self, scheduler, redis, db, tmp_jobs_dir):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        for step in ["A", "B", "C"]:
+            await redis.set_step_status("j_test_001", step, "running")
+            await scheduler.on_step_done("j_test_001", step)
+
+        job_dir = tmp_jobs_dir / "j_test_001"
+        job_dir.mkdir(exist_ok=True)
+        await redis.set_step_status("j_test_001", "C", "failed")
+
+        await scheduler._dispatch({"command": "retry", "job_id": "j_test_001"})
+
+        assert await redis.get_step_status("j_test_001", "C") == "ready"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_step_done(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        await redis.set_step_status("j_test_001", "A", "running")
+        await scheduler._dispatch({
+            "status": "done", "job_id": "j_test_001", "step": "A",
+        })
+
+        assert await redis.get_step_status("j_test_001", "A") == "done"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_step_failed(self, scheduler, redis, db):
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        await redis.set_step_status("j_test_001", "A", "running")
+        await scheduler._dispatch({
+            "status": "failed", "job_id": "j_test_001", "step": "A",
+            "error": "boom", "error_type": "input_missing",
+        })
+
+        assert await redis.get_step_status("j_test_001", "A") == "failed"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_action_field(self, scheduler, redis, db):
+        """_dispatch should accept 'action' as alias for 'command'."""
+        job = make_job()
+        db.create_job(job)
+        await scheduler._dispatch({"action": "new_job", "job_id": "j_test_001"})
+        statuses = await redis.get_all_step_statuses("j_test_001")
+        assert "A" in statuses
+
+
+class TestCalcProgress:
+    def test_equal_weight(self, scheduler):
+        steps = [{"name": "A"}, {"name": "B"}, {"name": "C"}]
+        assert scheduler._calc_progress(steps, {"A": "done", "B": "done", "C": "waiting"}) == 67
+
+    def test_custom_weight(self, scheduler):
+        steps = [
+            {"name": "A", "weight": 1},
+            {"name": "B", "weight": 3},
+            {"name": "C", "weight": 1},
+        ]
+        # A done (1) + C skipped (1) = 2 of 5 total
+        assert scheduler._calc_progress(
+            steps, {"A": "done", "B": "waiting", "C": "skipped"}
+        ) == 40
+
+    def test_all_done(self, scheduler):
+        steps = [{"name": "A", "weight": 2}, {"name": "B", "weight": 3}]
+        assert scheduler._calc_progress(steps, {"A": "done", "B": "done"}) == 100
+
+    def test_none_done(self, scheduler):
+        steps = [{"name": "A"}, {"name": "B"}]
+        assert scheduler._calc_progress(steps, {"A": "waiting", "B": "waiting"}) == 0
+
+
+class TestEnqueueTags:
+    @pytest.mark.asyncio
+    async def test_ai_pool_merges_domain_tags(self, scheduler, redis, db, tmp_path, tmp_jobs_dir, configs_dir):
+        """AI pool steps merge static_tags + domain + style_tags into tags, require_tags = static only."""
+        pipelines = {
+            "tagged": {
+                "steps": [
+                    {"name": "A", "pool": "ai", "depends_on": [], "tags": ["vision"]},
+                ]
+            }
+        }
+        config = make_config(tmp_path, tmp_jobs_dir, pipelines, configs_dir)
+        sched = Scheduler(redis, db, config)
+
+        job = Job(id="j_tag", content_type="video", pipeline="tagged",
+                  domain="deep-learning", style_tags=["lecture", "case-study"])
+        db.create_job(job)
+        await sched.submit_job(job)
+
+        item, _ = await redis.dequeue_step("ai")
+        tags = set(item["tags"])
+        assert "vision" in tags        # static
+        assert "deep-learning" in tags       # domain
+        assert "lecture" in tags       # style_tag
+        assert "case-study" in tags    # style_tag
+        assert item["require_tags"] == ["vision"]  # only static
+
+    @pytest.mark.asyncio
+    async def test_non_ai_pool_no_domain_tags(self, scheduler, redis, db, tmp_path, tmp_jobs_dir, configs_dir):
+        """Non-AI pool steps should NOT have domain/style tags — only static tags."""
+        pipelines = {
+            "tagged": {
+                "steps": [
+                    {"name": "A", "pool": "cpu", "depends_on": [], "tags": ["gpu"]},
+                ]
+            }
+        }
+        config = make_config(tmp_path, tmp_jobs_dir, pipelines, configs_dir)
+        sched = Scheduler(redis, db, config)
+
+        job = Job(id="j_notag", content_type="video", pipeline="tagged",
+                  domain="deep-learning", style_tags=["lecture"])
+        db.create_job(job)
+        await sched.submit_job(job)
+
+        item, _ = await redis.dequeue_step("cpu")
+        assert item["tags"] == ["gpu"]        # static only
+        assert "deep-learning" not in item["tags"]  # no domain
+        assert item["require_tags"] == ["gpu"]
+
+    @pytest.mark.asyncio
+    async def test_tags_merge_invalid_style_tags_json(self, scheduler, redis, db, tmp_path, tmp_jobs_dir, configs_dir):
+        """Invalid style_tags JSON in Redis should degrade gracefully."""
+        pipelines = {
+            "tagged": {
+                "steps": [
+                    {"name": "A", "pool": "ai", "depends_on": [], "tags": ["vision"]},
+                ]
+            }
+        }
+        config = make_config(tmp_path, tmp_jobs_dir, pipelines, configs_dir)
+        sched = Scheduler(redis, db, config)
+
+        job = Job(id="j_badtag", content_type="video", pipeline="tagged", domain="cs")
+        db.create_job(job)
+        await redis.init_job("j_badtag", "tagged", {"domain": "cs", "style_tags": "not-json"})
+        for name in ["A"]:
+            await redis.set_step_status("j_badtag", name, "waiting")
+        await redis.add_active_job("j_badtag")
+
+        await sched.enqueue_step("j_badtag", "A")
+
+        item, _ = await redis.dequeue_step("ai")
+        tags = set(item["tags"])
+        assert "vision" in tags
+        assert "cs" in tags
+        assert item["require_tags"] == ["vision"]

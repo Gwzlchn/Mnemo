@@ -1,0 +1,100 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/base.Dockerfile
+    command: python -m api.main
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./shared:/app/shared
+      - ./api:/app/api
+      - ./configs:/app/configs
+      - data:/data
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/data
+      - CONFIG_DIR=/app/configs
+    depends_on:
+      - redis
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: docker/base.Dockerfile
+    command: python -m scheduler.main
+    volumes:
+      - ./shared:/app/shared
+      - ./scheduler:/app/scheduler
+      - ./configs:/app/configs
+      - data:/data
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/data
+      - CONFIG_DIR=/app/configs
+    depends_on:
+      - redis
+
+  worker-cpu:
+    build:
+      context: .
+      dockerfile: docker/base.Dockerfile
+    command: python -m worker.main --type cpu
+    volumes:
+      - ./shared:/app/shared
+      - ./worker:/app/worker
+      - ./steps:/app/steps
+      - ./configs:/app/configs
+      - data:/data
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/data
+      - CONFIG_DIR=/app/configs
+    depends_on:
+      - redis
+
+  worker-ai:
+    build:
+      context: .
+      dockerfile: docker/base.Dockerfile
+    command: python -m worker.main --type ai
+    volumes:
+      - ./shared:/app/shared
+      - ./worker:/app/worker
+      - ./steps:/app/steps
+      - ./configs:/app/configs
+      - data:/data
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/data
+      - CONFIG_DIR=/app/configs
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DRY_RUN=${DRY_RUN:-0}
+    depends_on:
+      - redis
+
+  frontend:
+    build:
+      context: ./frontend
+      target: build
+    command: npx vite --host 0.0.0.0
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/public:/app/public
+    depends_on:
+      - api
+
+volumes:
+  redis-data:
+  data:

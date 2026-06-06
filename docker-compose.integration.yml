@@ -1,0 +1,110 @@
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly no
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/base.Dockerfile
+    command: python -m api.main
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./shared:/app/shared
+      - ./api:/app/api
+      - ./steps:/app/steps
+      - ./configs:/app/configs
+      - integration-data:/data
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/data
+      - CONFIG_DIR=/app/configs
+      - DRY_RUN=${DRY_RUN:-0}
+    depends_on:
+      - redis
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: docker/base.Dockerfile
+    command: python -m scheduler.main
+    volumes:
+      - ./shared:/app/shared
+      - ./scheduler:/app/scheduler
+      - ./steps:/app/steps
+      - ./configs:/app/configs
+      - integration-data:/data
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/data
+      - CONFIG_DIR=/app/configs
+    depends_on:
+      - redis
+
+  worker-cpu:
+    build:
+      context: .
+      dockerfile: docker/base.Dockerfile
+    command: python -m worker.main --type cpu
+    volumes:
+      - ./shared:/app/shared
+      - ./worker:/app/worker
+      - ./steps:/app/steps
+      - ./configs:/app/configs
+      - integration-data:/data
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/data
+      - CONFIG_DIR=/app/configs
+      - DRY_RUN=${DRY_RUN:-0}
+    depends_on:
+      - redis
+
+  worker-download:
+    build:
+      context: .
+      dockerfile: docker/base.Dockerfile
+    command: python -m worker.main --type download
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./shared:/app/shared
+      - ./worker:/app/worker
+      - ./steps:/app/steps
+      - ./configs:/app/configs
+      - integration-data:/data
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/data
+      - CONFIG_DIR=/app/configs
+      - DRY_RUN=${DRY_RUN:-0}
+      - HTTPS_PROXY=http://host.docker.internal:11081
+      - HTTP_PROXY=http://host.docker.internal:11081
+    depends_on:
+      - redis
+
+  worker-ai:
+    build:
+      context: .
+      dockerfile: docker/base.Dockerfile
+    command: python -m worker.main --type ai --tags vision
+    volumes:
+      - ./shared:/app/shared
+      - ./worker:/app/worker
+      - ./steps:/app/steps
+      - ./configs:/app/configs
+      - integration-data:/data
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATA_DIR=/data
+      - CONFIG_DIR=/app/configs
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - KIMI_API_KEY=${KIMI_API_KEY:-}
+      - DRY_RUN=${DRY_RUN:-0}
+    depends_on:
+      - redis
+
+volumes:
+  integration-data:
