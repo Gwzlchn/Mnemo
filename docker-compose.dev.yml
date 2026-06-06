@@ -101,9 +101,13 @@ services:
       - api
 
   # 日志面板：只绑局域网，不开公网。访问 http://127.0.0.1:8888
+  # DOZZLE_REMOTE_AGENT 经 NAS->ECS 的 -L 隧道(${DOZZLE_REMOTE_AGENT:-})
+  # 接入 ECS 上的 dozzle agent，于同一面板查看 ECS 容器日志。
   dozzle:
     image: amir20/dozzle
     restart: unless-stopped
+    environment:
+      - DOZZLE_REMOTE_AGENT=${DOZZLE_REMOTE_AGENT:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
