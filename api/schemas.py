@@ -92,3 +92,52 @@ class TermAddRequest(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     checks: dict
+
+
+# ── Worker-gateway 认领/上报(P3b) ──
+
+
+class RunnerClaimRequest(BaseModel):
+    pools: list[str] = Field(default_factory=list)
+    pool_limits: dict[str, int] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    reject_tags: list[str] = Field(default_factory=list)
+
+
+class RunnerCompleteRequest(BaseModel):
+    pool: str
+    exec_id: str
+    duration: float
+    started_at: float
+
+
+class RunnerFailRequest(BaseModel):
+    pool: str
+    exec_id: str
+    error: str
+    error_type: str
+    duration: float
+    started_at: float
+    count_stats: bool = False
+
+
+class RunnerReleaseRequest(BaseModel):
+    pool: str
+    exec_id: str
+
+
+class RunnerProgressRequest(BaseModel):
+    payload: dict = Field(default_factory=dict)
+
+
+class RunnerUsageRequest(BaseModel):
+    exec_id: str
+    provider: str
+    model: str
+    job_id: str | None = None
+    step: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
+    duration_sec: float = 0.0
+    cached: bool = False

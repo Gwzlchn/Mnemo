@@ -4,22 +4,36 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import secrets
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from shared import runner_ops
 from shared.db import Database
-from shared.models import Worker, generate_worker_id
+from shared.models import AIUsage, Worker, generate_worker_id
 from shared.redis_client import RedisClient
 from api.deps import get_db, get_redis, verify_registration_token, verify_worker_token
+from api.schemas import (
+    RunnerClaimRequest,
+    RunnerCompleteRequest,
+    RunnerFailRequest,
+    RunnerProgressRequest,
+    RunnerReleaseRequest,
+    RunnerUsageRequest,
+)
 
 # 注册接口自带门禁(registration token)，心跳/下线走 per-worker token，故不挂全局 verify_token。
 router = APIRouter(prefix="/api/runner", tags=["runner"])
 
 _HEARTBEAT_SEC = 10
 _WORKER_TTL = 30
+# 长轮询:服务端持有窗口须小于 worker httpx 读超时(35s),空轮询间隔避免空转打爆 Redis。
+_CLAIM_WINDOW_SEC = 25.0
+_CLAIM_POLL_SEC = 0.5
 
 
 class RunnerRegisterRequest(BaseModel):
@@ -139,4 +153,131 @@ async def offline(
 ):
     """worker 主动下线：仅置 status=offline，不触碰 last_heartbeat。"""
     await asyncio.to_thread(db.set_worker_status, worker_id, "offline")
+    return {"ok": True}
+
+
+# ── 认领 / 上报(P3b:服务端执行编排,gateway 模式 worker 无需直连 redis) ──
+
+
+async def _enrich_claim(redis: RedisClient, claim: dict) -> dict:
+    """把 pipeline/domain/style_tags 塞进 claim,让 gateway worker 无需回读 redis
+    (parse 逻辑与旧 worker.execute 逐字等价:json-or-list,失败兜空)。"""
+    job_id = claim["job_id"]
+    pipeline = await redis.get_job_pipeline(job_id)
+    job_info = await redis.get_job_info(job_id)
+    domain = job_info.get("domain", "general")
+    style_tags_raw = job_info.get("style_tags", "[]")
+    try:
+        style_tags = (
+            json.loads(style_tags_raw)
+            if isinstance(style_tags_raw, str) else style_tags_raw
+        )
+    except (json.JSONDecodeError, TypeError):
+        style_tags = []
+    if not isinstance(style_tags, list):
+        style_tags = []
+    return {**claim, "pipeline": pipeline, "domain": domain, "style_tags": style_tags}
+
+
+@router.post("/jobs/request")
+async def request_job(
+    req: RunnerClaimRequest,
+    worker_id: str = Depends(verify_worker_token),
+    db: Database = Depends(get_db),
+    redis: RedisClient = Depends(get_redis),
+):
+    """长轮询认领一步:窗口内反复 claim_step,认到就 enrich 后返回,否则 {"claim": null}。"""
+    deadline = time.monotonic() + _CLAIM_WINDOW_SEC
+    while True:
+        claim = await runner_ops.claim_step(
+            redis, db, worker_id, req.pools, req.pool_limits,
+            set(req.tags), set(req.reject_tags),
+        )
+        if claim is not None:
+            return {"claim": await _enrich_claim(redis, claim)}
+        if time.monotonic() >= deadline:
+            return {"claim": None}
+        await asyncio.sleep(_CLAIM_POLL_SEC)
+
+
+@router.post("/jobs/{job_id}/steps/{step}/complete")
+async def complete_step(
+    job_id: str,
+    step: str,
+    req: RunnerCompleteRequest,
+    worker_id: str = Depends(verify_worker_token),
+    db: Database = Depends(get_db),
+    redis: RedisClient = Depends(get_redis),
+):
+    claim = {"job_id": job_id, "step": step, "pool": req.pool, "exec_id": req.exec_id}
+    await runner_ops.report_step_done(
+        redis, db, worker_id, claim, req.duration, req.started_at,
+    )
+    return {"ok": True}
+
+
+@router.post("/jobs/{job_id}/steps/{step}/fail")
+async def fail_step(
+    job_id: str,
+    step: str,
+    req: RunnerFailRequest,
+    worker_id: str = Depends(verify_worker_token),
+    db: Database = Depends(get_db),
+    redis: RedisClient = Depends(get_redis),
+):
+    claim = {"job_id": job_id, "step": step, "pool": req.pool, "exec_id": req.exec_id}
+    await runner_ops.report_step_failed(
+        redis, db, worker_id, claim, req.error, req.error_type,
+        req.duration, req.started_at, req.count_stats,
+    )
+    return {"ok": True}
+
+
+@router.post("/jobs/{job_id}/steps/{step}/release")
+async def release_step(
+    job_id: str,
+    step: str,
+    req: RunnerReleaseRequest,
+    worker_id: str = Depends(verify_worker_token),
+    db: Database = Depends(get_db),
+    redis: RedisClient = Depends(get_redis),
+):
+    claim = {"job_id": job_id, "step": step, "pool": req.pool, "exec_id": req.exec_id}
+    await runner_ops.release_step(redis, db, worker_id, claim)
+    return {"ok": True}
+
+
+@router.post("/jobs/{job_id}/steps/{step}/progress")
+async def step_progress(
+    job_id: str,
+    step: str,
+    req: RunnerProgressRequest,
+    worker_id: str = Depends(verify_worker_token),
+    redis: RedisClient = Depends(get_redis),
+):
+    """运行中进度/日志:发到 events:{job_id},供前端 WS 准实时拉取(gateway on_progress)。"""
+    await redis.publish(f"events:{job_id}", {"event": "step_progress", **req.payload})
+    return {"ok": True}
+
+
+@router.post("/usage")
+async def record_usage(
+    req: RunnerUsageRequest,
+    worker_id: str = Depends(verify_worker_token),
+    db: Database = Depends(get_db),
+):
+    """记录一次 AI 调用用量(exec_id UNIQUE 去重,重复返回 ok 不报错)。"""
+    usage = AIUsage(
+        exec_id=req.exec_id,
+        provider=req.provider,
+        model=req.model,
+        job_id=req.job_id,
+        step=req.step,
+        input_tokens=req.input_tokens,
+        output_tokens=req.output_tokens,
+        cost_usd=req.cost_usd,
+        duration_sec=req.duration_sec,
+        cached=req.cached,
+    )
+    await asyncio.to_thread(db.record_ai_usage, usage)
     return {"ok": True}

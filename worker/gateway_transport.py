@@ -126,24 +126,94 @@ class GatewayTransport:
             worker_id, status, current_job, current_step,
         )
 
-    # ── 粗粒度认领/上报(P3a 影子模式:原样委派内层,认领仍走直连) ──
+    # ── 粗粒度认领/上报(P3b:走 gateway HTTP,不再委派内层,避免经 redis 双重认领) ──
+
+    def _auth(self) -> dict:
+        return {"Authorization": f"Bearer {self._worker_token}"}
 
     async def request_step(self, worker_id, pools, pool_limits, tags, reject_tags):
-        return await self._inner.request_step(
-            worker_id, pools, pool_limits, tags, reject_tags,
-        )
+        # 认领走服务端长轮询;httpx 出错只 log+返回 None(worker 空转重试),绝不退回内层
+        # ——退回内层会经 redis 再认领一次,造成双重认领。
+        try:
+            resp = await self._http.post(
+                "/api/runner/jobs/request",
+                headers=self._auth(),
+                json={
+                    "pools": pools, "pool_limits": pool_limits,
+                    "tags": sorted(tags), "reject_tags": sorted(reject_tags),
+                },
+            )
+            resp.raise_for_status()
+            return resp.json().get("claim")
+        except httpx.HTTPError:
+            logger.warning("gateway_request_step_failed", worker_id=worker_id)
+            return None
 
     async def report_done(self, claim, duration, started_at):
-        await self._inner.report_done(claim, duration, started_at)
+        job_id, step = claim["job_id"], claim["step"]
+        resp = await self._http.post(
+            f"/api/runner/jobs/{job_id}/steps/{step}/complete",
+            headers=self._auth(),
+            json={
+                "pool": claim["pool"], "exec_id": claim["exec_id"],
+                "duration": duration, "started_at": started_at,
+            },
+        )
+        resp.raise_for_status()
 
     async def report_failed(self, claim, error, error_type, duration,
                             started_at, count_stats):
-        await self._inner.report_failed(
-            claim, error, error_type, duration, started_at, count_stats,
+        job_id, step = claim["job_id"], claim["step"]
+        resp = await self._http.post(
+            f"/api/runner/jobs/{job_id}/steps/{step}/fail",
+            headers=self._auth(),
+            json={
+                "pool": claim["pool"], "exec_id": claim["exec_id"],
+                "error": error, "error_type": error_type,
+                "duration": duration, "started_at": started_at,
+                "count_stats": count_stats,
+            },
         )
+        resp.raise_for_status()
 
     async def release(self, claim):
-        await self._inner.release(claim)
+        job_id, step = claim["job_id"], claim["step"]
+        resp = await self._http.post(
+            f"/api/runner/jobs/{job_id}/steps/{step}/release",
+            headers=self._auth(),
+            json={"pool": claim["pool"], "exec_id": claim["exec_id"]},
+        )
+        resp.raise_for_status()
+
+    async def record_ai_usage(self, usage):
+        # usage 是 AIUsage 数据类;created_at 由服务端补默认,这里只发可序列化字段。
+        resp = await self._http.post(
+            "/api/runner/usage",
+            headers=self._auth(),
+            json={
+                "exec_id": usage.exec_id, "provider": usage.provider,
+                "model": usage.model, "job_id": usage.job_id, "step": usage.step,
+                "input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
+                "cost_usd": usage.cost_usd, "duration_sec": usage.duration_sec,
+                "cached": usage.cached,
+            },
+        )
+        resp.raise_for_status()
+
+    async def publish_step_event(self, channel, data):
+        # P3b 后 worker 只通过 on_progress 发 events:{job} 进度;映射到 progress 端点。
+        # 非 events 频道(step_started/completed/failed)现由服务端发,worker 不再走这里。
+        if channel.startswith("events:"):
+            job_id = channel.split(":", 1)[1]
+            try:
+                resp = await self._http.post(
+                    f"/api/runner/jobs/{job_id}/steps/_/progress",
+                    headers=self._auth(),
+                    json={"payload": data},
+                )
+                resp.raise_for_status()
+            except httpx.HTTPError:
+                logger.warning("gateway_progress_failed", job_id=job_id)
 
     # ── 其余方法:原样委派内层 ──
 
@@ -192,17 +262,11 @@ class GatewayTransport:
             worker_id, completed=completed, failed=failed, duration=duration,
         )
 
-    async def record_ai_usage(self, usage):
-        await self._inner.record_ai_usage(usage)
-
     async def get_job_pipeline(self, job_id):
         return await self._inner.get_job_pipeline(job_id)
 
     async def get_job_info(self, job_id):
         return await self._inner.get_job_info(job_id)
-
-    async def publish_step_event(self, channel, data):
-        await self._inner.publish_step_event(channel, data)
 
     async def close(self):
         if self._client is not None:

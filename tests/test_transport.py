@@ -494,61 +494,121 @@ class TestGatewayDelegation:
         inner_update.assert_awaited_once_with("w1", "offline", "", "")
 
 
-class TestGatewayCoarseDelegation:
-    """P3a 影子模式:粗粒度认领/上报原样委派内层。"""
+class TestGatewayCoarseHTTP:
+    """P3b:粗粒度认领/上报走 gateway HTTP,不再委派内层(避免经 redis 双重认领)。"""
 
     @pytest.mark.asyncio
-    async def test_request_step_delegates_to_inner(
-        self, redis, db, tmp_path, monkeypatch,
-    ):
+    async def test_request_step_posts_and_parses_claim(self, redis, db, tmp_path):
         gw, _ = make_gateway(redis, db, tmp_path)
+        gw._worker_token = "wt"
         claim = {"job_id": "j1", "step": "A", "pool": "cpu", "exec_id": "e",
                  "pipeline": "test", "domain": "general", "style_tags": []}
-        inner = AsyncMock(return_value=claim)
-        monkeypatch.setattr(gw._inner, "request_step", inner)
+        gw._client.post.return_value = make_response(json_data={"claim": claim})
 
         result = await gw.request_step("w1", ["cpu"], {"cpu": 3},
                                        {"vision"}, {"private"})
 
-        inner.assert_awaited_once_with("w1", ["cpu"], {"cpu": 3},
-                                       {"vision"}, {"private"})
         assert result == claim
+        url, kwargs = gw._client.post.call_args
+        assert url[0] == "/api/runner/jobs/request"
+        assert kwargs["headers"]["Authorization"] == "Bearer wt"
+        assert kwargs["json"] == {
+            "pools": ["cpu"], "pool_limits": {"cpu": 3},
+            "tags": ["vision"], "reject_tags": ["private"],
+        }
 
     @pytest.mark.asyncio
-    async def test_report_done_delegates_to_inner(
+    async def test_request_step_null_claim_returns_none(self, redis, db, tmp_path):
+        gw, _ = make_gateway(redis, db, tmp_path)
+        gw._client.post.return_value = make_response(json_data={"claim": None})
+
+        result = await gw.request_step("w1", ["cpu"], {"cpu": 3}, set(), set())
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_request_step_httpx_error_returns_none_no_inner(
         self, redis, db, tmp_path, monkeypatch,
     ):
+        import httpx
+
         gw, _ = make_gateway(redis, db, tmp_path)
+        gw._client.post.side_effect = httpx.ConnectError("down")
         inner = AsyncMock()
-        monkeypatch.setattr(gw._inner, "report_done", inner)
+        monkeypatch.setattr(gw._inner, "request_step", inner)
+
+        result = await gw.request_step("w1", ["cpu"], {"cpu": 3}, set(), set())
+
+        assert result is None
+        inner.assert_not_awaited()  # 绝不退回内层,否则经 redis 双重认领
+
+    @pytest.mark.asyncio
+    async def test_report_done_posts_complete(self, redis, db, tmp_path):
+        gw, _ = make_gateway(redis, db, tmp_path)
+        gw._worker_token = "wt"
+        gw._client.post.return_value = make_response()
         claim = {"job_id": "j1", "step": "A", "pool": "cpu", "exec_id": "e"}
 
         await gw.report_done(claim, 1.5, 100.0)
 
-        inner.assert_awaited_once_with(claim, 1.5, 100.0)
+        url, kwargs = gw._client.post.call_args
+        assert url[0] == "/api/runner/jobs/j1/steps/A/complete"
+        assert kwargs["json"] == {
+            "pool": "cpu", "exec_id": "e", "duration": 1.5, "started_at": 100.0,
+        }
 
     @pytest.mark.asyncio
-    async def test_report_failed_delegates_to_inner(
-        self, redis, db, tmp_path, monkeypatch,
-    ):
+    async def test_report_failed_posts_fail(self, redis, db, tmp_path):
         gw, _ = make_gateway(redis, db, tmp_path)
-        inner = AsyncMock()
-        monkeypatch.setattr(gw._inner, "report_failed", inner)
+        gw._client.post.return_value = make_response()
         claim = {"job_id": "j1", "step": "A", "pool": "cpu", "exec_id": "e"}
 
         await gw.report_failed(claim, "boom", "processing", 2.0, 50.0, False)
 
-        inner.assert_awaited_once_with(claim, "boom", "processing", 2.0, 50.0, False)
+        url, kwargs = gw._client.post.call_args
+        assert url[0] == "/api/runner/jobs/j1/steps/A/fail"
+        assert kwargs["json"] == {
+            "pool": "cpu", "exec_id": "e", "error": "boom",
+            "error_type": "processing", "duration": 2.0, "started_at": 50.0,
+            "count_stats": False,
+        }
 
     @pytest.mark.asyncio
-    async def test_release_delegates_to_inner(
-        self, redis, db, tmp_path, monkeypatch,
-    ):
+    async def test_release_posts_release(self, redis, db, tmp_path):
         gw, _ = make_gateway(redis, db, tmp_path)
-        inner = AsyncMock()
-        monkeypatch.setattr(gw._inner, "release", inner)
+        gw._client.post.return_value = make_response()
         claim = {"job_id": "j1", "step": "A", "pool": "cpu", "exec_id": "e"}
 
         await gw.release(claim)
 
-        inner.assert_awaited_once_with(claim)
+        url, kwargs = gw._client.post.call_args
+        assert url[0] == "/api/runner/jobs/j1/steps/A/release"
+        assert kwargs["json"] == {"pool": "cpu", "exec_id": "e"}
+
+    @pytest.mark.asyncio
+    async def test_record_usage_posts_usage(self, redis, db, tmp_path):
+        from shared.models import AIUsage
+
+        gw, _ = make_gateway(redis, db, tmp_path)
+        gw._client.post.return_value = make_response()
+        usage = AIUsage(exec_id="e1", provider="anthropic", model="claude",
+                        job_id="j1", step="A", input_tokens=10, output_tokens=20,
+                        cost_usd=0.5, duration_sec=1.2, cached=False)
+
+        await gw.record_ai_usage(usage)
+
+        url, kwargs = gw._client.post.call_args
+        assert url[0] == "/api/runner/usage"
+        assert kwargs["json"]["exec_id"] == "e1"
+        assert kwargs["json"]["input_tokens"] == 10
+        assert "created_at" not in kwargs["json"]
+
+    @pytest.mark.asyncio
+    async def test_publish_step_event_maps_progress(self, redis, db, tmp_path):
+        gw, _ = make_gateway(redis, db, tmp_path)
+        gw._client.post.return_value = make_response()
+
+        await gw.publish_step_event("events:j1", {"event": "step_log", "line": "x"})
+
+        url, kwargs = gw._client.post.call_args
+        assert url[0] == "/api/runner/jobs/j1/steps/_/progress"
+        assert kwargs["json"] == {"payload": {"event": "step_log", "line": "x"}}

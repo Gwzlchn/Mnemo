@@ -6,11 +6,13 @@ import hashlib
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
+import fakeredis.aioredis
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from shared.config import load_config
 from shared.db import Database
+from shared.redis_client import RedisClient
 from api.main import create_app
 
 REG_TOKEN = "mnw-registration-secret"
@@ -268,3 +270,203 @@ class TestTokenRevocationViaDelete:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 401
+
+
+# ── 认领/上报端点(P3b):用真 fakeredis,让服务端编排真正跑起来 ──
+
+
+@pytest.fixture
+async def real_redis():
+    rc = RedisClient.__new__(RedisClient)
+    rc._url = "redis://fake"
+    rc._redis = fakeredis.aioredis.FakeRedis(decode_responses=True, protocol=2)
+    await rc.set_registration_token(REG_TOKEN)  # 接入门禁放行
+    yield rc
+    await rc.close()
+
+
+@pytest.fixture
+def jobs_app(db, test_config, real_redis):
+    return create_app(db=db, redis=real_redis, config=test_config)
+
+
+@pytest.fixture
+async def jobs_client(jobs_app):
+    transport = ASGITransport(app=jobs_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+async def _register_real(client):
+    payload = {"type": "cpu", "pools": ["cpu", "io"], "tags": ["vision"], "reject_tags": []}
+    resp = await client.post("/api/runner/register", json=payload, headers=_reg_headers())
+    body = resp.json()
+    return body["worker_id"], body["worker_token"]
+
+
+class TestJobsRequest:
+    @pytest.mark.asyncio
+    async def test_requires_worker_token(self, jobs_client):
+        resp = await jobs_client.post("/api/runner/jobs/request", json={"pools": ["cpu"]})
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_returns_enriched_claim(self, jobs_client, real_redis):
+        worker_id, token = await _register_real(jobs_client)
+        await real_redis.enqueue_step("cpu", "j1", "A", [], priority=0)
+        await real_redis.set_step_status("j1", "A", "ready")
+        await real_redis.init_job("j1", "video", {"domain": "lecture",
+                                                   "style_tags": '["formal"]'})
+
+        resp = await jobs_client.post(
+            "/api/runner/jobs/request",
+            json={"pools": ["cpu"], "pool_limits": {"cpu": 3},
+                  "tags": ["vision"], "reject_tags": []},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        claim = resp.json()["claim"]
+        assert claim["job_id"] == "j1" and claim["step"] == "A" and claim["pool"] == "cpu"
+        assert claim["exec_id"].startswith(f"{worker_id}:")
+        # enrich:pipeline/domain/style_tags 塞进 claim,gateway worker 无需回读 redis
+        assert claim["pipeline"] == "video"
+        assert claim["domain"] == "lecture"
+        assert claim["style_tags"] == ["formal"]
+        assert await real_redis.get_step_status("j1", "A") == "running"
+
+    @pytest.mark.asyncio
+    async def test_returns_null_when_empty(self, jobs_client, monkeypatch):
+        import api.routes.runner as runner_mod
+        monkeypatch.setattr(runner_mod, "_CLAIM_WINDOW_SEC", 0.0)  # 窗口归零→立刻返回
+
+        _, token = await _register_real(jobs_client)
+        resp = await jobs_client.post(
+            "/api/runner/jobs/request",
+            json={"pools": ["cpu"]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"claim": None}
+
+
+class TestJobsComplete:
+    @pytest.mark.asyncio
+    async def test_requires_token(self, jobs_client):
+        resp = await jobs_client.post(
+            "/api/runner/jobs/j1/steps/A/complete",
+            json={"pool": "cpu", "exec_id": "e", "duration": 1.0, "started_at": 0.0},
+        )
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_writes_db_and_increments(self, jobs_client, db, real_redis):
+        from shared.models import Job, Step, StepStatus
+
+        worker_id, token = await _register_real(jobs_client)
+        db.create_job(Job(id="j1", content_type="video", pipeline="video", domain="general"))
+        db.upsert_step(Step(job_id="j1", name="A", status=StepStatus.RUNNING, pool="cpu"))
+
+        resp = await jobs_client.post(
+            "/api/runner/jobs/j1/steps/A/complete",
+            json={"pool": "cpu", "exec_id": f"{worker_id}:1",
+                  "duration": 12.34, "started_at": 100.0},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert db.get_steps("j1")[0].status == StepStatus.DONE
+        assert db.get_worker(worker_id).tasks_completed == 1
+
+
+class TestJobsFail:
+    @pytest.mark.asyncio
+    async def test_count_stats_true_increments(self, jobs_client, db, real_redis):
+        from shared.models import Job, Step, StepStatus
+
+        worker_id, token = await _register_real(jobs_client)
+        db.create_job(Job(id="j1", content_type="video", pipeline="video", domain="general"))
+        db.upsert_step(Step(job_id="j1", name="A", status=StepStatus.RUNNING, pool="cpu"))
+
+        resp = await jobs_client.post(
+            "/api/runner/jobs/j1/steps/A/fail",
+            json={"pool": "cpu", "exec_id": f"{worker_id}:1", "error": "boom",
+                  "error_type": "segfault", "duration": 2.0, "started_at": 0.0,
+                  "count_stats": True},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert db.get_steps("j1")[0].status == StepStatus.FAILED
+        assert db.get_worker(worker_id).tasks_failed == 1
+
+
+class TestJobsRelease:
+    @pytest.mark.asyncio
+    async def test_release_unfreezes_scene_and_idles(self, jobs_client, real_redis):
+        worker_id, token = await _register_real(jobs_client)
+        await real_redis.try_acquire_slot("scene", limit=1)
+        await real_redis.freeze_pool("cpu")
+
+        resp = await jobs_client.post(
+            "/api/runner/jobs/j1/steps/A/release",
+            json={"pool": "scene", "exec_id": "e"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert await real_redis.get_pool_count("scene") == 0
+        assert await real_redis.is_pool_frozen("cpu") is False
+        assert (await real_redis.get_worker_info(worker_id))["status"] == "idle"
+
+
+class TestJobsProgress:
+    @pytest.mark.asyncio
+    async def test_requires_token(self, jobs_client):
+        resp = await jobs_client.post(
+            "/api/runner/jobs/j1/steps/A/progress", json={"payload": {}},
+        )
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_publishes_to_events_channel(self, jobs_client, real_redis):
+        import asyncio
+
+        _, token = await _register_real(jobs_client)
+        events = []
+
+        async def capture():
+            async for msg in real_redis.subscribe("events:j1"):
+                events.append(msg)
+                break
+
+        listener = asyncio.create_task(capture())
+        await asyncio.sleep(0.05)
+        resp = await jobs_client.post(
+            "/api/runner/jobs/j1/steps/A/progress",
+            json={"payload": {"line": "hello"}},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        await asyncio.wait_for(listener, timeout=2.0)
+        assert events[0] == {"event": "step_progress", "line": "hello"}
+
+
+class TestUsage:
+    @pytest.mark.asyncio
+    async def test_requires_token(self, jobs_client):
+        resp = await jobs_client.post(
+            "/api/runner/usage",
+            json={"exec_id": "e", "provider": "p", "model": "m"},
+        )
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_records_usage_row(self, jobs_client, db):
+        _, token = await _register_real(jobs_client)
+        resp = await jobs_client.post(
+            "/api/runner/usage",
+            json={"exec_id": "e1", "provider": "anthropic", "model": "claude",
+                  "job_id": "j1", "step": "A", "input_tokens": 10,
+                  "output_tokens": 20, "cost_usd": 0.5},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        summary = db.get_usage_summary(job_id="j1")
+        assert summary["total_input_tokens"] == 10
