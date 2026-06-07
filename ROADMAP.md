@@ -4,9 +4,9 @@
 
 ## 当前状态
 
-**阶段**：**M1 核心实现 + 集成测试** · 端到端链路（下载 + CPU + AI 步骤）验证通过
-**最近会话**：2026-06-06 · steps 层 DRY 重构 + 调度器并发硬化（skip 死锁守卫修正 + 延迟任务生命周期 + CAS/exec_id/幂等专项单测）+ db close 竞态(segfault) + flaky 修复；单元测试 423 pass（容器内实跑）
-**下一步**：CI/CD → 前端联调 → M2 知识库
+**阶段**：**M1 完成 + Worker 层 GitLab-runner 化（M-W）完成** · 远程 worker 可只靠单出站 HTTPS 接入
+**最近会话**：2026-06-07 · Worker 层系统重构（见 M-W）：全后端切 aware-UTC + 管理页 GitLab 化 + 运行中日志、StepRunner 执行器抽象、worker-gateway 注册/心跳 + per-worker token、pipelines 改 GitLab-CI 风格、DockerStepRunner + 每步镜像、认领/上报/产物全搬上 gateway（真零隧道）、安全加固（密钥按需 + token 池授权 + 重试分类）；CI Actions 升 Node 24；单元测试 423 → **650 pass**（容器内实跑，全程 CI 绿）
+**下一步**：前端联调 → M2 知识库（docker executor 端到端验证 + B站扫码登录为零散尾项）
 
 ## 里程碑
 
@@ -56,7 +56,19 @@
 - [x] 并发安全测试（乐观锁 CAS 冲突 + exec_id 去重 + on_step_done 幂等 + skip 死锁守卫 + 延迟任务取消）
 - [ ] Cloudflare Tunnel 公网暴露
 - [ ] B站扫码登录
-- [ ] CI/CD（GitHub Actions + ghcr.io 镜像发布，方案已写 `docs/12-cicd.md`）
+- [x] CI/CD（GitHub Actions + ghcr.io 镜像发布 + Watchtower 自动部署；Actions 已升 Node 24）
+
+### M-W · Worker 层 GitLab-runner 化 ✅（2026-06-07 完成）
+
+目标：worker 高内聚低耦合、易拓展；远程 worker（公司 GPU 机）零隧道、单出站 HTTPS 接入。
+全程可灰度、可独立回退；每刀经对抗式等价核对 + 全量回归，保留 DAG/资源池/scene↔cpu 互斥/exec_id 去重/WS 进度等不变量。
+
+- [x] 全后端 aware-UTC + Worker 管理页 GitLab 化（状态后端权威）+ 运行中日志可见
+- [x] P0-A/P0-B：`WorkerTransport` + `StepRunner` 执行器抽象（零行为变化）
+- [x] P1：worker-gateway 注册/心跳 + per-worker 可吊销 token + `GatewayTransport`（影子）
+- [x] P2：pipelines 改 GitLab-CI 风格（variables/extends/rules/needs，加载期归一，0 漂移）+ `DockerStepRunner` + 每步镜像（base/heavy/gpu）+ executor opt-in
+- [x] P3：认领/上报搬服务端（`/api/runner/jobs/*` + 共享 `runner_ops`）+ 产物经网关代理 + 纯网关模式（真零隧道，worker 不连 redis/minio）
+- [x] P4：密钥按需注入（修配置明文 key 泄露）+ token 按 pools 授权 + 重试按失败类型（BUILD vs SYSTEM）
 
 ### M2 · 知识库
 
@@ -119,7 +131,7 @@
 - [ ] GPU Worker + Whisper
 - [ ] PaddleOCR GPU
 - [ ] 场景检测 GPU 解码
-- [ ] GitLab Runner / Redis 轮询接入
+- [x] GitLab Runner 化接入（见 M-W：gateway + token + 每步镜像；GPU worker 单出站接入就绪）
 
 ### M6 · 文章分析 + 多源扩展
 
@@ -134,7 +146,7 @@
 
 目标：支持多用户，可选云端 Worker 付费模式。
 
-- [ ] Storage 换 S3/MinIO（跨机器 Worker 共享产物）
+- [x] Storage 换 S3/MinIO（跨机器 Worker 共享产物；远程 worker 可经网关代理免直连）
 - [ ] 多租户隔离（用户注册 + OAuth / Apple Sign In）
 - [ ] SQLite → Postgres（多用户并发）
 - [ ] 云端 Worker 集群（托管 GPU/AI 算力）
