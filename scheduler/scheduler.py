@@ -89,7 +89,7 @@ class Scheduler:
         while not self._shutdown:
             try:
                 async for msg in self.redis.subscribe(
-                    "step_completed", "step_failed", "job_command",
+                    "step_started", "step_completed", "step_failed", "job_command",
                 ):
                     if self._shutdown:
                         break
@@ -119,7 +119,11 @@ class Scheduler:
         status = msg.get("status")
         command = msg.get("command") or msg.get("action")
 
-        if status == "done":
+        if status == "running":
+            await self.on_step_started(
+                msg["job_id"], msg["step"], worker=msg.get("worker"),
+            )
+        elif status == "done":
             await self.on_step_done(
                 msg["job_id"], msg["step"],
                 duration=msg.get("duration"),
@@ -230,6 +234,19 @@ class Scheduler:
         logger.info("job_submitted", job_id=job.id, pipeline=job.pipeline)
 
     # ── 事件处理 ──
+
+    async def on_step_started(
+        self, job_id: str, step: str, worker: str | None = None,
+    ) -> None:
+        # 把"运行中"落 DB,让 REST(/api/jobs)也能显示 running,不只 WebSocket。
+        # 仅当 Redis 仍为 running 时写:避免快步骤的 step_completed 先到、迟到的
+        # step_started 把已完成步骤倒回 running(两条不同频道,跨频道顺序无保证)。
+        if await self.redis.get_step_status(job_id, step) != "running":
+            return
+        await asyncio.to_thread(
+            self.db.update_step, job_id, step,
+            status="running", worker_id=worker, started_at=datetime.now(),
+        )
 
     async def on_step_done(
         self,

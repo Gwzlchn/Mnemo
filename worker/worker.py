@@ -213,7 +213,7 @@ class Worker:
         await self.redis.set_step_worker(job_id, step, self.worker_id)
         await self._update_worker_status("busy", job_id, step)
         await self.redis.publish("step_started", {
-            "job_id": job_id, "step": step,
+            "job_id": job_id, "step": step, "status": "running",
             "worker": self.worker_id, "exec_id": exec_id,
         })
         await self.redis.publish(f"events:{job_id}", {
