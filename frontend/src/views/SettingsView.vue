@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useApi } from '../composables/useApi'
 import { useGlobalStore } from '../stores/global'
-import BilibiliQrLogin from '../components/auth/BilibiliQrLogin.vue'
+import BiliLogin from '../components/settings/BiliLogin.vue'
 import CookieUpload from '../components/auth/CookieUpload.vue'
 import StatusBadge from '../components/common/StatusBadge.vue'
 import ProfileEditor from '../components/settings/ProfileEditor.vue'
@@ -56,17 +56,8 @@ async function onProfileSaved() {
           平台认证
         </h3>
 
-        <!-- Bilibili -->
-        <div class="space-y-2">
-          <div class="flex items-center gap-2">
-            <span class="text-sm font-medium">B站</span>
-            <StatusBadge v-if="authStatus" :status="authStatus.bilibili.has_cookies ? 'done' : 'failed'" />
-            <span v-if="authStatus" class="text-xs text-gray-500">
-              {{ authStatus.bilibili.has_cookies ? '已登录 (1080P 可用)' : '未登录' }}
-            </span>
-          </div>
-          <BilibiliQrLogin @success="refreshAuth" />
-        </div>
+        <!-- Bilibili：扫码登录走 /api/bili/* 契约，组件自管状态。 -->
+        <BiliLogin />
 
         <hr class="border-gray-100" />
 

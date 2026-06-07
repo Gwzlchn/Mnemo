@@ -115,6 +115,12 @@ CREATE TABLE IF NOT EXISTS worker_tokens (
 );
 
 CREATE INDEX IF NOT EXISTS idx_worker_tokens_worker ON worker_tokens(worker_id);
+
+CREATE TABLE IF NOT EXISTS app_credentials (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TEXT
+);
 """
 
 
@@ -539,6 +545,31 @@ class Database:
             }
             for r in rows
         ]
+
+    # ── App Credentials ──
+
+    def set_credential(self, key: str, value: str) -> None:
+        """存/覆盖一条应用级凭证（如 B站 cookie JSON），按 key 幂等 upsert。"""
+        with self._lock:
+            self._conn.execute(
+                """INSERT OR REPLACE INTO app_credentials (key, value, updated_at)
+                   VALUES (?,?,?)""",
+                (key, value, _now_iso()),
+            )
+            self._conn.commit()
+
+    def get_credential(self, key: str) -> str | None:
+        """读一条凭证值，未命中返回 None。"""
+        row = self._conn.execute(
+            "SELECT value FROM app_credentials WHERE key=?", (key,)
+        ).fetchone()
+        return row["value"] if row is not None else None
+
+    def delete_credential(self, key: str) -> None:
+        """删一条凭证（如登出清除 B站 cookie）。"""
+        with self._lock:
+            self._conn.execute("DELETE FROM app_credentials WHERE key=?", (key,))
+            self._conn.commit()
 
     # ── AI Usage ──
 

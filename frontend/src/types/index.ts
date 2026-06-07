@@ -79,6 +79,26 @@ export interface AuthStatus {
   youtube: { has_cookies: boolean; status: string }
 }
 
+// B站扫码登录契约：与后端 /api/bili/* 严格对齐。
+export interface BiliStatus {
+  logged_in: boolean
+  uname: string | null
+}
+
+export interface BiliLoginStart {
+  qrcode_key: string
+  qr_png: string
+  url: string
+}
+
+export type BiliLoginState = 'waiting' | 'scanned' | 'confirmed' | 'expired'
+
+export interface BiliLoginPoll {
+  state: BiliLoginState
+  logged_in: boolean
+  uname: string | null
+}
+
 export interface ProfileSummary {
   domain: string
   role: string

@@ -479,6 +479,29 @@ class TestCollection:
         assert len(db.list_collections()) == 2
 
 
+class TestAppCredentials:
+    def test_set_and_get(self, db):
+        db.set_credential("bili_cookies", '{"sessdata": "abc"}')
+        assert db.get_credential("bili_cookies") == '{"sessdata": "abc"}'
+
+    def test_get_missing_returns_none(self, db):
+        assert db.get_credential("nope") is None
+
+    def test_set_overwrites(self, db):
+        db.set_credential("k", "v1")
+        db.set_credential("k", "v2")
+        assert db.get_credential("k") == "v2"
+
+    def test_delete(self, db):
+        db.set_credential("k", "v")
+        db.delete_credential("k")
+        assert db.get_credential("k") is None
+
+    def test_delete_missing_is_noop(self, db):
+        db.delete_credential("never-existed")
+        assert db.get_credential("never-existed") is None
+
+
 class TestUpdateValidation:
     def test_update_job_invalid_column(self, db, sample_job):
         db.create_job(sample_job)

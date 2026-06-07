@@ -57,6 +57,17 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _bili_sessdata(db: Database) -> str | None:
+    """从凭证表取已登录 B站的 SESSDATA，未登录/解析失败返回 None。"""
+    raw = db.get_credential("bili_cookies")
+    if not raw:
+        return None
+    try:
+        return json.loads(raw).get("sessdata") or None
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
 @router.post("", status_code=201)
 async def create_job(
     req: JobCreateRequest,
@@ -70,8 +81,7 @@ async def create_job(
     source = detect_source(req.url) if req.url else "upload"
 
     job_id = generate_job_id()
-    # 初始 job.json 经存储写入(本地或 MinIO),远程 worker 才能 pull 到 url 等信息。
-    job_json = json.dumps({
+    job_doc = {
         "id": job_id,
         "url": req.url,
         "source": source,
@@ -79,7 +89,14 @@ async def create_job(
         "domain": req.domain,
         "style_tags": req.style_tags,
         "created_at": _now_iso(),
-    }, ensure_ascii=False, indent=2)
+    }
+    # B站源若已登录,把 SESSDATA 写进 job.json,随存储下发到下载步(含远程 worker);无则匿名下载。
+    if source == "bilibili":
+        sessdata = await asyncio.to_thread(_bili_sessdata, db)
+        if sessdata:
+            job_doc["sessdata"] = sessdata
+    # 初始 job.json 经存储写入(本地或 MinIO),远程 worker 才能 pull 到 url 等信息。
+    job_json = json.dumps(job_doc, ensure_ascii=False, indent=2)
     await storage.write_file(job_id, "job.json", job_json.encode("utf-8"))
 
     job = Job(

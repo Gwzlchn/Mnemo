@@ -55,8 +55,13 @@ class DownloadStep(StepBase):
             "-tp", "{title}",
         ]
 
+        # 优先用 job.json 注入的 SESSDATA(扫码登录入库,随任务下发到远程 worker);
+        # 否则回退到本地 cookie 文件(现状);两者皆无则匿名下载,降级 480P。
+        sessdata = self.load_json("job.json").get("sessdata")
         cookies = Path("/data/cookies/bilibili.txt")
-        if cookies.exists():
+        if sessdata:
+            cmd.extend(["-c", sessdata])
+        elif cookies.exists():
             cmd.extend(["-c", str(cookies)])
         else:
             self.log.warn("no_bilibili_cookies", msg="降级 480P")
