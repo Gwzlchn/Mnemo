@@ -24,16 +24,17 @@ from worker.step_runner import (
 # ── helpers ──
 
 
-def _ctx(work_dir: Path, module: str, step: str = "A", timeout_sec: int = 10) -> StepContext:
+def _ctx(work_dir: Path, module: str, step: str = "A", timeout_sec: int = 10,
+         pool: str = "cpu") -> StepContext:
     return StepContext(
         job_id="j_test",
         step=step,
         work_dir=work_dir,
         exec_id="x",
-        step_cfg={"step": {"name": step, "pool": "cpu", "timeout_sec": timeout_sec, "retries": 1}},
+        step_cfg={"step": {"name": step, "pool": pool, "timeout_sec": timeout_sec, "retries": 1}},
         module=module,
         timeout_sec=timeout_sec,
-        pool="cpu",
+        pool=pool,
     )
 
 
@@ -249,6 +250,83 @@ class TestSubprocessProgress:
         written = json.loads((work_dir / ".A.progress").read_text())
         assert "worker_heartbeat_at" in written
         assert written["current"] == 3
+
+
+# ── env 按需下放（P4 secrets-on-demand）──
+
+
+# stub：把自身可见的 os.environ 落到 work_dir/env_dump.json，供断言子进程实际继承了什么。
+_ENV_DUMP_STUB = (
+    "import json, os, sys\n"
+    "from pathlib import Path\n"
+    "Path(sys.argv[sys.argv.index('--job-dir') + 1], 'env_dump.json')"
+    ".write_text(json.dumps(dict(os.environ)))\n"
+    "sys.exit(0)\n"
+)
+
+
+class TestSubprocessEnvHardening:
+    """DENYLIST：剥离控制面/AI 密钥但保留系统 env；ai 池才下放 AI 密钥。"""
+
+    @pytest.mark.asyncio
+    async def test_non_ai_pool_strips_secrets_keeps_system(self, with_pythonpath, monkeypatch):
+        root = with_pythonpath
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-secret")
+        monkeypatch.setenv("MINIO_SECRET_KEY", "minio-secret")
+        monkeypatch.setenv("MINIO_ACCESS_KEY", "minio-access")
+        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379")
+        monkeypatch.setenv("GATEWAY_URL", "http://gateway:8000")
+        monkeypatch.setenv("WORKER_TOKEN", "worker-secret")
+        monkeypatch.setenv("HTTPS_PROXY", "http://proxy:7890")
+
+        work_dir = root / "j_env_cpu"
+        work_dir.mkdir()
+        module = _write_stub(root, "_stub_env_cpu", "dump", _ENV_DUMP_STUB)
+        runner = SubprocessStepRunner()
+        rc, _ = await runner.run_step(
+            _ctx(work_dir, module, pool="cpu"), _noop_progress, _noop_tick
+        )
+        assert rc == 0
+        env = json.loads((work_dir / "env_dump.json").read_text())
+
+        # 控制面密钥 + AI 密钥（非 ai 池）必须不可见。
+        assert "ANTHROPIC_API_KEY" not in env
+        assert "MINIO_SECRET_KEY" not in env
+        assert "MINIO_ACCESS_KEY" not in env
+        assert "REDIS_URL" not in env
+        assert "GATEWAY_URL" not in env
+        assert "WORKER_TOKEN" not in env
+        # 系统变量（exec python/ffmpeg 必需）必须保留。
+        assert "PATH" in env and env["PATH"]
+        # 始终下放的运行期变量。
+        assert env["STEP_EXEC_ID"] == "x"
+        assert env["HTTPS_PROXY"] == "http://proxy:7890"
+
+    @pytest.mark.asyncio
+    async def test_ai_pool_sees_ai_keys_not_control_plane(self, with_pythonpath, monkeypatch):
+        root = with_pythonpath
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-secret")
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-secret")
+        monkeypatch.setenv("MINIO_SECRET_KEY", "minio-secret")
+        monkeypatch.setenv("HTTPS_PROXY", "http://proxy:7890")
+
+        work_dir = root / "j_env_ai"
+        work_dir.mkdir()
+        module = _write_stub(root, "_stub_env_ai", "dump", _ENV_DUMP_STUB)
+        runner = SubprocessStepRunner()
+        rc, _ = await runner.run_step(
+            _ctx(work_dir, module, pool="ai"), _noop_progress, _noop_tick
+        )
+        assert rc == 0
+        env = json.loads((work_dir / "env_dump.json").read_text())
+
+        # ai 池：AI 密钥按需下放。
+        assert env["ANTHROPIC_API_KEY"] == "sk-anthropic-secret"
+        assert env["DEEPSEEK_API_KEY"] == "sk-deepseek-secret"
+        # 但控制面密钥仍不可见（步骤永不直连 MinIO）。
+        assert "MINIO_SECRET_KEY" not in env
+        assert env["STEP_EXEC_ID"] == "x"
+        assert env["HTTPS_PROXY"] == "http://proxy:7890"
 
 
 # ── 工厂选型 ──

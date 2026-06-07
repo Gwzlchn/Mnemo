@@ -50,6 +50,31 @@ class TestDryRunProvider:
         assert resp.input_tokens == 0
 
 
+class TestProviderKeyFromEnv:
+    """密钥脱敏后,_create_provider 按 {NAME}_API_KEY 约定从环境补齐。"""
+
+    def test_anthropic_key_from_env_when_config_empty(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "env-secret")
+        gw = AIGateway({"providers": {"anthropic": {"type": "anthropic"}}}, {"steps": []})
+        assert gw._create_provider("anthropic")._api_key == "env-secret"
+
+    def test_openai_compatible_key_from_env(self, monkeypatch):
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-secret")
+        gw = AIGateway(
+            {"providers": {"deepseek": {"type": "openai_compatible", "base_url": "http://x"}}},
+            {"steps": []},
+        )
+        assert gw._create_provider("deepseek")._api_key == "ds-secret"
+
+    def test_config_key_takes_precedence_over_env(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "env-secret")
+        gw = AIGateway(
+            {"providers": {"anthropic": {"type": "anthropic", "api_key": "cfg-key"}}},
+            {"steps": []},
+        )
+        assert gw._create_provider("anthropic")._api_key == "cfg-key"
+
+
 class TestAIGateway:
     @pytest.fixture
     def gateway_config(self):

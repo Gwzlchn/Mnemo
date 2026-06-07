@@ -299,6 +299,8 @@ class Scheduler:
         cfg = pipeline_steps.get(step, {})
         pipeline_retries = cfg.get("retries", 0)
 
+        # 缺表项（如 unknown）按 max 0 处理：未归类失败默认 BUILD，不重试。
+        # pipeline_retries 二次封顶 policy_max：用户不可放大 SYSTEM 类的上限。
         policy = RETRY_POLICY.get(error_type, {})
         policy_max = policy.get("max", 0)
         max_retries = min(policy_max, pipeline_retries)

@@ -122,3 +122,44 @@ class TestGetRetryDelay:
 
     def test_unknown_error_type(self):
         assert get_retry_delay("nonexistent", 0) is None
+
+
+class TestBuildVsSystemMatrix:
+    """BUILD（确定性失败，不重试）vs SYSTEM（瞬态，退避重试）的完整重试矩阵。"""
+
+    # BUILD 类：首次失败即不重试，get_retry_delay 一律 None。
+    def test_build_types_never_retry_at_attempt_zero(self):
+        for et in ("input_missing", "input_invalid", "resource"):
+            assert get_retry_delay(et, 0) is None, f"{et} 应为 BUILD 不重试"
+
+    def test_unknown_is_build_default_no_retry(self):
+        # 步骤内未捕获异常写入 unknown：缺表项按 BUILD 兜底，不重试。
+        assert get_retry_delay("unknown", 0) is None
+
+    # SYSTEM 类：每次重试返回配置好的退避秒数。
+    def test_ai_exponential_backoff_sequence(self):
+        assert [get_retry_delay("ai", a) for a in (0, 1, 2)] == [30, 60, 120]
+
+    def test_ai_rate_limit_fixed_interval(self):
+        assert [get_retry_delay("ai_rate_limit", a) for a in (0, 1, 2)] == [30, 30, 30]
+
+    def test_timeout_single_short_delay(self):
+        assert get_retry_delay("timeout", 0) == 10
+
+    def test_processing_immediate_single_retry(self):
+        assert get_retry_delay("processing", 0) == 0
+
+    # 超过 max 后所有 SYSTEM 类都停止重试（返回 None）。
+    def test_system_types_stop_at_max(self):
+        assert get_retry_delay("ai", 3) is None
+        assert get_retry_delay("ai_rate_limit", 3) is None
+        assert get_retry_delay("timeout", 1) is None
+        assert get_retry_delay("processing", 1) is None
+
+    def test_build_types_have_max_zero(self):
+        for et in ("input_missing", "input_invalid", "resource"):
+            assert RETRY_POLICY[et]["max"] == 0, f"{et} 应为 max 0（BUILD）"
+
+    def test_system_types_have_positive_max(self):
+        for et in ("processing", "ai", "ai_rate_limit", "timeout"):
+            assert RETRY_POLICY[et]["max"] > 0, f"{et} 应可重试（SYSTEM）"

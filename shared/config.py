@@ -283,6 +283,24 @@ def load_domain_profile(config_dir: Path, domain: str) -> dict:
     return _load_optional(path)
 
 
+# providers.yaml 在加载期已把 ${API_KEY} 解析成明文，按需安全要求绝不下放给步骤。
+_PROVIDER_SECRET_KEYS = ("api_key", "secret_key", "token")
+
+
+def sanitize_providers(providers: dict) -> dict:
+    """剥离 providers 配置里的明文密钥，只留 provider/model 选择给步骤进程。
+    密钥由 ai_gateway 在调用时从 env 读取，绝不经 .{step}.config.json 落盘或代理。"""
+    providers_map = providers.get("providers")
+    if not isinstance(providers_map, dict):
+        return copy.deepcopy(providers)
+    clean = copy.deepcopy(providers)
+    for cfg in clean["providers"].values():
+        if isinstance(cfg, dict):
+            for secret in _PROVIDER_SECRET_KEYS:
+                cfg.pop(secret, None)
+    return clean
+
+
 def build_step_config(
     app_config: AppConfig,
     pipeline: str,
@@ -310,5 +328,5 @@ def build_step_config(
             "prompts_dir": str(app_config.prompts_dir),
             "config_dir": str(app_config.config_dir),
         },
-        "providers": app_config.providers,
+        "providers": sanitize_providers(app_config.providers),
     }

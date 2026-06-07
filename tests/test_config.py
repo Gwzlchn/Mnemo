@@ -15,6 +15,7 @@ from shared.config import (
     normalize_pipeline,
     normalize_pipelines,
     resolve_env_vars,
+    sanitize_providers,
 )
 
 
@@ -141,6 +142,54 @@ class TestBuildStepConfig:
         cfg = load_config(config_dir=configs_dir, data_dir=tmp_data_dir)
         with pytest.raises(StopIteration):
             build_step_config(cfg, "video", "nonexistent_step")
+
+
+class TestSanitizeProviders:
+    """P4：providers 配置下放给步骤前必须剥离明文密钥，密钥改由 env 按需读取。"""
+
+    def test_strips_api_key_keeps_selection(self):
+        raw = {"providers": {
+            "anthropic": {"type": "anthropic", "api_key": "sk-secret",
+                          "models": ["claude-opus-4-6"]},
+            "deepseek": {"type": "openai_compatible", "base_url": "https://x",
+                         "api_key": "sk-deep", "models": ["deepseek-v4-pro"]},
+        }}
+        clean = sanitize_providers(raw)
+        assert "api_key" not in clean["providers"]["anthropic"]
+        assert "api_key" not in clean["providers"]["deepseek"]
+        # 非密钥的 provider/model 选择保留，gateway 仍能路由。
+        assert clean["providers"]["anthropic"]["type"] == "anthropic"
+        assert clean["providers"]["anthropic"]["models"] == ["claude-opus-4-6"]
+        assert clean["providers"]["deepseek"]["base_url"] == "https://x"
+
+    def test_does_not_mutate_input(self):
+        raw = {"providers": {"anthropic": {"type": "anthropic", "api_key": "sk-secret"}}}
+        sanitize_providers(raw)
+        assert raw["providers"]["anthropic"]["api_key"] == "sk-secret"
+
+    def test_empty_or_malformed_providers(self):
+        assert sanitize_providers({}) == {}
+        assert sanitize_providers({"providers": None}) == {"providers": None}
+
+
+class TestBuildStepConfigNoSecrets:
+    """build_step_config 落盘/代理的 step_cfg 绝不含明文密钥。"""
+
+    def test_no_resolved_api_key_in_step_cfg(self, configs_dir, tmp_data_dir, monkeypatch):
+        # 模拟运行环境里有真实密钥：加载期会把 ${ANTHROPIC_API_KEY} 解析成它。
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-LEAK-canary")
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deep-canary")
+        cfg = load_config(config_dir=configs_dir, data_dir=tmp_data_dir)
+        step_cfg = build_step_config(cfg, "video", "08_smart")
+
+        # 整个 step_cfg 序列化后不得出现任何明文密钥（落盘 + 代理给 gateway 的就是它）。
+        import json as _json
+        serialized = _json.dumps(step_cfg)
+        assert "sk-LEAK-canary" not in serialized
+        assert "sk-deep-canary" not in serialized
+        # providers 仍保留可路由的非密钥选择。
+        for name, pcfg in step_cfg["providers"]["providers"].items():
+            assert "api_key" not in pcfg, f"{name} 仍泄漏 api_key"
 
 
 class TestNormalizePipelineLegacy:

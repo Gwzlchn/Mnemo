@@ -28,6 +28,11 @@ TickCallback = Callable[[], Awaitable[None]]
 _NETWORKED_POOLS = frozenset({"io", "ai"})
 # AI step 才注入的密钥白名单：仅注入 env 里实际存在的那几个。
 _AI_KEY_ENV = ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "OLLAMA_URL")
+# 控制面密钥：步骤只读写本地 work_dir，绝不直连 MinIO/Redis/Gateway，故全程剥离。
+_CONTROL_PLANE_SECRETS = (
+    "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "MINIO_URL",
+    "WORKER_REGISTRATION_TOKEN", "WORKER_TOKEN", "GATEWAY_URL", "REDIS_URL",
+)
 
 
 @dataclass
@@ -72,7 +77,9 @@ class SubprocessStepRunner:
         config_path.write_text(json.dumps(ctx.step_cfg, ensure_ascii=False, indent=2))
 
         timeout = ctx.timeout_sec
-        env = {**os.environ, "STEP_EXEC_ID": ctx.exec_id}
+        # 按需下放：子进程需继承系统 env（PATH/HOME/LANG/LD_LIBRARY_PATH）才能 exec
+        # python/ffmpeg，故用 DENYLIST 而非白名单——仅剥离步骤永不需要的敏感密钥。
+        env = _build_subprocess_env(ctx)
 
         proc = await asyncio.create_subprocess_exec(
             "python3", "-m", ctx.module,
@@ -371,6 +378,18 @@ class DockerStepRunner:
                 c.remove(force=True)
             except Exception:
                 pass
+
+
+def _build_subprocess_env(ctx: StepContext) -> dict:
+    """DENYLIST 构造子进程 env：继承全量系统 env，剥离控制面密钥；
+    非 ai 池再剥离 AI 密钥；始终补 STEP_EXEC_ID。HTTPS_PROXY 等系统变量自然保留。"""
+    env = {**os.environ, "STEP_EXEC_ID": ctx.exec_id}
+    for key in _CONTROL_PLANE_SECRETS:
+        env.pop(key, None)
+    if ctx.pool != "ai":
+        for key in _AI_KEY_ENV:
+            env.pop(key, None)
+    return env
 
 
 def _alive(container) -> bool:

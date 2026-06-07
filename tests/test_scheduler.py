@@ -593,6 +593,129 @@ class TestRetry:
         assert await redis.get_step_status("j_test_001", "A") == "failed"
 
 
+class TestRetryByFailureType:
+    """BUILD（不重试，标 failed）vs SYSTEM（退避重试至上限）的调度器矩阵。
+    pipeline_retries 与 RETRY_POLICY.max 取 min：用户配置只能收紧不能放大。"""
+
+    async def _drain_delayed(self, scheduler):
+        """ai 类延迟重试经 create_task 异步入队，等其完成再断言。"""
+        await asyncio.sleep(0)
+        if scheduler._delayed_tasks:
+            await asyncio.gather(*list(scheduler._delayed_tasks))
+
+    @pytest.mark.asyncio
+    async def test_input_invalid_not_retried(self, scheduler, redis, db):
+        # BUILD：input_invalid 确定性失败，A 直接标 failed，job 失败。
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        await redis.set_step_status("j_test_001", "A", "running")
+        await scheduler.on_step_failed("j_test_001", "A", "bad json", "input_invalid")
+
+        assert await redis.get_step_status("j_test_001", "A") == "failed"
+        assert await redis.get_step_retries("j_test_001", "A") == 0
+        assert db.get_job("j_test_001").status == JobStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_unknown_not_retried(self, scheduler, redis, db):
+        # 缺表项 unknown 走 BUILD 兜底：不重试。
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        await redis.set_step_status("j_test_001", "A", "running")
+        await scheduler.on_step_failed("j_test_001", "A", "boom", "unknown")
+
+        assert await redis.get_step_status("j_test_001", "A") == "failed"
+        assert await redis.get_step_retries("j_test_001", "A") == 0
+
+    @pytest.mark.asyncio
+    async def test_ai_retried_with_configured_delay(self, scheduler, redis, db):
+        # SYSTEM：A(pipeline retries=2) 失败 ai → 重试，且用 policy 的 30s 延迟。
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+        await redis.dequeue_step("cpu")  # drain A 入队
+
+        captured = []
+
+        async def mock_delayed(delay, job_id, step):
+            captured.append(delay)
+            await scheduler.enqueue_step(job_id, step)
+
+        scheduler._delayed_enqueue = mock_delayed
+
+        await redis.set_step_status("j_test_001", "A", "running")
+        await scheduler.on_step_failed("j_test_001", "A", "5xx", "ai")
+        await self._drain_delayed(scheduler)
+
+        assert captured == [30]  # ai 首次退避
+        assert await redis.get_step_status("j_test_001", "A") == "ready"
+        assert await redis.get_step_retries("j_test_001", "A") == 1
+
+    @pytest.mark.asyncio
+    async def test_ai_capped_by_pipeline_retries(self, scheduler, redis, db):
+        # pipeline_retries 封顶：B(retries=1) 把 ai 的 max 3 收紧到 1。
+        # 第一次失败 → 重试；第二次失败 → 已达上限 → 标 failed。
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+
+        delays = []
+
+        async def mock_delayed(delay, job_id, step):
+            delays.append(delay)
+            await scheduler.enqueue_step(job_id, step)
+
+        scheduler._delayed_enqueue = mock_delayed
+
+        # 第一次 ai 失败：current_retries 0 < min(3,1)=1 → 重试。
+        await redis.set_step_status("j_test_001", "B", "running")
+        await scheduler.on_step_failed("j_test_001", "B", "5xx", "ai")
+        await self._drain_delayed(scheduler)
+        assert await redis.get_step_status("j_test_001", "B") == "ready"
+        assert await redis.get_step_retries("j_test_001", "B") == 1
+
+        # 第二次 ai 失败：current_retries 1 >= 1 → 不再重试，标 failed。
+        await redis.set_step_status("j_test_001", "B", "running")
+        await scheduler.on_step_failed("j_test_001", "B", "5xx again", "ai")
+        await self._drain_delayed(scheduler)
+        assert await redis.get_step_status("j_test_001", "B") == "failed"
+        assert delays == [30]  # 只重试过一次
+        assert db.get_job("j_test_001").status == JobStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_ai_capped_by_policy_max(self, scheduler, redis, db):
+        # policy_max 封顶反向：A 的 pipeline retries=2 仍受 ai 的 max=3 约束，
+        # min(3,2)=2，故 A 可重试两次（验证 policy.max 不会被 pipeline 放大）。
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)
+        await redis.dequeue_step("cpu")
+
+        delays = []
+
+        async def mock_delayed(delay, job_id, step):
+            delays.append(delay)
+            await scheduler.enqueue_step(job_id, step)
+
+        scheduler._delayed_enqueue = mock_delayed
+
+        for expected_retries in (1, 2):
+            await redis.set_step_status("j_test_001", "A", "running")
+            await scheduler.on_step_failed("j_test_001", "A", "5xx", "ai")
+            await self._drain_delayed(scheduler)
+            assert await redis.get_step_retries("j_test_001", "A") == expected_retries
+
+        # 第三次：current_retries 2 >= min(3,2)=2 → 停止重试。
+        await redis.set_step_status("j_test_001", "A", "running")
+        await scheduler.on_step_failed("j_test_001", "A", "5xx", "ai")
+        await self._drain_delayed(scheduler)
+        assert await redis.get_step_status("j_test_001", "A") == "failed"
+        assert delays == [30, 60]  # 两次退避，第三次不再重试
+
+
 class TestIdempotent:
     @pytest.mark.asyncio
     async def test_duplicate_step_done(self, scheduler, redis, db):

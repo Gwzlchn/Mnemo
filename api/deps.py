@@ -63,6 +63,8 @@ async def verify_worker_token(
     row = await asyncio.to_thread(db.get_worker_token_by_hash, token_hash)
     if row is None or row["revoked"]:
         raise HTTPException(status_code=401, detail="invalid or revoked worker token")
+    # 把 token 行(含 pools/tags 授权范围)挂到 request.state，供端点做认领越权裁剪，不改返回类型。
+    request.state.worker_token = row
     return row["worker_id"]
 
 

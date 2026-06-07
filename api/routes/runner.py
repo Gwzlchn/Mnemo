@@ -189,15 +189,27 @@ async def _enrich_claim(redis: RedisClient, claim: dict) -> dict:
 @router.post("/jobs/request")
 async def request_job(
     req: RunnerClaimRequest,
+    request: Request,
     worker_id: str = Depends(verify_worker_token),
     db: Database = Depends(get_db),
     redis: RedisClient = Depends(get_redis),
 ):
     """长轮询认领一步:窗口内反复 claim_step,认到就 enrich 后返回,否则 {"claim": null}。"""
+    # per-token 授权:把请求池裁剪到 token 注册时授权的池子(空授权列表=不限,兼容旧 token)。
+    token = getattr(request.state, "worker_token", None)
+    authorized_pools = (token or {}).get("pools") or []
+    if authorized_pools:
+        allowed = [p for p in req.pools if p in set(authorized_pools)]
+    else:
+        allowed = list(req.pools)
+    # 越权池被裁空 → 无可认领,返回 null(非错误:worker 请求范围外的池自然认不到)。
+    if not allowed:
+        return {"claim": None}
+
     deadline = time.monotonic() + _CLAIM_WINDOW_SEC
     while True:
         claim = await runner_ops.claim_step(
-            redis, db, worker_id, req.pools, req.pool_limits,
+            redis, db, worker_id, allowed, req.pool_limits,
             set(req.tags), set(req.reject_tags),
         )
         if claim is not None:

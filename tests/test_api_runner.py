@@ -348,6 +348,79 @@ class TestJobsRequest:
         assert resp.status_code == 200
         assert resp.json() == {"claim": None}
 
+    @pytest.mark.asyncio
+    async def test_in_scope_pool_claims(self, jobs_client, real_redis):
+        # token 注册池 [cpu,io]，请求 cpu(范围内) → 认到 cpu 步。
+        worker_id, token = await _register_real(jobs_client)
+        await real_redis.enqueue_step("cpu", "j1", "A", [], priority=0)
+        await real_redis.set_step_status("j1", "A", "ready")
+        await real_redis.init_job("j1", "video", {})
+
+        resp = await jobs_client.post(
+            "/api/runner/jobs/request",
+            json={"pools": ["cpu"], "tags": ["vision"]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        claim = resp.json()["claim"]
+        assert claim["job_id"] == "j1" and claim["pool"] == "cpu"
+
+    @pytest.mark.asyncio
+    async def test_out_of_scope_pool_not_served(self, jobs_client, real_redis):
+        # token 注册池 [cpu,io]，请求 gpu(范围外) → null，即便 gpu 步 ready 也不服务。
+        worker_id, token = await _register_real(jobs_client)
+        await real_redis.enqueue_step("gpu", "j1", "A", [], priority=0)
+        await real_redis.set_step_status("j1", "A", "ready")
+        await real_redis.init_job("j1", "video", {})
+
+        resp = await jobs_client.post(
+            "/api/runner/jobs/request",
+            json={"pools": ["gpu"], "tags": ["vision"]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"claim": None}
+        # 范围外认领被早退裁掉，gpu 步未被翻成 running。
+        assert await real_redis.get_step_status("j1", "A") == "ready"
+
+    @pytest.mark.asyncio
+    async def test_partial_scope_filters_to_allowed(self, jobs_client, real_redis):
+        # 请求 [cpu,gpu]，token 仅授权 [cpu,io] → 裁剪到 cpu，仍能认到 cpu 步。
+        worker_id, token = await _register_real(jobs_client)
+        await real_redis.enqueue_step("cpu", "j1", "A", [], priority=0)
+        await real_redis.set_step_status("j1", "A", "ready")
+        await real_redis.init_job("j1", "video", {})
+
+        resp = await jobs_client.post(
+            "/api/runner/jobs/request",
+            json={"pools": ["gpu", "cpu"], "tags": ["vision"]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        claim = resp.json()["claim"]
+        assert claim["pool"] == "cpu"
+
+    @pytest.mark.asyncio
+    async def test_unrestricted_token_claims_any_pool(self, jobs_client, real_redis):
+        # 空 pools 的 token=不限范围(兼容旧 token) → 任意池可认。
+        payload = {"type": "gpu", "pools": [], "tags": ["vision"], "reject_tags": []}
+        resp = await jobs_client.post(
+            "/api/runner/register", json=payload, headers=_reg_headers(),
+        )
+        token = resp.json()["worker_token"]
+        await real_redis.enqueue_step("gpu", "j1", "A", [], priority=0)
+        await real_redis.set_step_status("j1", "A", "ready")
+        await real_redis.init_job("j1", "video", {})
+
+        resp = await jobs_client.post(
+            "/api/runner/jobs/request",
+            json={"pools": ["gpu"], "tags": ["vision"]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        claim = resp.json()["claim"]
+        assert claim["job_id"] == "j1" and claim["pool"] == "gpu"
+
 
 class TestJobsComplete:
     @pytest.mark.asyncio

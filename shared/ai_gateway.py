@@ -325,13 +325,15 @@ class AIGateway:
     def _create_provider(self, name: str):
         cfg = self._providers_config.get("providers", {}).get(name, {})
         ptype = cfg.get("type", "")
+        # 密钥不再随 step_cfg 落盘(已脱敏),配置缺省时按 {NAME}_API_KEY 约定从环境读。
+        api_key = cfg.get("api_key") or os.environ.get(f"{name.upper()}_API_KEY", "")
 
         if ptype == "anthropic":
-            return AnthropicProvider(api_key=cfg.get("api_key", ""))
+            return AnthropicProvider(api_key=api_key)
         elif ptype in ("openai_compatible", "openai"):
             return OpenAICompatibleProvider(
                 base_url=cfg.get("base_url", ""),
-                api_key=cfg.get("api_key", ""),
+                api_key=api_key,
                 provider_name=name,
             )
         elif ptype == "cli":
