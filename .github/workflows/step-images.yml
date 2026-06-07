@@ -15,12 +15,8 @@ jobs:
         include:
           - image: mnemo-step-base
             dockerfile: docker/step-base.Dockerfile
-          - image: mnemo-step-media
-            dockerfile: docker/step-media.Dockerfile
-          - image: mnemo-step-ocr
-            dockerfile: docker/step-ocr.Dockerfile
-          - image: mnemo-step-pdf
-            dockerfile: docker/step-pdf.Dockerfile
+          - image: mnemo-step-heavy
+            dockerfile: docker/step-heavy.Dockerfile
           - image: mnemo-step-gpu
             dockerfile: docker/step-gpu.Dockerfile
     steps:

@@ -130,7 +130,7 @@ class TestVariables:
                 "variables": {"OCR_TIMEOUT": 1800, "OCR_RETRIES": 1, "PROV": "anthropic"},
                 "jobs": {
                     "04_ocr": {"extends": ".cpu-step", "run": "steps.video.step_04_ocr",
-                               "image": "mnemo/step-ocr", "needs": ["03_dedup"],
+                               "image": "mnemo/step-heavy", "needs": ["03_dedup"],
                                "timeout": "$OCR_TIMEOUT", "retry": "$OCR_RETRIES"},
                     "08_smart": {"run": "m.s", "pool": "ai",
                                  "ai": {"primary": {"provider": "$PROV"}}},

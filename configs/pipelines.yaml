@@ -62,7 +62,7 @@ video:
 
     "01_scene":
       run: steps.video.step_01_scene
-      image: mnemo/step-media
+      image: mnemo/step-heavy
       pool: scene
       needs: ["00_download"]
       retry: 2
@@ -70,19 +70,19 @@ video:
     "02_frames":
       extends: .cpu-step
       run: steps.video.step_02_frames
-      image: mnemo/step-media
+      image: mnemo/step-heavy
       needs: ["01_scene"]
 
     "03_dedup":
       extends: .cpu-step
       run: steps.video.step_03_dedup
-      image: mnemo/step-media
+      image: mnemo/step-heavy
       needs: ["02_frames"]
 
     "04_ocr":
       extends: .cpu-step
       run: steps.video.step_04_ocr
-      image: mnemo/step-ocr
+      image: mnemo/step-heavy
       needs: ["03_dedup"]
       timeout: $OCR_TIMEOUT
       retry: $OCR_RETRIES
@@ -157,7 +157,7 @@ paper:
     "10_pdf_parse":
       extends: .cpu-step
       run: steps.paper.step_10_pdf_parse
-      image: mnemo/step-pdf
+      image: mnemo/step-heavy
       needs: ["00_download"]
 
     "11_sections":
@@ -169,7 +169,7 @@ paper:
     "12_figures":
       extends: .cpu-step
       run: steps.paper.step_12_figures
-      image: mnemo/step-pdf
+      image: mnemo/step-heavy
       needs: ["10_pdf_parse"]
 
     "14_smart_paper":
