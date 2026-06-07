@@ -7,7 +7,7 @@ import StepProgressBar from '../components/job/StepProgressBar.vue'
 import StatusBadge from '../components/common/StatusBadge.vue'
 import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import type { JobDetail } from '../types'
-import { ArrowLeft, RotateCcw, Play, Trash2, BookOpen, FileText, ClipboardCheck, Video } from 'lucide-vue-next'
+import { ArrowLeft, RotateCcw, Play, Trash2, BookOpen, FileText, ClipboardCheck, Video, Newspaper, Headphones } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -36,6 +36,8 @@ onMounted(async () => {
 const contentIcon = computed(() => {
   if (job.value?.content_type === 'video') return Video
   if (job.value?.content_type === 'paper') return FileText
+  if (job.value?.content_type === 'article') return Newspaper
+  if (job.value?.content_type === 'audio') return Headphones
   return FileText
 })
 

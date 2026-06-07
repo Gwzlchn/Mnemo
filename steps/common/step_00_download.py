@@ -36,8 +36,16 @@ class DownloadStep(StepBase):
             self._download_youtube(url)
         elif source == "arxiv":
             self._download_arxiv(url)
+        elif source == "http_article":
+            self._download_article(url)
+        elif source == "podcast":
+            self._download_audio(url)
         else:
             self._download_generic(url)
+
+        # 音频任务(上传或单集 URL)统一备一份 source.mp4 供复用的 whisper 步消费。
+        if content_type == "audio":
+            self._link_audio_for_whisper(self.job_dir / "input")
 
         metadata = self._extract_metadata(source, content_type)
         self.write_output("input/metadata.json", metadata)
@@ -98,6 +106,55 @@ class DownloadStep(StepBase):
         pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
         cmd = ["curl", "-fSL", "-o", str(input_dir / "source.pdf"), pdf_url]
         self.run_subprocess(cmd, timeout=120)
+
+    def _download_article(self, url: str) -> None:
+        """抓 HTML 原文写 input/source.html;同时用 trafilatura 抽正文/标题供后续解析。"""
+        import trafilatura
+
+        input_dir = self.job_dir / "input"
+        input_dir.mkdir(parents=True, exist_ok=True)
+
+        html = trafilatura.fetch_url(url)
+        if not html:
+            from shared.errors import InputInvalidError
+            raise InputInvalidError(f"Cannot fetch article: {url}")
+        self.write_output("input/source.html", html)
+
+        # 顺手抽一份标题等元数据,正文解析仍由 16_parse_article 负责(trafilatura)。
+        article_meta: dict = {"url": url}
+        try:
+            meta = trafilatura.extract_metadata(html)
+            if meta:
+                article_meta["title"] = meta.title or ""
+                article_meta["author"] = meta.author or ""
+                article_meta["sitename"] = meta.sitename or ""
+                article_meta["date"] = meta.date or ""
+        except Exception:
+            pass
+        self.write_output("input/article_meta.json", article_meta)
+
+    def _download_audio(self, url: str) -> None:
+        """单集音频 URL → 下载写 input/source.mp3。无 RSS,只取单文件。
+        同时落一份 input/source.mp4(复用现有 whisper 步,其入参约定为 source.mp4;
+        ffmpeg 按内容嗅探解码,扩展名不影响转写)。"""
+        input_dir = self.job_dir / "input"
+        input_dir.mkdir(parents=True, exist_ok=True)
+
+        dest = input_dir / "source.mp3"
+        cmd = ["curl", "-fSL", "-o", str(dest), url]
+        self.run_subprocess(cmd, timeout=self.config["step"]["timeout_sec"])
+
+    def _link_audio_for_whisper(self, input_dir: Path) -> None:
+        """把已下载/已上传的单集音频复制为 source.mp4,满足复用 whisper 步的入参约定。"""
+        target = input_dir / "source.mp4"
+        if target.exists():
+            return
+        for ext in (".mp3", ".m4a", ".wav", ".aac"):
+            src = input_dir / f"source{ext}"
+            if src.exists():
+                import shutil
+                shutil.copyfile(src, target)
+                return
 
     def _download_generic(self, url: str) -> None:
         input_dir = self.job_dir / "input"
@@ -160,6 +217,18 @@ class DownloadStep(StepBase):
         pdf_file = input_dir / "source.pdf"
         if pdf_file.exists():
             metadata["file_size_mb"] = round(pdf_file.stat().st_size / 1048576, 1)
+
+        html_file = input_dir / "source.html"
+        if html_file.exists():
+            metadata["file_size_mb"] = round(html_file.stat().st_size / 1048576, 1)
+
+        # 音频:对原始音频文件(非复制出的 source.mp4)取时长与大小。
+        for ext in (".mp3", ".m4a", ".wav", ".aac"):
+            audio_file = input_dir / f"source{ext}"
+            if audio_file.exists():
+                metadata["duration_sec"] = self._get_video_duration(audio_file)
+                metadata["file_size_mb"] = round(audio_file.stat().st_size / 1048576, 1)
+                break
 
         metadata["has_subtitle"] = any(input_dir.glob("*.srt"))
         metadata["has_danmaku"] = any(input_dir.glob("*.ass"))

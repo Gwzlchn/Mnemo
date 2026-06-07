@@ -12,6 +12,49 @@ from httpx import ASGITransport, AsyncClient
 from shared.config import AppConfig, load_config
 from shared.db import Database
 from api.main import create_app
+from api.routes.jobs import _detect_content_type, _pipeline_for
+
+
+class TestDetectContentType:
+    def test_pdf_file_is_paper(self):
+        assert _detect_content_type(None, "x.pdf") == "paper"
+
+    def test_video_file_is_video(self):
+        assert _detect_content_type(None, "x.mkv") == "video"
+
+    def test_audio_file_is_audio(self):
+        for name in ("x.mp3", "x.m4a", "x.wav", "x.aac"):
+            assert _detect_content_type(None, name) == "audio"
+
+    def test_html_txt_file_is_article(self):
+        assert _detect_content_type(None, "x.html") == "article"
+        assert _detect_content_type(None, "x.txt") == "article"
+
+    def test_filename_case_insensitive(self):
+        assert _detect_content_type(None, "X.MP3") == "audio"
+
+    def test_arxiv_url_is_paper(self):
+        assert _detect_content_type("https://arxiv.org/abs/2301.00001") == "paper"
+
+    def test_http_article_url_is_article(self):
+        assert _detect_content_type("https://example.com/post") == "article"
+
+    def test_podcast_url_is_audio(self):
+        assert _detect_content_type("https://cdn.example.com/ep/1.mp3") == "audio"
+
+    def test_video_url_defaults_video(self):
+        assert _detect_content_type("https://www.bilibili.com/video/BV1xx411c7mD") == "video"
+
+
+class TestPipelineFor:
+    def test_known_mappings(self):
+        assert _pipeline_for("video") == "video"
+        assert _pipeline_for("paper") == "paper"
+        assert _pipeline_for("article") == "article"
+        assert _pipeline_for("audio") == "audio"
+
+    def test_unknown_defaults_video(self):
+        assert _pipeline_for("mystery") == "video"
 
 
 @pytest.fixture
@@ -84,6 +127,28 @@ class TestCreateJob:
             "style_tags": ["lecture", "case-study"],
         })
         assert resp.status_code == 201
+
+    @pytest.mark.asyncio
+    async def test_create_article_job(self, client):
+        resp = await client.post("/api/jobs", json={
+            "url": "https://example.com/post/intro",
+        })
+        assert resp.status_code == 201
+        assert resp.json()["content_type"] == "article"
+
+    @pytest.mark.asyncio
+    async def test_create_podcast_job(self, client):
+        resp = await client.post("/api/jobs", json={
+            "url": "https://cdn.example.com/ep/1.mp3",
+        })
+        assert resp.status_code == 201
+        assert resp.json()["content_type"] == "audio"
+
+    @pytest.mark.asyncio
+    async def test_create_publishes_article_pipeline(self, client, mock_redis):
+        await client.post("/api/jobs", json={"url": "https://example.com/p"})
+        args = mock_redis.publish.call_args
+        assert args[0][1]["pipeline"] == "article"
 
 
 class TestListJobs:

@@ -189,3 +189,101 @@ paper:
       ai:
         primary: {provider: $AI_REVIEW_PRIMARY_PROVIDER, model: $AI_REVIEW_PRIMARY_MODEL}
         fallback: {provider: $AI_REVIEW_FALLBACK_PROVIDER, model: $AI_REVIEW_FALLBACK_MODEL}
+
+article:
+  variables:
+    AI_SMART_PRIMARY_PROVIDER: anthropic
+    AI_SMART_PRIMARY_MODEL: claude-sonnet-4-6
+    AI_SMART_FALLBACK_PROVIDER: deepseek
+    AI_SMART_FALLBACK_MODEL: deepseek-v4-pro
+    AI_REVIEW_PRIMARY_PROVIDER: anthropic
+    AI_REVIEW_PRIMARY_MODEL: claude-haiku-4-5
+    AI_REVIEW_FALLBACK_PROVIDER: deepseek
+    AI_REVIEW_FALLBACK_MODEL: deepseek-v4-flash
+  jobs:
+    "00_download":
+      run: steps.common.step_00_download
+      pool: io
+      timeout: 120
+      retry: 3
+
+    "16_parse_article":
+      extends: .cpu-step
+      run: steps.article.step_16_parse_article
+      needs: ["00_download"]
+      timeout: 60
+
+    "17_article_sections":
+      extends: .cpu-step
+      run: steps.article.step_17_article_sections
+      needs: ["16_parse_article"]
+      timeout: 60
+
+    "18_smart_article":
+      extends: .ai-step
+      run: steps.article.step_18_smart_article
+      needs: ["17_article_sections"]
+      tags: []
+      ai:
+        primary: {provider: $AI_SMART_PRIMARY_PROVIDER, model: $AI_SMART_PRIMARY_MODEL}
+        fallback: {provider: $AI_SMART_FALLBACK_PROVIDER, model: $AI_SMART_FALLBACK_MODEL}
+
+    "19_review":
+      extends: .review
+      run: steps.article.step_19_review
+      needs: ["18_smart_article"]
+      tags: []
+      ai:
+        primary: {provider: $AI_REVIEW_PRIMARY_PROVIDER, model: $AI_REVIEW_PRIMARY_MODEL}
+        fallback: {provider: $AI_REVIEW_FALLBACK_PROVIDER, model: $AI_REVIEW_FALLBACK_MODEL}
+
+audio:
+  variables:
+    AI_SMART_PRIMARY_PROVIDER: anthropic
+    AI_SMART_PRIMARY_MODEL: claude-sonnet-4-6
+    AI_SMART_FALLBACK_PROVIDER: deepseek
+    AI_SMART_FALLBACK_MODEL: deepseek-v4-pro
+    AI_REVIEW_PRIMARY_PROVIDER: anthropic
+    AI_REVIEW_PRIMARY_MODEL: claude-haiku-4-5
+    AI_REVIEW_FALLBACK_PROVIDER: deepseek
+    AI_REVIEW_FALLBACK_MODEL: deepseek-v4-flash
+  jobs:
+    "00_download":
+      run: steps.common.step_00_download
+      pool: io
+      timeout: 120
+      retry: 3
+
+    # 转写复用 video 的 whisper 步;落在 whisper-capable worker(gpu 池含 cpu fallback)。
+    "00b_whisper":
+      run: steps.video.step_00b_whisper
+      image: mnemo/step-gpu
+      pool: gpu
+      needs: ["00_download"]
+      timeout: 1800
+      retry: 2
+      tags: ["gpu"]
+
+    "20_transcript_parse":
+      extends: .cpu-step
+      run: steps.audio.step_20_transcript_parse
+      needs: ["00b_whisper"]
+      timeout: 60
+
+    "21_smart_podcast":
+      extends: .ai-step
+      run: steps.audio.step_21_smart_podcast
+      needs: ["20_transcript_parse"]
+      tags: []
+      ai:
+        primary: {provider: $AI_SMART_PRIMARY_PROVIDER, model: $AI_SMART_PRIMARY_MODEL}
+        fallback: {provider: $AI_SMART_FALLBACK_PROVIDER, model: $AI_SMART_FALLBACK_MODEL}
+
+    "22_review":
+      extends: .review
+      run: steps.audio.step_22_review
+      needs: ["21_smart_podcast"]
+      tags: []
+      ai:
+        primary: {provider: $AI_REVIEW_PRIMARY_PROVIDER, model: $AI_REVIEW_PRIMARY_MODEL}
+        fallback: {provider: $AI_REVIEW_FALLBACK_PROVIDER, model: $AI_REVIEW_FALLBACK_MODEL}

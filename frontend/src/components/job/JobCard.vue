@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import type { JobSummary } from '../../types'
 import StatusBadge from '../common/StatusBadge.vue'
 import ProgressBar from '../common/ProgressBar.vue'
-import { Video, FileText, FileType } from 'lucide-vue-next'
+import { Video, FileText, FileType, Newspaper, Headphones } from 'lucide-vue-next'
 
 const props = defineProps<{ job: JobSummary }>()
 const router = useRouter()
@@ -12,6 +12,8 @@ const router = useRouter()
 const icon = computed(() => {
   if (props.job.content_type === 'video') return Video
   if (props.job.content_type === 'paper') return FileText
+  if (props.job.content_type === 'article') return Newspaper
+  if (props.job.content_type === 'audio') return Headphones
   return FileType
 })
 

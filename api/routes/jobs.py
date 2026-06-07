@@ -37,19 +37,33 @@ def _validate_job_id(job_id: str) -> None:
 
 def _detect_content_type(url: str | None, filename: str | None = None) -> str:
     if filename:
-        if filename.endswith(".pdf"):
+        name = filename.lower()
+        if name.endswith(".pdf"):
             return "paper"
-        if filename.endswith((".mp4", ".mkv", ".webm", ".flv")):
+        if name.endswith((".mp4", ".mkv", ".webm", ".flv")):
             return "video"
+        if name.endswith((".mp3", ".m4a", ".wav", ".aac")):
+            return "audio"
+        if name.endswith((".html", ".htm", ".txt")):
+            return "article"
     if url:
         source = detect_source(url)
         if source == "arxiv":
             return "paper"
+        if source == "http_article":
+            return "article"
+        if source == "podcast":
+            return "audio"
     return "video"
 
 
 def _pipeline_for(content_type: str) -> str:
-    return {"video": "video", "paper": "paper"}.get(content_type, "video")
+    return {
+        "video": "video",
+        "paper": "paper",
+        "article": "article",
+        "audio": "audio",
+    }.get(content_type, "video")
 
 
 def _now_iso() -> str:

@@ -1,6 +1,17 @@
+// 内容类型:与后端 pipeline 一一对应(video/paper/article/audio)。
+export type ContentType = 'video' | 'paper' | 'article' | 'audio'
+
+// 内容类型中文徽章:前端各处展示统一引用。
+export const CONTENT_TYPE_LABELS: Record<string, string> = {
+  video: '视频',
+  paper: '论文',
+  article: '文章',
+  audio: '播客',
+}
+
 export interface JobSummary {
   job_id: string
-  content_type: string
+  content_type: ContentType
   status: string
   created_at: string
   title: string | null

@@ -77,7 +77,7 @@ async function submit() {
         <input
           v-model="url"
           type="text"
-          placeholder="粘贴 URL (BV号 / arXiv / 链接)"
+          placeholder="粘贴 URL (BV号 / arXiv / 文章 / 音频链接)"
           :disabled="!!file"
           class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none disabled:bg-gray-50 disabled:text-gray-400"
         />
@@ -104,7 +104,7 @@ async function submit() {
         <label class="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
           <Upload :size="14" />
           <span>上传文件</span>
-          <input type="file" accept=".mp4,.mkv,.webm,.flv,.pdf" class="hidden" @change="onFileChange" />
+          <input type="file" accept=".mp4,.mkv,.webm,.flv,.pdf,.mp3,.m4a,.wav,.aac,.html,.htm,.txt" class="hidden" @change="onFileChange" />
         </label>
         <span v-if="file" class="flex items-center gap-1 text-sm text-gray-600">
           {{ file.name }}

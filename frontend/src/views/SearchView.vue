@@ -29,6 +29,7 @@ const contentTypeLabels: Record<string, string> = {
   video: '视频',
   paper: '论文',
   article: '文章',
+  audio: '播客',
 }
 
 function buildQuery(): string {

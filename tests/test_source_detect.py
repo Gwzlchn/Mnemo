@@ -25,11 +25,35 @@ class TestDetectSource:
     def test_arxiv_pdf(self):
         assert detect_source("https://arxiv.org/pdf/2301.00001") == "arxiv"
 
-    def test_unknown_url(self):
-        assert detect_source("https://example.com/video.mp4") == "other"
-
     def test_empty_string(self):
         assert detect_source("") == "other"
+
+    def test_http_article(self):
+        assert detect_source("https://example.com/post/intro-to-rust") == "http_article"
+
+    def test_http_article_no_path(self):
+        assert detect_source("http://blog.example.org") == "http_article"
+
+    def test_podcast_mp3(self):
+        assert detect_source("https://cdn.example.com/ep/42.mp3") == "podcast"
+
+    def test_podcast_m4a_with_query(self):
+        assert detect_source("https://cdn.example.com/ep/42.m4a?token=abc") == "podcast"
+
+    def test_podcast_wav(self):
+        assert detect_source("https://cdn.example.com/clip.wav") == "podcast"
+
+    def test_non_http_unknown_stays_other(self):
+        assert detect_source("ftp://example.com/file") == "other"
+
+    def test_bare_identifier_stays_other(self):
+        assert detect_source("just-some-text") == "other"
+
+    def test_known_sources_unchanged(self):
+        # 新判定不得改动既有来源识别。
+        assert detect_source("https://www.bilibili.com/video/BV1xx411c7mD") == "bilibili"
+        assert detect_source("https://youtu.be/dQw4w9WgXcQ") == "youtube"
+        assert detect_source("https://arxiv.org/abs/2301.00001") == "arxiv"
 
 
 class TestExtractBvid:

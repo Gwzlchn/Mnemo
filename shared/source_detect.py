@@ -23,6 +23,9 @@ _ARXIV_PATTERNS = [
     re.compile(r"arxiv\.org"),
 ]
 
+# 单集音频后缀：URL 以此结尾视作播客单集音频。
+_AUDIO_SUFFIXES = (".mp3", ".m4a", ".wav", ".aac")
+
 
 def detect_source(url: str) -> str:
     """根据 URL 或标识符判断来源平台。"""
@@ -40,6 +43,14 @@ def detect_source(url: str) -> str:
     for pat in _ARXIV_PATTERNS:
         if pat.search(url):
             return "arxiv"
+
+    # 音频后缀优先于通用文章:同为 http(s) 链接,音频走播客单集。
+    if url.lower().split("?")[0].endswith(_AUDIO_SUFFIXES):
+        return "podcast"
+
+    # http(s) 且非已知视频/arxiv/音频 → 通用网页文章。
+    if re.match(r"https?://", url):
+        return "http_article"
 
     return "other"
 
