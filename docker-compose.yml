@@ -62,8 +62,11 @@ services:
     image: ghcr.io/gwzlchn/mnemo:latest
     restart: unless-stopped
     command: python -m worker.main --type cpu
+    # 默认 subprocess 执行器,不挂 docker.sock(避免宿主 root 等价暴露);
+    # 切 docker 执行器请叠加 docker-compose.executor.yml。
     volumes:
       - ${MNEMO_DATA_DIR:-mnemo-data}:/data
+      - ${HOST_WORK_DIR:-mnemo-work}:/tmp/mnemo-work
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATA_DIR=/data
@@ -72,7 +75,9 @@ services:
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-}
       - MINIO_BUCKET=${MINIO_BUCKET:-mnemo}
-      - WORK_DIR=${WORK_DIR:-/tmp/mnemo-work}
+      - STEP_RUNTIME=${STEP_RUNTIME:-subprocess}
+      - WORK_DIR=/tmp/mnemo-work
+      - HOST_WORK_DIR=${HOST_WORK_DIR:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
     security_opt:
       - no-new-privileges:true
@@ -85,8 +90,11 @@ services:
     image: ghcr.io/gwzlchn/mnemo:latest
     restart: unless-stopped
     command: python -m worker.main --type ai
+    # 默认 subprocess 执行器,不挂 docker.sock(避免宿主 root 等价暴露);
+    # 切 docker 执行器请叠加 docker-compose.executor.yml。
     volumes:
       - ${MNEMO_DATA_DIR:-mnemo-data}:/data
+      - ${HOST_WORK_DIR:-mnemo-work}:/tmp/mnemo-work
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATA_DIR=/data
@@ -95,7 +103,9 @@ services:
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-}
       - MINIO_BUCKET=${MINIO_BUCKET:-mnemo}
-      - WORK_DIR=${WORK_DIR:-/tmp/mnemo-work}
+      - STEP_RUNTIME=${STEP_RUNTIME:-subprocess}
+      - WORK_DIR=/tmp/mnemo-work
+      - HOST_WORK_DIR=${HOST_WORK_DIR:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
@@ -159,3 +169,5 @@ volumes:
   redis-data:
   mnemo-data:
   minio-data:
+  # docker 执行器的步容器共享工作区;HOST_WORK_DIR 留空时退化为命名卷。
+  mnemo-work:

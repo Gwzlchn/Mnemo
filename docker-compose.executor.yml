@@ -1,0 +1,18 @@
+# docker 执行器(每步一容器)opt-in 覆盖。
+# 用法: docker compose -f docker-compose.yml -f docker-compose.executor.yml up -d
+#
+# 注意: 挂载 docker.sock = 宿主 root 等价权限,仅在你信任本机将要拉起的步骤镜像时启用。
+# 需配套设置 HOST_WORK_DIR 为宿主侧工作目录(与容器内 /tmp/mnemo-work 指向同一 bind),
+# 否则跨界的 step 容器会挂到空目录。
+services:
+  worker-cpu:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - STEP_RUNTIME=docker
+
+  worker-ai:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - STEP_RUNTIME=docker

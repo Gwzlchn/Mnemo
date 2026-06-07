@@ -1,7 +1,8 @@
 """DockerStepRunner 测试:用 mock client,不起真容器。
 
 覆盖 command 同构、bind-mount、labels、GPU 门控、超时 kill、容器强删(必执行)、
-孤儿清理、宿主路径前缀替换,以及 use_gpu 布尔门控的四种组合。
+孤儿清理、宿主路径前缀替换、网络策略(出网池 vs 离线池)、密钥白名单注入,
+以及 use_gpu 布尔门控的四种组合。
 """
 
 from __future__ import annotations
@@ -110,7 +111,9 @@ def fake_docker(monkeypatch):
     return holder
 
 
-def _ctx(work_dir: Path, *, use_gpu=False, image="mnemo/step-base", timeout_sec=10) -> StepContext:
+def _ctx(
+    work_dir: Path, *, use_gpu=False, image="mnemo/step-base", timeout_sec=10, pool="cpu"
+) -> StepContext:
     return StepContext(
         job_id="j1",
         step="A",
@@ -120,7 +123,7 @@ def _ctx(work_dir: Path, *, use_gpu=False, image="mnemo/step-base", timeout_sec=
         module="steps.video.step_01_scene",
         image=image,
         timeout_sec=timeout_sec,
-        pool="cpu",
+        pool=pool,
         use_gpu=use_gpu,
     )
 
@@ -138,7 +141,8 @@ async def _noop_tick():
 
 class TestDockerSuccess:
     @pytest.mark.asyncio
-    async def test_command_volumes_labels(self, fake_docker, tmp_path):
+    async def test_command_volumes_labels(self, fake_docker, tmp_path, monkeypatch):
+        monkeypatch.delenv("HTTPS_PROXY", raising=False)
         work_dir = tmp_path / "j1"
         work_dir.mkdir()
         container = _FakeContainer(status_code=0)
@@ -161,6 +165,10 @@ class TestDockerSuccess:
             "mnemo.job": "j1", "mnemo.step": "A", "mnemo.worker": "w1",
         }
         assert kw["environment"] == {"STEP_EXEC_ID": "e1"}
+        # cpu 池离线
+        assert kw["network_mode"] == "none"
+        # --step-config 走文件,不进 Cmd 之外的 env,杜绝 docker inspect 泄漏
+        assert "step_cfg" not in kw["environment"]
         # 容器必被强删
         assert container.removed and container.remove_calls == 1
 
@@ -188,6 +196,122 @@ class TestDockerSuccess:
         await runner.run_step(_ctx(work_dir, use_gpu=False), _noop_progress, _noop_tick)
 
         assert runner._client.containers.run_kwargs["device_requests"] is None
+
+
+# ── 网络策略:出网池 vs 离线池 ──
+
+
+class TestNetworkPolicy:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("pool", ["io", "ai"])
+    async def test_networked_pools_default_network(self, fake_docker, tmp_path, monkeypatch, pool):
+        monkeypatch.delenv("HTTPS_PROXY", raising=False)
+        work_dir = tmp_path / "j1"
+        work_dir.mkdir()
+        container = _FakeContainer(status_code=0)
+        fake_docker["client"] = _FakeClient(container)
+
+        runner = DockerStepRunner("w1", host_work_root=str(tmp_path))
+        await runner.run_step(_ctx(work_dir, pool=pool), _noop_progress, _noop_tick)
+
+        # io(下载)/ai 走默认网络,network_mode 不设(None)
+        assert runner._client.containers.run_kwargs["network_mode"] is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("pool", ["scene", "cpu", "gpu"])
+    async def test_offline_pools_network_none(self, fake_docker, tmp_path, monkeypatch, pool):
+        monkeypatch.delenv("HTTPS_PROXY", raising=False)
+        work_dir = tmp_path / "j1"
+        work_dir.mkdir()
+        container = _FakeContainer(status_code=0)
+        fake_docker["client"] = _FakeClient(container)
+
+        runner = DockerStepRunner("w1", host_work_root=str(tmp_path))
+        await runner.run_step(_ctx(work_dir, pool=pool), _noop_progress, _noop_tick)
+
+        assert runner._client.containers.run_kwargs["network_mode"] == "none"
+
+
+# ── 密钥白名单:STEP_EXEC_ID/HTTPS_PROXY 恒注入,AI key 仅 ai 池 ──
+
+
+class TestSecretsWhitelist:
+    @pytest.mark.asyncio
+    async def test_step_exec_id_and_proxy_always_present(
+        self, fake_docker, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("HTTPS_PROXY", "http://proxy:7890")
+        work_dir = tmp_path / "j1"
+        work_dir.mkdir()
+        container = _FakeContainer(status_code=0)
+        fake_docker["client"] = _FakeClient(container)
+
+        runner = DockerStepRunner("w1", host_work_root=str(tmp_path))
+        await runner.run_step(_ctx(work_dir, pool="cpu"), _noop_progress, _noop_tick)
+
+        env = runner._client.containers.run_kwargs["environment"]
+        assert env["STEP_EXEC_ID"] == "e1"
+        assert env["HTTPS_PROXY"] == "http://proxy:7890"
+
+    @pytest.mark.asyncio
+    async def test_proxy_absent_when_unset(self, fake_docker, tmp_path, monkeypatch):
+        monkeypatch.delenv("HTTPS_PROXY", raising=False)
+        work_dir = tmp_path / "j1"
+        work_dir.mkdir()
+        container = _FakeContainer(status_code=0)
+        fake_docker["client"] = _FakeClient(container)
+
+        runner = DockerStepRunner("w1", host_work_root=str(tmp_path))
+        await runner.run_step(_ctx(work_dir, pool="cpu"), _noop_progress, _noop_tick)
+
+        env = runner._client.containers.run_kwargs["environment"]
+        assert "HTTPS_PROXY" not in env
+
+    @pytest.mark.asyncio
+    async def test_ai_keys_injected_for_ai_pool(self, fake_docker, tmp_path, monkeypatch):
+        monkeypatch.delenv("HTTPS_PROXY", raising=False)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-xxx")
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-yyy")
+        # 未设置的 key 不应出现
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OLLAMA_URL", raising=False)
+        work_dir = tmp_path / "j1"
+        work_dir.mkdir()
+        container = _FakeContainer(status_code=0)
+        fake_docker["client"] = _FakeClient(container)
+
+        runner = DockerStepRunner("w1", host_work_root=str(tmp_path))
+        await runner.run_step(_ctx(work_dir, pool="ai"), _noop_progress, _noop_tick)
+
+        env = runner._client.containers.run_kwargs["environment"]
+        assert env["ANTHROPIC_API_KEY"] == "sk-ant-xxx"
+        assert env["DEEPSEEK_API_KEY"] == "ds-yyy"
+        # env 里没有的 key 不注入
+        assert "OPENAI_API_KEY" not in env
+        assert "OLLAMA_URL" not in env
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("pool", ["io", "cpu", "scene", "gpu"])
+    async def test_ai_keys_absent_for_non_ai_pools(
+        self, fake_docker, tmp_path, monkeypatch, pool
+    ):
+        monkeypatch.delenv("HTTPS_PROXY", raising=False)
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-xxx")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-zzz")
+        monkeypatch.setenv("OLLAMA_URL", "http://ollama:11434")
+        work_dir = tmp_path / "j1"
+        work_dir.mkdir()
+        container = _FakeContainer(status_code=0)
+        fake_docker["client"] = _FakeClient(container)
+
+        runner = DockerStepRunner("w1", host_work_root=str(tmp_path))
+        await runner.run_step(_ctx(work_dir, pool=pool), _noop_progress, _noop_tick)
+
+        env = runner._client.containers.run_kwargs["environment"]
+        # 非 ai 池:绝不见任何 AI 密钥
+        for key in ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "OLLAMA_URL"):
+            assert key not in env
+        assert env["STEP_EXEC_ID"] == "e1"
 
 
 # ── 失败/超时:remove 必执行 ──
@@ -223,6 +347,55 @@ class TestDockerCleanup:
         # 超时标记应追加到日志
         log = (work_dir / "logs" / "A.log").read_text()
         assert "--- TIMEOUT after 1s ---" in log
+
+
+# ── 进度监控:on_tick 先于 progress 发布,10s 周期 ──
+
+
+class TestProgressMonitor:
+    @pytest.mark.asyncio
+    async def test_tick_then_progress_publish(self, fake_docker, tmp_path, monkeypatch):
+        """单跑 _progress_monitor:每周期先 on_tick 续约,再读 .progress 发 step_progress。"""
+        fake_docker["client"] = _FakeClient(None)
+        runner = DockerStepRunner("w1")
+
+        work_dir = tmp_path / "j1"
+        work_dir.mkdir()
+        (work_dir / ".A.progress").write_text(
+            '{"current": 3, "total": 10, "pct": 30, "message": "half"}'
+        )
+
+        calls: list = []
+
+        async def _tick():
+            calls.append(("tick",))
+
+        async def _progress(event, payload):
+            calls.append(("progress", event, payload))
+
+        # 把 sleep(10) 改瞬时,跑一周期后让 proc_alive 转 False。
+        alive = {"v": True}
+
+        async def _fast_sleep(_):
+            alive["v"] = False
+
+        monkeypatch.setattr("worker.step_runner.asyncio.sleep", _fast_sleep)
+
+        await runner._progress_monitor(
+            _ctx(work_dir, pool="cpu"), _progress, _tick, lambda: alive["v"],
+        )
+
+        # on_tick 必在 progress 发布之前
+        assert calls[0] == ("tick",)
+        assert calls[1][0] == "progress"
+        assert calls[1][1] == "step_progress"
+        assert calls[1][2] == {
+            "step": "A", "current": 3, "total": 10, "pct": 30, "message": "half",
+        }
+        # 续约心跳应写回 .progress
+        import json as _json
+        data = _json.loads((work_dir / ".A.progress").read_text())
+        assert "worker_heartbeat_at" in data
 
 
 # ── 孤儿清理 ──

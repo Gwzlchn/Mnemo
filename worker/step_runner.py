@@ -24,6 +24,11 @@ ProgressPublisher = Callable[[str, dict], Awaitable[None]]
 # 周期回调：每 10s 一次，worker 用它续约状态 + 推送运行中日志。
 TickCallback = Callable[[], Awaitable[None]]
 
+# 需要出网的资源池：下载与 AI 调用。其余（scene/cpu/gpu）离线，文件是接口。
+_NETWORKED_POOLS = frozenset({"io", "ai"})
+# AI step 才注入的密钥白名单：仅注入 env 里实际存在的那几个。
+_AI_KEY_ENV = ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "OLLAMA_URL")
+
 
 @dataclass
 class StepContext:
@@ -186,6 +191,20 @@ class DockerStepRunner:
             return str(work_dir)
         return str(Path(self._host_work_root) / work_dir.name)
 
+    def _build_environment(self, ctx: StepContext) -> dict:
+        """白名单注入:始终给 STEP_EXEC_ID + HTTPS_PROXY(若有);
+        仅 ai 池补 env 里实际存在的 AI 密钥。非 ai 池绝不见 AI key,杜绝全量透传。"""
+        env = {"STEP_EXEC_ID": ctx.exec_id}
+        proxy = os.environ.get("HTTPS_PROXY")
+        if proxy:
+            env["HTTPS_PROXY"] = proxy
+        if ctx.pool == "ai":
+            for key in _AI_KEY_ENV:
+                val = os.environ.get(key)
+                if val:
+                    env[key] = val
+        return env
+
     async def run_step(
         self,
         ctx: StepContext,
@@ -201,13 +220,16 @@ class DockerStepRunner:
         config_path.write_text(json.dumps(ctx.step_cfg, ensure_ascii=False, indent=2))
 
         host_dir = self._host_path(work_dir)
-        # 命令与 subprocess 同构,故 StepBase.cli_main 不改。
+        # 命令与 subprocess 同构,故 StepBase.cli_main 不改。--step-config 经 bind-mount
+        # 跨界,绝不进 env / Cmd,避免明文配置落入 docker inspect。
         command = [
             "python3", "-m", ctx.module,
             "--job-dir", "/job",
             "--step-config", f"/job/.{step}.config.json",
         ]
-        environment = {"STEP_EXEC_ID": ctx.exec_id}
+        environment = self._build_environment(ctx)
+        # 出网池(io/ai)走默认网络;离线计算池(scene/cpu/gpu)断网,文件是接口。
+        network_mode = None if ctx.pool in _NETWORKED_POOLS else "none"
 
         device_requests = None
         if ctx.use_gpu:
@@ -226,6 +248,7 @@ class DockerStepRunner:
                 working_dir="/job",
                 volumes={host_dir: {"bind": "/job", "mode": "rw"}},
                 environment=environment,
+                network_mode=network_mode,
                 device_requests=device_requests,
                 labels=labels,
                 detach=True,
