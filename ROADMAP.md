@@ -4,9 +4,9 @@
 
 ## 当前状态
 
-**阶段**：**M1 完成 + Worker 层 GitLab-runner 化（M-W）完成** · 远程 worker 可只靠单出站 HTTPS 接入
-**最近会话**：2026-06-07 · Worker 层系统重构（见 M-W）：全后端切 aware-UTC + 管理页 GitLab 化 + 运行中日志、StepRunner 执行器抽象、worker-gateway 注册/心跳 + per-worker token、pipelines 改 GitLab-CI 风格、DockerStepRunner + 每步镜像、认领/上报/产物全搬上 gateway（真零隧道）、安全加固（密钥按需 + token 池授权 + 重试分类）；CI Actions 升 Node 24；单元测试 423 → **650 pass**（容器内实跑，全程 CI 绿）
-**下一步**：前端联调 → M2 知识库（docker executor 端到端验证 + B站扫码登录为零散尾项）
+**阶段**：**M1 + Worker 层 GitLab-runner 化（M-W）+ M2 知识库 全部完成** · 远程 worker 单出站 HTTPS 接入；笔记可集合/全文搜索/术语积累
+**最近会话**：2026-06-07 · ① M-W Worker 重构（aware-UTC + 管理页 + StepRunner + worker-gateway/token + GitLab-CI 配置 + DockerStepRunner/每步镜像 + 认领/上报/产物搬 gateway 真零隧道 + 安全加固）② B站扫码登录（DB 单一真相 + 随 job 下发 + yutto 注入）③ docker 执行器镜像名解析 + PYTHONPATH 修复（真机 e2e 抓到)④ M2 知识库（集合 + FTS5 trigram 全文搜索 + glossary 术语积累）；CI Actions 升 Node 24;NAS+ECS 全量部署新镜像验证（4 worker 在线、无头 e2e 通过）；单元测试 423 → **740 pass**（全程 CI 绿）
+**下一步**：M2.5 AI-native（RAG + 知识对话）/ 或固化 NAS→ECS 推镜像脚本（ECS 拉 ghcr 太慢)
 
 ## 里程碑
 
@@ -70,14 +70,14 @@
 - [x] P3：认领/上报搬服务端（`/api/runner/jobs/*` + 共享 `runner_ops`）+ 产物经网关代理 + 纯网关模式（真零隧道，worker 不连 redis/minio）
 - [x] P4：密钥按需注入（修配置明文 key 泄露）+ token 按 pools 授权 + 重试按失败类型（BUILD vs SYSTEM）
 
-### M2 · 知识库
+### M2 · 知识库 ✅（2026-06-07 完成主体）
 
 目标：多视频成为知识库，可搜索、有记忆。
 
-- [ ] 集合管理（按主题/课程/系列组织笔记）
-- [ ] Profile 动态积累（从 review/OCR/字幕自动提取术语）
-- [ ] SQLite FTS5 全文搜索
-- [ ] 前端：集合视图 + 搜索 + 术语 + Profile 编辑
+- [x] 集合管理（按主题/课程/系列组织笔记）——CRUD + 删集合解绑保留 job + job_count 维护
+- [x] Profile 动态积累——glossary 表 + scheduler 从 review.missing_concepts 采集候选 → 一键采纳 → 同步进 Profile.terminology（OCR/字幕高频词抽取为后续增强，未做）
+- [x] SQLite FTS5 全文搜索——notes_fts5 虚表(trigram 中文子串)+ scheduler 侧索引 + /api/search facet/高亮
+- [x] 前端：集合视图 + 搜索 + 术语 + Profile 编辑
 
 ### M2.5 · AI-native 知识交互（核心拐点）
 
