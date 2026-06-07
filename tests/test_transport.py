@@ -66,7 +66,7 @@ class TestRedisTransportRegister:
         assert db.get_worker("w_abc") is not None
 
 
-# ── RedisTransport 粗粒度认领/上报(P3a) ──
+# ── RedisTransport 粗粒度认领/上报 ──
 
 
 WORKER_ID = "w_t1"
@@ -511,7 +511,7 @@ class TestGatewayDelegation:
 
 
 class TestGatewayCoarseHTTP:
-    """P3b:粗粒度认领/上报走 gateway HTTP,不再委派内层(避免经 redis 双重认领)。"""
+    """粗粒度认领/上报走 gateway HTTP,不再委派内层(避免经 redis 双重认领)。"""
 
     @pytest.mark.asyncio
     async def test_request_step_posts_and_parses_claim(self, redis, db, tmp_path):
@@ -631,7 +631,7 @@ class TestGatewayCoarseHTTP:
 
 
 class TestGatewayPureMode:
-    """P3c:inner=None(纯网关零隧道)——无影子写/无内层退回/委派返回安全默认值。"""
+    """inner=None(纯网关零隧道)——无影子写/无内层退回/委派返回安全默认值。"""
 
     @pytest.mark.asyncio
     async def test_register_returns_server_id_no_shadow_write(self, redis, tmp_path):

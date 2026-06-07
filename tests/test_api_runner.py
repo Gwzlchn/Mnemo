@@ -272,7 +272,7 @@ class TestTokenRevocationViaDelete:
         assert resp.status_code == 401
 
 
-# ── 认领/上报端点(P3b):用真 fakeredis,让服务端编排真正跑起来 ──
+# ── 认领/上报端点:用真 fakeredis,让服务端编排真正跑起来 ──
 
 
 @pytest.fixture
@@ -545,7 +545,7 @@ class TestUsage:
         assert summary["total_input_tokens"] == 10
 
 
-# ── 产物代理端点(P3c):worker token 鉴权,经 API 读写 storage ──
+# ── 产物代理端点:worker token 鉴权,经 API 读写 storage ──
 
 
 class TestArtifacts:

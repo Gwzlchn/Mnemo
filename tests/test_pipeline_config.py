@@ -223,7 +223,7 @@ class TestNeeds:
         assert order == ["A", "B", "C"]
 
 
-# ── image：归一化全程保留（P0-B 引入的字段不可丢）──
+# ── image：归一化全程保留（每步镜像字段不可丢）──
 
 
 class TestImagePreserved:

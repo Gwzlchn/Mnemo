@@ -4,9 +4,10 @@
 
 ## 当前状态
 
-**阶段**：**M1 + Worker 层 GitLab-runner 化（M-W）+ M2 知识库 全部完成** · 远程 worker 单出站 HTTPS 接入；笔记可集合/全文搜索/术语积累
-**最近会话**：2026-06-07 · ① M-W Worker 重构（aware-UTC + 管理页 + StepRunner + worker-gateway/token + GitLab-CI 配置 + DockerStepRunner/每步镜像 + 认领/上报/产物搬 gateway 真零隧道 + 安全加固）② B站扫码登录（DB 单一真相 + 随 job 下发 + yutto 注入）③ docker 执行器镜像名解析 + PYTHONPATH 修复（真机 e2e 抓到)④ M2 知识库（集合 + FTS5 trigram 全文搜索 + glossary 术语积累）；CI Actions 升 Node 24;NAS+ECS 全量部署新镜像验证（4 worker 在线、无头 e2e 通过）；单元测试 423 → **740 pass**（全程 CI 绿）
-**下一步**：M5 GPU 加速（whisper 已就绪待 GPU 机验 + PaddleOCR-GPU 实现）/ M2.5 AI-native（RAG + 知识对话，先证伪 FTS5 不够再上向量，见 .local/IDEAS.txt）
+**进度**：M1 核心 MVP · Worker 层 GitLab-runner 化 · M2 知识库 · M6 文章+播客 全部完成
+**能力**：视频 / 论文 / 文章 / 播客四类入库；远程 worker 单出站 HTTPS 接入、真零隧道；笔记按集合组织、FTS5 全文搜索、术语动态积累
+**测试**：单元测试 782 pass（容器内 docker compose test 实跑，CI 绿）
+**下一步**：M5 GPU 加速（whisper 已就绪待 GPU 机验证 + PaddleOCR-GPU）/ M2.5 AI-native（RAG + 知识对话，先证伪 FTS5 不足再上向量）
 
 ## 里程碑
 
@@ -60,8 +61,8 @@
 
 ### M-W · Worker 层 GitLab-runner 化 ✅（2026-06-07 完成）
 
-目标：worker 高内聚低耦合、易拓展；远程 worker（公司 GPU 机）零隧道、单出站 HTTPS 接入。
-全程可灰度、可独立回退；每刀经对抗式等价核对 + 全量回归，保留 DAG/资源池/scene↔cpu 互斥/exec_id 去重/WS 进度等不变量。
+目标：worker 高内聚低耦合、易拓展；远程 worker（含远端 GPU 机）零隧道、单出站 HTTPS 接入，
+保留 DAG / 资源池 / scene↔cpu 互斥 / exec_id 去重 / WS 进度等不变量。
 
 - [x] 全后端 aware-UTC + Worker 管理页（状态后端权威）+ 运行中日志可见
 - [x] `WorkerTransport` + `StepRunner` 执行器抽象
