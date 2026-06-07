@@ -244,13 +244,16 @@ class Worker:
                 raise ValueError(f"step '{step}' not found in pipeline '{pipeline}'")
             module = raw["module"]
 
-            returncode, stderr = await self._run_step(
-                job_id, step, work_dir, exec_id, step_cfg, module,
-            )
+            try:
+                returncode, stderr = await self._run_step(
+                    job_id, step, work_dir, exec_id, step_cfg, module,
+                )
+            finally:
+                # 不论成功/失败/超时,都把本步产物(含日志)推回存储,失败也能在前端看日志排错。
+                await self._push_safe(job_id, step, work_dir)
             duration = time.time() - start
 
             if returncode == 0:
-                await self.storage.push(job_id, step, work_dir)
                 await self._collect_usage(job_id, step, work_dir)
                 await self.redis.publish("step_completed", {
                     "job_id": job_id, "step": step, "status": "done",
@@ -387,14 +390,17 @@ class Worker:
             self._progress_monitor(job_id, step, work_dir, proc)
         )
 
+        stdout = b""
+        stderr = b""
+        timed_out = False
         try:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout,
             )
         except asyncio.TimeoutError:
+            timed_out = True
             proc.kill()
             await proc.wait()
-            raise
         finally:
             monitor_task.cancel()
             try:
@@ -403,16 +409,21 @@ class Worker:
                 pass
             config_path.unlink(missing_ok=True)
 
+        # 始终写步骤日志(成功/失败/超时),调用方随后推回存储,便于远程排错。
         log_dir = work_dir / "logs"
         log_dir.mkdir(exist_ok=True)
-        log_path = log_dir / f"{step}.log"
         log_content = ""
         if stdout:
             log_content += stdout.decode(errors="replace")
         if stderr:
             log_content += "\n--- STDERR ---\n" + stderr.decode(errors="replace")
+        if timed_out:
+            log_content += f"\n--- TIMEOUT after {timeout}s ---\n"
         if log_content:
-            log_path.write_text(log_content)
+            (log_dir / f"{step}.log").write_text(log_content)
+
+        if timed_out:
+            raise asyncio.TimeoutError()
 
         return proc.returncode, stderr.decode(errors="replace") if stderr else ""
 
@@ -461,6 +472,16 @@ class Worker:
             except (json.JSONDecodeError, OSError):
                 pass
         return "unknown"
+
+    async def _push_safe(self, job_id: str, step: str, work_dir: Path) -> None:
+        """把本步产物(含日志)推回存储;失败不致命(避免遮蔽真正的步骤错误)。"""
+        try:
+            await self.storage.push(job_id, step, work_dir)
+        except Exception:
+            logger.warning(
+                "storage_push_failed", worker_id=self.worker_id,
+                job_id=job_id, step=step,
+            )
 
     async def _collect_usage(self, job_id: str, step: str, work_dir: Path) -> None:
         usages = collect_usage_from_file(work_dir / "logs", step)
