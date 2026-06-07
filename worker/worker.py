@@ -1,4 +1,8 @@
-"""Worker：从资源池队列自取任务，执行步骤脚本，上报结果。"""
+"""Worker：从资源池队列自取任务，执行步骤脚本，上报结果。
+
+worker 只依赖 WorkerTransport(协调/状态后端)与 StorageBackend(产物),不直连
+redis/db。P0-A 注入 RedisTransport(零行为变化);P1 起可换 GatewayTransport。
+"""
 
 from __future__ import annotations
 
@@ -15,10 +19,9 @@ import structlog
 
 from shared.ai_gateway import collect_usage_from_file
 from shared.config import AppConfig, build_step_config
-from shared.db import Database
-from shared.models import Worker as WorkerModel, generate_worker_id
-from shared.redis_client import RedisClient
+from shared.models import generate_worker_id
 from shared.storage import StorageBackend
+from worker.transport import WorkerTransport
 
 logger = structlog.get_logger(component="worker")
 
@@ -48,8 +51,7 @@ def auto_discover_tags() -> set[str]:
 class Worker:
     def __init__(
         self,
-        redis: RedisClient,
-        db: Database,
+        transport: WorkerTransport,
         config: AppConfig,
         storage: StorageBackend,
         worker_type: str,
@@ -57,8 +59,7 @@ class Worker:
         tags: set[str],
         reject_tags: set[str],
     ):
-        self.redis = redis
-        self.db = db
+        self.transport = transport
         self.config = config
         self.storage = storage
         self.worker_type = worker_type
@@ -86,7 +87,7 @@ class Worker:
         except asyncio.CancelledError:
             pass
         finally:
-            await self._update_worker_status("offline")
+            await self.transport.update_status(self.worker_id, "offline")
             logger.info("worker_exit", worker_id=self.worker_id)
 
     def shutdown(self) -> None:
@@ -96,41 +97,15 @@ class Worker:
     # ── 注册 + 心跳 ──
 
     async def register(self) -> None:
-        now = datetime.now()
-        info = {
-            "type": self.worker_type,
-            "pools": ",".join(self.pools),
-            "tags": ",".join(sorted(self.tags)),
-            "reject_tags": ",".join(sorted(self.reject_tags)),
-            "hostname": socket.gethostname(),
-            "status": "idle",
-            "started_at": now.isoformat(),
-            "last_heartbeat": now.isoformat(),
-        }
-        await self.redis.register_worker(self.worker_id, info, ttl=30)
-
-        worker_model = WorkerModel(
-            id=self.worker_id,
-            type=self.worker_type,
-            pools=self.pools,
-            tags=self.tags,
-            reject_tags=self.reject_tags,
-            hostname=socket.gethostname(),
-            status="idle",
-            started_at=now,
-            first_seen=now,
-            last_heartbeat=now,
+        await self.transport.register(
+            worker_id=self.worker_id, worker_type=self.worker_type,
+            pools=self.pools, tags=self.tags, reject_tags=self.reject_tags,
+            hostname=socket.gethostname(), now=datetime.now(),
         )
-        await asyncio.to_thread(self.db.upsert_worker, worker_model)
 
     async def heartbeat_loop(self) -> None:
         while not self._shutdown:
-            await self.redis.heartbeat(self.worker_id, ttl=30)
-            # 同步刷新 DB 心跳：/api/workers 与前端 online 判定读的是 DB，
-            # 不写回 DB 则 last_heartbeat 永远停在注册时刻 → Worker 页面显示空。
-            await asyncio.to_thread(
-                self.db.update_worker_heartbeat, self.worker_id,
-            )
+            await self.transport.heartbeat(self.worker_id)
             await asyncio.sleep(10)
 
     # ── 主循环 ──
@@ -151,17 +126,16 @@ class Worker:
     # ── 任务获取 ──
 
     async def fetch_task(self) -> dict | None:
-        info = await self.redis.get_worker_info(self.worker_id)
-        if info and info.get("status") == "draining":
+        if await self.transport.get_worker_status(self.worker_id) == "draining":
             return None
 
         for pool in self.pools:
-            if await self.redis.is_pool_frozen(pool):
+            if await self.transport.is_pool_frozen(pool):
                 continue
 
             pool_cfg = self.config.pools.get("pools", {}).get(pool, {})
             limit = pool_cfg.get("limit", 999)
-            if not await self.redis.try_acquire_slot(pool, limit):
+            if not await self.transport.try_acquire_slot(pool, limit):
                 continue
 
             result = await self.pop_matching_task(pool)
@@ -169,10 +143,10 @@ class Worker:
                 task, _raw_json, _score = result
                 task["pool"] = pool
                 if pool == "scene":
-                    await self.redis.freeze_pool("cpu")
+                    await self.transport.freeze_pool("cpu")
                 return task
 
-            await self.redis.release_slot(pool)
+            await self.transport.release_slot(pool)
 
         return None
 
@@ -180,7 +154,7 @@ class Worker:
         self, pool: str, max_tries: int = 5,
     ) -> tuple[dict, str, float] | None:
         for _ in range(max_tries):
-            result = await self.redis.dequeue_step_raw(pool)
+            result = await self.transport.dequeue_step_raw(pool)
             if result is None:
                 return None
 
@@ -191,7 +165,7 @@ class Worker:
             if require_tags.issubset(self.tags) and not all_tags.intersection(self.reject_tags):
                 return task, raw_json, score
 
-            await self.redis.return_step(pool, raw_json, score)
+            await self.transport.return_step(pool, raw_json, score)
 
         return None
 
@@ -203,20 +177,20 @@ class Worker:
         pool = task["pool"]
         exec_id = f"{self.worker_id}:{int(time.time() * 1000)}"
 
-        acquired = await self.redis.cas_step_status(job_id, step, "ready", "running")
+        acquired = await self.transport.cas_step_status(job_id, step, "ready", "running")
         if not acquired:
-            await self.redis.release_slot(pool)
+            await self.transport.release_slot(pool)
             if pool == "scene":
-                await self.redis.unfreeze_pool("cpu")
+                await self.transport.unfreeze_pool("cpu")
             return
 
-        await self.redis.set_step_worker(job_id, step, self.worker_id)
-        await self._update_worker_status("busy", job_id, step)
-        await self.redis.publish("step_started", {
+        await self.transport.set_step_worker(job_id, step, self.worker_id)
+        await self.transport.update_status(self.worker_id, "busy", job_id, step)
+        await self.transport.publish_step_event("step_started", {
             "job_id": job_id, "step": step, "status": "running",
             "worker": self.worker_id, "exec_id": exec_id,
         })
-        await self.redis.publish(f"events:{job_id}", {
+        await self.transport.publish_step_event(f"events:{job_id}", {
             "event": "step_start", "step": step, "worker": self.worker_id,
         })
 
@@ -225,8 +199,8 @@ class Worker:
         try:
             work_dir = await self.storage.pull(job_id, step)
 
-            pipeline = await self.redis.get_job_pipeline(job_id)
-            job_info = await self.redis.get_job_info(job_id)
+            pipeline = await self.transport.get_job_pipeline(job_id)
+            job_info = await self.transport.get_job_info(job_id)
             domain = job_info.get("domain", "general")
             style_tags_raw = job_info.get("style_tags", "[]")
             try:
@@ -255,25 +229,23 @@ class Worker:
 
             if returncode == 0:
                 await self._collect_usage(job_id, step, work_dir)
-                await self.redis.publish("step_completed", {
+                await self.transport.publish_step_event("step_completed", {
                     "job_id": job_id, "step": step, "status": "done",
                     "duration": round(duration, 1),
                     "worker": self.worker_id, "exec_id": exec_id,
                 })
-                await self.redis.publish(f"events:{job_id}", {
+                await self.transport.publish_step_event(f"events:{job_id}", {
                     "event": "step_done", "step": step,
                     "duration_sec": round(duration, 1),
                 })
-                await asyncio.to_thread(
-                    self.db.update_step, job_id, step,
-                    status="done", worker_id=self.worker_id,
+                await self.transport.update_step_result(
+                    job_id, step, status="done", worker_id=self.worker_id,
                     started_at=datetime.fromtimestamp(start),
                     finished_at=datetime.now(),
                     duration_sec=round(duration, 1),
                 )
-                await asyncio.to_thread(
-                    self.db.increment_worker_stats, self.worker_id,
-                    completed=1, duration=round(duration, 1),
+                await self.transport.increment_worker_stats(
+                    self.worker_id, completed=1, duration=round(duration, 1),
                 )
                 logger.info(
                     "step_done", worker_id=self.worker_id,
@@ -282,26 +254,23 @@ class Worker:
             else:
                 error_msg = stderr[-500:] if stderr else "unknown error"
                 error_type = self._parse_error_type(work_dir, step)
-                await self.redis.publish("step_failed", {
+                await self.transport.publish_step_event("step_failed", {
                     "job_id": job_id, "step": step, "status": "failed",
                     "error": error_msg, "error_type": error_type,
                     "worker": self.worker_id, "exec_id": exec_id,
                 })
-                await self.redis.publish(f"events:{job_id}", {
+                await self.transport.publish_step_event(f"events:{job_id}", {
                     "event": "step_failed", "step": step,
                     "error": error_msg[:200],
                 })
-                await asyncio.to_thread(
-                    self.db.update_step, job_id, step,
-                    status="failed", error=error_msg,
+                await self.transport.update_step_result(
+                    job_id, step, status="failed", error=error_msg,
                     worker_id=self.worker_id,
                     started_at=datetime.fromtimestamp(start),
                     finished_at=datetime.now(),
                     duration_sec=round(duration, 1),
                 )
-                await asyncio.to_thread(
-                    self.db.increment_worker_stats, self.worker_id, failed=1,
-                )
+                await self.transport.increment_worker_stats(self.worker_id, failed=1)
                 logger.warning(
                     "step_failed", worker_id=self.worker_id,
                     job_id=job_id, step=step, error=error_msg[:200],
@@ -309,18 +278,17 @@ class Worker:
 
         except asyncio.TimeoutError:
             duration = time.time() - start
-            await self.redis.publish("step_failed", {
+            await self.transport.publish_step_event("step_failed", {
                 "job_id": job_id, "step": step, "status": "failed",
                 "error": "timeout", "error_type": "timeout",
                 "worker": self.worker_id,
             })
-            await self.redis.publish(f"events:{job_id}", {
+            await self.transport.publish_step_event(f"events:{job_id}", {
                 "event": "step_failed", "step": step,
                 "error": "timeout",
             })
-            await asyncio.to_thread(
-                self.db.update_step, job_id, step,
-                status="failed", error="timeout",
+            await self.transport.update_step_result(
+                job_id, step, status="failed", error="timeout",
                 worker_id=self.worker_id,
                 started_at=datetime.fromtimestamp(start),
                 finished_at=datetime.now(),
@@ -334,14 +302,13 @@ class Worker:
         except Exception as e:
             duration = time.time() - start
             error_msg = str(e)[:500]
-            await self.redis.publish("step_failed", {
+            await self.transport.publish_step_event("step_failed", {
                 "job_id": job_id, "step": step, "status": "failed",
                 "error": error_msg, "error_type": "processing",
                 "worker": self.worker_id,
             })
-            await asyncio.to_thread(
-                self.db.update_step, job_id, step,
-                status="failed", error=error_msg,
+            await self.transport.update_step_result(
+                job_id, step, status="failed", error=error_msg,
                 worker_id=self.worker_id,
                 started_at=datetime.fromtimestamp(start),
                 finished_at=datetime.now(),
@@ -355,10 +322,10 @@ class Worker:
         finally:
             if work_dir:
                 await self.storage.cleanup(job_id, step, work_dir)
-            await self.redis.release_slot(pool)
+            await self.transport.release_slot(pool)
             if pool == "scene":
-                await self.redis.unfreeze_pool("cpu")
-            await self._update_worker_status("idle")
+                await self.transport.unfreeze_pool("cpu")
+            await self.transport.update_status(self.worker_id, "idle")
 
     # ── 子进程执行 ──
 
@@ -452,7 +419,7 @@ class Worker:
             progress_file.write_text(json.dumps(progress_data))
 
             if "current" in progress_data and "total" in progress_data:
-                await self.redis.publish(f"events:{job_id}", {
+                await self.transport.publish_step_event(f"events:{job_id}", {
                     "event": "step_progress",
                     "step": step,
                     "current": progress_data["current"],
@@ -486,24 +453,4 @@ class Worker:
     async def _collect_usage(self, job_id: str, step: str, work_dir: Path) -> None:
         usages = collect_usage_from_file(work_dir / "logs", step)
         for usage in usages:
-            await asyncio.to_thread(self.db.record_ai_usage, usage)
-
-    async def _update_worker_status(
-        self,
-        status: str,
-        job_id: str | None = None,
-        step: str | None = None,
-    ) -> None:
-        await self.redis.set_worker_field(self.worker_id, "status", status)
-        await self.redis.set_worker_field(
-            self.worker_id, "current_job", job_id or "",
-        )
-        await self.redis.set_worker_field(
-            self.worker_id, "current_step", step or "",
-        )
-        # 状态变更同样写回 DB（/api/workers 的数据源），并刷新心跳，
-        # 保证 busy/idle/offline 与当前任务在 Worker 页面实时可见。
-        await asyncio.to_thread(
-            self.db.update_worker_heartbeat, self.worker_id,
-            status=status, current_job=job_id or "", current_step=step or "",
-        )
+            await self.transport.record_ai_usage(usage)

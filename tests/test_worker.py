@@ -18,6 +18,7 @@ from shared.models import Job, Step, StepStatus
 from shared.redis_client import RedisClient
 from shared.storage import LocalStorage
 from worker.worker import Worker, WORKER_POOLS, auto_discover_tags
+from worker.transport import RedisTransport
 
 
 # ── Fixtures ──
@@ -78,7 +79,7 @@ def storage(tmp_jobs_dir):
 @pytest.fixture
 def worker(redis, db, config, storage):
     w = Worker(
-        redis=redis, db=db, config=config, storage=storage,
+        transport=RedisTransport(redis, db), config=config, storage=storage,
         worker_type="cpu",
         pools=["scene", "cpu", "io"],
         tags={"vision", "gpu"},
@@ -333,7 +334,7 @@ class TestUpdateWorkerStatus:
     @pytest.mark.asyncio
     async def test_updates_redis_fields(self, worker, redis):
         await worker.register()
-        await worker._update_worker_status("busy", "j1", "A")
+        await worker.transport.update_status(worker.worker_id, "busy", "j1", "A")
 
         info = await redis.get_worker_info(worker.worker_id)
         assert info["status"] == "busy"
@@ -344,7 +345,7 @@ class TestUpdateWorkerStatus:
     async def test_updates_db_fields(self, worker, redis, db):
         # /api/workers 读 DB，状态变更必须写回 DB
         await worker.register()
-        await worker._update_worker_status("busy", "j1", "A")
+        await worker.transport.update_status(worker.worker_id, "busy", "j1", "A")
 
         got = db.get_worker(worker.worker_id)
         assert got.status == "busy"
@@ -354,8 +355,8 @@ class TestUpdateWorkerStatus:
     @pytest.mark.asyncio
     async def test_clears_on_idle(self, worker, redis):
         await worker.register()
-        await worker._update_worker_status("busy", "j1", "A")
-        await worker._update_worker_status("idle")
+        await worker.transport.update_status(worker.worker_id, "busy", "j1", "A")
+        await worker.transport.update_status(worker.worker_id, "idle")
 
         info = await redis.get_worker_info(worker.worker_id)
         assert info["status"] == "idle"

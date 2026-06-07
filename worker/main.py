@@ -15,6 +15,7 @@ from shared.db import Database
 from shared.redis_client import RedisClient
 from shared.storage import create_storage
 
+from .transport import create_transport
 from .worker import WORKER_POOLS, Worker, auto_discover_tags
 
 logger = structlog.get_logger(component="worker")
@@ -51,13 +52,14 @@ async def main() -> None:
     db.init_schema()
 
     storage = create_storage(config.jobs_dir)
+    transport = create_transport(redis, db)
 
     pools = args.pools or WORKER_POOLS[args.type]
     tags = set(args.tags) if args.tags else auto_discover_tags()
     reject_tags = set(args.reject_tags) if args.reject_tags else set()
 
     worker = Worker(
-        redis=redis, db=db, config=config, storage=storage,
+        transport=transport, config=config, storage=storage,
         worker_type=args.type, pools=pools,
         tags=tags, reject_tags=reject_tags,
     )
