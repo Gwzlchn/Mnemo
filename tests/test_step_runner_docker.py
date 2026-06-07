@@ -164,7 +164,7 @@ class TestDockerSuccess:
         assert kw["labels"] == {
             "mnemo.job": "j1", "mnemo.step": "A", "mnemo.worker": "w1",
         }
-        assert kw["environment"] == {"STEP_EXEC_ID": "e1"}
+        assert kw["environment"] == {"STEP_EXEC_ID": "e1", "PYTHONPATH": "/app"}
         # cpu 池离线
         assert kw["network_mode"] == "none"
         # --step-config 走文件,不进 Cmd 之外的 env,杜绝 docker inspect 泄漏
@@ -252,6 +252,8 @@ class TestSecretsWhitelist:
         env = runner._client.containers.run_kwargs["environment"]
         assert env["STEP_EXEC_ID"] == "e1"
         assert env["HTTPS_PROXY"] == "http://proxy:7890"
+        # 代码在镜像 /app,容器 working_dir=/job,必须显式 PYTHONPATH 才能找到 steps.* 模块。
+        assert env["PYTHONPATH"] == "/app"
 
     @pytest.mark.asyncio
     async def test_proxy_absent_when_unset(self, fake_docker, tmp_path, monkeypatch):

@@ -210,8 +210,10 @@ class DockerStepRunner:
 
     def _build_environment(self, ctx: StepContext) -> dict:
         """白名单注入:始终给 STEP_EXEC_ID + HTTPS_PROXY(若有);
-        仅 ai 池补 env 里实际存在的 AI 密钥。非 ai 池绝不见 AI key,杜绝全量透传。"""
-        env = {"STEP_EXEC_ID": ctx.exec_id}
+        仅 ai 池补 env 里实际存在的 AI 密钥。非 ai 池绝不见 AI key,杜绝全量透传。
+        PYTHONPATH=/app:步骤镜像代码在 /app,而容器 working_dir=/job,缺它则
+        python3 -m steps.* 找不到模块(子进程模式靠 cwd=/app,docker 模式必须显式给)。"""
+        env = {"STEP_EXEC_ID": ctx.exec_id, "PYTHONPATH": "/app"}
         proxy = os.environ.get("HTTPS_PROXY")
         if proxy:
             env["HTTPS_PROXY"] = proxy
