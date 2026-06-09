@@ -76,6 +76,9 @@ class Scheduler:
         self._delayed_tasks: set[asyncio.Task] = set()
         # job_id -> 首次被判定"无 worker 可推进"的时刻，超宽限期才 fail-fast(容忍 worker 重启)。
         self._no_worker_since: dict[str, float] = {}
+        # (job_id, step) -> 首次发现"在跑步骤的 worker 上报的 current_step 不是本步"的时刻，
+        # 超宽限期才回收(容忍认领后首拍心跳延迟),修 gateway 认领响应丢失导致的永久卡 running。
+        self._claim_mismatch_since: dict[tuple[str, str], float] = {}
 
     # ── 生命周期 ──
 
@@ -176,6 +179,7 @@ class Scheduler:
                 msg["job_id"], msg["step"],
                 msg.get("error", ""),
                 msg.get("error_type", "unknown"),
+                exec_id=msg.get("exec_id"),
             )
         elif command == "new_job":
             job = await asyncio.to_thread(self.db.get_job, msg["job_id"])
@@ -277,6 +281,12 @@ class Scheduler:
 
     # ── 事件处理 ──
 
+    async def _exec_is_current(self, job_id: str, step: str, exec_id: str) -> bool:
+        """事件携带的 exec_id 是否为该步当前在跑的执行实例。
+        无记录(旧库/未写回)时放行,保持向后兼容。"""
+        current = await self.redis.get_step_exec_id(job_id, step)
+        return current is None or current == exec_id
+
     async def on_step_started(
         self, job_id: str, step: str, worker: str | None = None,
     ) -> None:
@@ -298,6 +308,11 @@ class Scheduler:
         worker: str | None = None,
         exec_id: str | None = None,
     ) -> None:
+        # 丢弃陈旧执行的完成事件:孤儿重排后旧 worker 迟到上报,其 exec_id 不再是当前
+        # 在跑的实例 → 忽略,避免提前置 done 顶替仍在跑的新执行(双执行/读到不完整产物)。
+        if exec_id is not None and not await self._exec_is_current(job_id, step, exec_id):
+            logger.warning("stale_exec_done_ignored", job_id=job_id, step=step, exec_id=exec_id)
+            return
         ok = await self.redis.cas_step_status(job_id, step, "running", "done")
         if not ok:
             return
@@ -388,7 +403,12 @@ class Scheduler:
         step: str,
         error: str,
         error_type: str = "unknown",
+        exec_id: str | None = None,
     ) -> None:
+        # 同 on_step_done:丢弃陈旧执行的失败事件,不让旧实例顶替当前在跑的步骤。
+        if exec_id is not None and not await self._exec_is_current(job_id, step, exec_id):
+            logger.warning("stale_exec_failed_ignored", job_id=job_id, step=step, exec_id=exec_id)
+            return
         ok = await self.redis.cas_step_status(job_id, step, "running", "failed")
         if not ok:
             return
@@ -502,9 +522,12 @@ class Scheduler:
                 pipeline = await self.redis.get_job_pipeline(job_id)
                 if pipeline:
                     steps_cfg = self._get_pipeline_steps(pipeline)
+                    pool_ok: dict[str, bool] = {}  # 同 pool 只查一次,免逐步重复扫 worker
                     for step_name in not_done:
                         pool = steps_cfg.get(step_name, {}).get("pool", "")
-                        if await self._pool_has_workers(pool):
+                        if pool not in pool_ok:
+                            pool_ok[pool] = await self._pool_has_workers(pool)
+                        if pool_ok[pool]:
                             continue
                         # CAS 保护 ready→skipped：若该步骤刚被 worker 抢成 running，
                         # CAS 失败 → 放弃 skip，避免覆盖在途执行。
@@ -672,8 +695,11 @@ class Scheduler:
 
     # ── 孤儿回收 + 卡住检测 ──
 
+    _CLAIM_MISMATCH_GRACE_SEC = 30
+
     async def orphan_scan(self) -> None:
         active_jobs = await self.redis.get_active_jobs()
+        live_mismatch: set[tuple[str, str]] = set()
         for job_id in active_jobs:
             statuses = await self.redis.get_all_step_statuses(job_id)
             for step, status in statuses.items():
@@ -682,8 +708,27 @@ class Scheduler:
                 worker_id = await self.redis.get_step_worker(job_id, step)
                 if not worker_id:
                     await self._reclaim_step(job_id, step, "no worker assigned")
-                elif not await self.redis.worker_exists(worker_id):
+                    continue
+                if not await self.redis.worker_exists(worker_id):
                     await self._reclaim_step(job_id, step, f"worker {worker_id} lost")
+                    continue
+                # worker 存活,但其上报的 current_step 不是本步 → 认领响应丢失/已转去别的任务,
+                # 这步实际没人在跑。持续超宽限期(容忍认领后首拍心跳延迟)才回收。
+                info = await self.redis.get_worker_info(worker_id)
+                reported = (info or {}).get("current_step", "")
+                if reported != step:
+                    key = (job_id, step)
+                    live_mismatch.add(key)
+                    first = self._claim_mismatch_since.setdefault(key, time.time())
+                    if time.time() - first >= self._CLAIM_MISMATCH_GRACE_SEC:
+                        self._claim_mismatch_since.pop(key, None)
+                        await self._reclaim_step(
+                            job_id, step,
+                            f"worker {worker_id} not running this step (claim lost?)",
+                        )
+        # 清理不再 mismatch 的计时,避免泄漏。
+        for k in [k for k in self._claim_mismatch_since if k not in live_mismatch]:
+            self._claim_mismatch_since.pop(k, None)
 
     async def _reclaim_step(self, job_id: str, step: str, reason: str) -> None:
         logger.warning("reclaim_step", job_id=job_id, step=step, reason=reason)
@@ -758,9 +803,12 @@ class Scheduler:
             steps_cfg = self._get_pipeline_steps(pipeline) if pipeline else {}
             stuck: list[tuple[str, str]] = []
             progressable = False
+            pool_ok: dict[str, bool] = {}  # 同 pool 只查一次
             for step in ready:
                 pool = steps_cfg.get(step, {}).get("pool", "")
-                if await self._pool_has_workers(pool):
+                if pool not in pool_ok:
+                    pool_ok[pool] = await self._pool_has_workers(pool)
+                if pool_ok[pool]:
                     progressable = True
                     break
                 stuck.append((step, pool))

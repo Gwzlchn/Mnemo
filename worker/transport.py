@@ -22,6 +22,9 @@ from shared.redis_client import RedisClient
 
 
 class WorkerTransport(Protocol):
+    # per-worker token,供 GatewayStorage 经网关代理产物时鉴权;直连模式为空串。
+    worker_token: str
+
     # ── 生命周期 / 心跳 ──
     async def register(
         self, worker_id: str, worker_type: str, pools: list[str],
@@ -97,6 +100,8 @@ class RedisTransport:
         self._db = db
         # 粗粒度上报需要 worker_id,注册/认领时记下,report_*/release 据此回写。
         self._worker_id = ""
+        # 直连模式不经网关代理产物,无 per-worker token(满足 Protocol、避免误用时 AttributeError)。
+        self.worker_token = ""
 
     # ── 生命周期 / 心跳 ──
     async def register(self, worker_id, worker_type, pools, tags,

@@ -193,12 +193,42 @@ class Database:
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        # api/scheduler/worker 三进程各开连接写同一文件,撞 SQLITE_BUSY 时等待而非立刻报错。
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
 
     def init_schema(self) -> None:
         with self._lock:
+            # 先补旧表缺列,再跑 schema：否则 schema 里 ON jobs(collection_id) 的
+            # CREATE INDEX 会在缺该列的老库上先行报错。新库此步无表可补、直接跳过。
+            self._ensure_columns()
             self._conn.executescript(_SCHEMA_SQL)
+
+    # 各表的期望列(列名 -> 建列 SQL 片段)。旧库缺列时按需 ALTER ADD,
+    # 避免"代码加了新列、旧库没有 → 查询崩"。新增列只在此登记即可平滑升级。
+    _EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
+        "jobs": {"collection_id": "collection_id TEXT", "source": "source TEXT"},
+        "job_steps": {"retries": "retries INTEGER DEFAULT 0"},
+        "workers": {
+            "reject_tags": "reject_tags TEXT NOT NULL DEFAULT '[]'",
+            "admin_note": "admin_note TEXT",
+        },
+        "glossary": {"source_type": "source_type TEXT DEFAULT 'manual'"},
+    }
+
+    def _ensure_columns(self) -> None:
+        """幂等的列迁移:对已存在的表补齐期望列(SQLite 不支持 IF NOT EXISTS 加列)。"""
+        for table, cols in self._EXPECTED_COLUMNS.items():
+            existing = {
+                r["name"]
+                for r in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if not existing:
+                continue  # 表不存在(schema 会建),跳过
+            for col, ddl in cols.items():
+                if col not in existing:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
     def close(self) -> None:
         # 持锁关闭，确保没有线程正在使用连接。
@@ -278,6 +308,13 @@ class Database:
 
         return total, [self._row_to_job(r) for r in rows]
 
+    def count_jobs_by_status(self) -> dict[str, int]:
+        """一次 GROUP BY 取各状态计数(替代多次 list_jobs(limit=0) 的 COUNT+空 SELECT)。"""
+        rows = self._conn.execute(
+            "SELECT status, COUNT(*) AS n FROM jobs GROUP BY status"
+        ).fetchall()
+        return {r["status"]: r["n"] for r in rows}
+
     def update_job(self, job_id: str, **fields) -> None:
         if not fields:
             return
@@ -294,15 +331,53 @@ class Database:
 
         set_clause = ", ".join(f"{k}=?" for k in fields)
         values = list(fields.values()) + [job_id]
+        # FTS 行冗余存 title/domain/collection_id,这几项变更要同步,否则检索元数据漂移。
+        fts_sync = {k: fields[k] for k in ("title", "domain", "collection_id") if k in fields}
         with self._lock:
             self._conn.execute(
                 f"UPDATE jobs SET {set_clause} WHERE id=?", values
             )
+            if fts_sync:
+                fts_clause = ", ".join(f"{k}=?" for k in fts_sync)
+                self._conn.execute(
+                    f"UPDATE notes_fts5 SET {fts_clause} WHERE job_id=?",
+                    [("" if v is None else v) for v in fts_sync.values()] + [job_id],
+                )
             self._conn.commit()
 
     def delete_job(self, job_id: str) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+            self._conn.commit()
+
+    def delete_job_cascade(self, job_id: str, collection_id: str | None = None) -> None:
+        """原子删 job：jobs 行 + FTS 索引 + 集合计数 -1 + 摘除 glossary.sources 里的 job_id。
+        全部在单事务内,避免两次 commit 之间崩溃留孤儿 FTS 行 / 计数错位。
+        job_steps 经 FK ON DELETE CASCADE 连带删除。"""
+        with self._lock:
+            self._conn.execute("DELETE FROM notes_fts5 WHERE job_id=?", (job_id,))
+            self._conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+            if collection_id:
+                self._conn.execute(
+                    "UPDATE collections SET job_count = MAX(0, job_count - 1) WHERE id=?",
+                    (collection_id,),
+                )
+            # glossary.sources 是 JSON 数组,摘掉指向已删 job 的悬空 id(逐行解析,量小)。
+            rows = self._conn.execute(
+                "SELECT domain, term, sources FROM glossary WHERE sources LIKE ?",
+                (f'%"{job_id}"%',),
+            ).fetchall()
+            for r in rows:
+                try:
+                    srcs = json.loads(r["sources"])
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if job_id in srcs:
+                    srcs = [s for s in srcs if s != job_id]
+                    self._conn.execute(
+                        "UPDATE glossary SET sources=? WHERE domain=? AND term=?",
+                        (json.dumps(srcs), r["domain"], r["term"]),
+                    )
             self._conn.commit()
 
     # ── Step ──
@@ -337,7 +412,11 @@ class Database:
         ).fetchall()
         return [self._row_to_step(r) for r in rows]
 
-    def update_step(self, job_id: str, step_name: str, **fields) -> None:
+    def update_step(
+        self, job_id: str, step_name: str, *, only_if_active: bool = False, **fields
+    ) -> None:
+        """更新步骤行。only_if_active=True 时仅在当前状态非终态(done/skipped)才写,
+        防成功步被迟到的失败上报覆盖(done→failed 不一致)。"""
         if not fields:
             return
         invalid = set(fields.keys()) - _STEP_UPDATABLE
@@ -353,10 +432,13 @@ class Database:
             fields["finished_at"] = fields["finished_at"].isoformat()
 
         set_clause = ", ".join(f"{k}=?" for k in fields)
+        where = "job_id=? AND step=?"
         values = list(fields.values()) + [job_id, step_name]
+        if only_if_active:
+            where += " AND status NOT IN ('done','skipped')"
         with self._lock:
             self._conn.execute(
-                f"UPDATE job_steps SET {set_clause} WHERE job_id=? AND step=?",
+                f"UPDATE job_steps SET {set_clause} WHERE {where}",
                 values,
             )
             self._conn.commit()
@@ -756,10 +838,15 @@ class Database:
             self._conn.commit()
 
     def delete_collection(self, collection_id: str) -> None:
-        """删集合=解绑：把名下 job 的 collection_id 置 NULL（保留 job），再删集合行。"""
+        """删集合=解绑：把名下 job 的 collection_id 置 NULL（保留 job），再删集合行。
+        FTS 索引行同步解绑,否则按已删集合 id 检索仍命中悬空行。"""
         with self._lock:
             self._conn.execute(
                 "UPDATE jobs SET collection_id=NULL WHERE collection_id=?",
+                (collection_id,),
+            )
+            self._conn.execute(
+                "UPDATE notes_fts5 SET collection_id='' WHERE collection_id=?",
                 (collection_id,),
             )
             self._conn.execute(

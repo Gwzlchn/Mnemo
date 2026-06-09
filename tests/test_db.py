@@ -787,3 +787,95 @@ class TestConcurrency:
         got = db.get_job(sample_job.id)
         assert got is not None
         assert got.progress_pct in range(10)
+
+
+class TestAuditFixes:
+    """审计修复的回归保护:FTS 同步 / 原子级联删 / 终态守卫 / 列迁移 / 状态计数。"""
+
+    def _job(self, jid="j_fix_1", collection_id=None, domain="ml"):
+        return Job(id=jid, content_type="video", pipeline="video",
+                   domain=domain, collection_id=collection_id, title="T")
+
+    def test_update_step_only_if_active_guard(self, db, sample_job):
+        # M1:终态(done)步不被迟到的 failed 覆盖
+        db.create_job(sample_job)
+        db.upsert_step(Step(job_id=sample_job.id, name="s1", pool="cpu"))
+        db.update_step(sample_job.id, "s1", status="done")
+        db.update_step(sample_job.id, "s1", only_if_active=True, status="failed", error="late")
+        steps = {s.name: s for s in db.get_steps(sample_job.id)}
+        assert steps["s1"].status == StepStatus.DONE  # 仍为 done,未被改 failed
+
+    def test_update_step_active_still_writes_non_terminal(self, db, sample_job):
+        db.create_job(sample_job)
+        db.upsert_step(Step(job_id=sample_job.id, name="s1", pool="cpu", status=StepStatus.RUNNING))
+        db.update_step(sample_job.id, "s1", only_if_active=True, status="failed", error="boom")
+        steps = {s.name: s for s in db.get_steps(sample_job.id)}
+        assert steps["s1"].status == StepStatus.FAILED  # running→failed 正常写入
+
+    def test_delete_collection_syncs_fts(self, db):
+        # L29:删集合后 FTS 行的 collection_id 同步清空
+        db.create_collection(Collection(id="c1", name="C", domain="ml"))
+        db.create_job(self._job("j1", collection_id="c1"))
+        db.index_job_notes("j1", "smart", "标题", "深度学习正文内容", "video", "ml", "c1")
+        db.delete_collection("c1")
+        _, items = db.search_notes("深度学习", collection_id="c1")
+        assert items == []  # 不再按已删集合命中
+        _, all_items = db.search_notes("深度学习")
+        assert all_items and all_items[0]["collection_id"] is None
+
+    def test_update_job_syncs_fts_metadata(self, db):
+        # L30:改 job 的 title/domain/collection_id 同步进 FTS 行
+        db.create_job(self._job("j2", domain="ml"))
+        db.index_job_notes("j2", "smart", "旧标题", "强化学习正文内容", "video", "ml", "")
+        db.update_job("j2", title="新标题", domain="rl")
+        _, items = db.search_notes("强化学习", domain="rl")
+        assert items and items[0]["title"] == "新标题"
+        _, none = db.search_notes("强化学习", domain="ml")
+        assert none == []  # 旧 domain 不再命中
+
+    def test_delete_job_cascade_atomic(self, db):
+        # L31:级联删 job 同时清 FTS + 集合计数
+        db.create_collection(Collection(id="c2", name="C2", domain="ml"))
+        db.create_job(self._job("j3", collection_id="c2"))
+        db.increment_collection_count("c2", 1)
+        db.index_job_notes("j3", "smart", "T", "卷积神经网络正文", "video", "ml", "c2")
+        db.delete_job_cascade("j3", "c2")
+        assert db.get_job("j3") is None
+        assert db.search_notes("卷积神经网络")[0] == 0  # FTS 行已删
+        assert db.get_collection("c2").job_count == 0   # 计数 -1
+
+    def test_delete_job_cascade_cleans_glossary_sources(self, db):
+        # N5:删 job 摘掉 glossary.sources 里的悬空 job_id
+        db.create_job(self._job("j4"))
+        db.add_glossary_suggestion("ml", "Transformer", "j4")
+        db.add_glossary_suggestion("ml", "Transformer", "j_other")
+        db.delete_job_cascade("j4", None)
+        term = db.get_glossary_term("ml", "Transformer")
+        assert "j4" not in term["sources"] and "j_other" in term["sources"]
+
+    def test_count_jobs_by_status(self, db):
+        # L17:一次 GROUP BY 取各状态计数
+        db.create_job(Job(id="ja", content_type="video", pipeline="video", status=JobStatus.DONE))
+        db.create_job(Job(id="jb", content_type="video", pipeline="video", status=JobStatus.DONE))
+        db.create_job(Job(id="jc", content_type="video", pipeline="video", status=JobStatus.FAILED))
+        counts = db.count_jobs_by_status()
+        assert counts.get("done") == 2 and counts.get("failed") == 1
+
+    def test_ensure_columns_adds_missing(self, tmp_path):
+        # K:旧库缺列时 init_schema 通过 _ensure_columns 自动补齐,不崩
+        import sqlite3
+        p = tmp_path / "legacy.db"
+        con = sqlite3.connect(str(p))
+        # 造一个缺 collection_id/source 列的老 jobs 表
+        con.execute(
+            "CREATE TABLE jobs (id TEXT PRIMARY KEY, content_type TEXT, pipeline TEXT, "
+            "domain TEXT, status TEXT, progress_pct INTEGER, meta TEXT, "
+            "created_at TEXT, updated_at TEXT, error TEXT)"
+        )
+        con.commit()
+        con.close()
+        d = Database(p)
+        d.init_schema()  # 应补齐 collection_id/source,不抛
+        cols = {r["name"] for r in d._conn.execute("PRAGMA table_info(jobs)").fetchall()}
+        assert "collection_id" in cols and "source" in cols
+        d.close()

@@ -20,7 +20,8 @@ md.renderer.rules.image = (tokens: any, idx: any, options: any, env: any, self: 
   return defaultImageRule(tokens, idx, options, env, self)
 }
 
-md.core.ruler.after('inline', 'timestamp_links', (state: any) => {
+// 时间戳渲染为普通等宽文本：当前没有播放器/跳转能力，不做可点击外观以免误导。
+md.core.ruler.after('inline', 'timestamp_marks', (state: any) => {
   for (const blockToken of state.tokens) {
     if (blockToken.type !== 'inline' || !blockToken.children) continue
     const newChildren: any[] = []
@@ -37,8 +38,7 @@ md.core.ruler.after('inline', 'timestamp_links', (state: any) => {
           if (match) {
             const open = new state.Token('html_inline', '', 0)
             const ts = match[1]
-            const secs = tsToSeconds(ts)
-            open.content = `<a class="timestamp-link text-blue-600 hover:underline cursor-pointer font-mono text-sm" data-time="${secs}">[${ts}]</a>`
+            open.content = `<span class="timestamp-mark font-mono text-sm text-gray-500">[${ts}]</span>`
             newChildren.push(open)
           } else if (part) {
             const t = new state.Token('text', '', 0)
@@ -53,12 +53,6 @@ md.core.ruler.after('inline', 'timestamp_links', (state: any) => {
     blockToken.children = newChildren
   }
 })
-
-function tsToSeconds(ts: string): number {
-  const parts = ts.split(':').map(Number)
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2]
-  return parts[0] * 60 + parts[1]
-}
 
 const rendered = computed(() => {
   let headingIdx = 0
@@ -89,5 +83,5 @@ watch(rendered, (html) => {
 
 <style>
 .prose img { max-width: 100%; border-radius: 0.5rem; }
-.prose .timestamp-link { text-decoration: none; }
+.prose .timestamp-mark { text-decoration: none; }
 </style>

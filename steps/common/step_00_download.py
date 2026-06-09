@@ -84,12 +84,13 @@ class DownloadStep(StepBase):
         input_dir.mkdir(parents=True, exist_ok=True)
 
         cmd = [
-            "yt-dlp", url,
+            "yt-dlp",
             "-o", str(input_dir / "source.%(ext)s"),
             "--write-sub", "--sub-lang", "en,zh-Hans",
             "--convert-subs", "srt",
             "-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
             "--merge-output-format", "mp4",
+            "--", url,  # -- 分隔:挡以 "-" 开头的 url 被当作 yt-dlp 选项注入
         ]
         self.run_subprocess(cmd, timeout=self.config["step"]["timeout_sec"])
         self._rename_to_source_mp4(input_dir)
@@ -167,10 +168,11 @@ class DownloadStep(StepBase):
         input_dir.mkdir(parents=True, exist_ok=True)
 
         cmd = [
-            "yt-dlp", url,
+            "yt-dlp",
             "-o", str(input_dir / "source.%(ext)s"),
             "-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
             "--merge-output-format", "mp4",
+            "--", url,  # -- 分隔:挡以 "-" 开头的 url 被当作 yt-dlp 选项注入
         ]
         self.run_subprocess(cmd, timeout=self.config["step"]["timeout_sec"])
         self._rename_to_source_mp4(input_dir)

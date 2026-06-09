@@ -32,7 +32,7 @@ export const useJobStore = defineStore('jobs', () => {
     return api.get<JobDetail>(`/api/jobs/${jobId}`)
   }
 
-  async function createJob(payload: { url?: string; content_type?: string; domain?: string; style_tags?: string[] }) {
+  async function createJob(payload: { url?: string; content_type?: string; domain?: string; style_tags?: string[]; collection_id?: string }) {
     return api.post<{ job_id: string }>('/api/jobs', payload)
   }
 

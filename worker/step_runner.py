@@ -197,8 +197,12 @@ class DockerStepRunner:
         self._registry = (registry or "").rstrip("/")
 
     def _host_path(self, work_dir: Path) -> str:
+        # DooD bind-mount 必须用宿主路径。HOST_WORK_DIR 缺失时若退化为容器内路径,
+        # 会把错误目录挂进 /job(读不到上一步产物)且无报错 → 直接 fail-fast。
         if not self._host_work_root:
-            return str(work_dir)
+            raise ValueError(
+                "DockerStepRunner requires HOST_WORK_DIR (DooD 需宿主侧 work 目录路径)"
+            )
         return str(Path(self._host_work_root) / work_dir.name)
 
     def _resolve_image(self, image: str) -> str:

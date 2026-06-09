@@ -17,6 +17,7 @@ from shared.redis_client import RedisClient
 from shared.storage import StorageBackend
 
 _security = HTTPBearer(auto_error=False)
+_api_token_warned = False  # API_TOKEN 未设的告警只发一次,不在每个请求里刷屏
 
 
 def get_db(request: Request) -> Database:
@@ -40,8 +41,13 @@ async def verify_token(
 ) -> str:
     api_token = os.environ.get("API_TOKEN", "")
     if not api_token:
-        import structlog
-        structlog.get_logger().warning("api_token_empty", msg="API_TOKEN not set, auth disabled")
+        global _api_token_warned
+        if not _api_token_warned:
+            _api_token_warned = True
+            import structlog
+            structlog.get_logger().warning(
+                "api_token_empty", msg="API_TOKEN not set, auth disabled"
+            )
         return "no-auth"
     if credentials is None or not hmac.compare_digest(
         credentials.credentials.encode(), api_token.encode()

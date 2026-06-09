@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useApi } from '../composables/useApi'
 import { useCollectionStore } from '../stores/collections'
+import { useJobStore } from '../stores/jobs'
 import JobCard from '../components/job/JobCard.vue'
 import EmptyState from '../components/common/EmptyState.vue'
 import type { Collection, JobSummary } from '../types'
@@ -10,8 +10,8 @@ import { ArrowLeft, Library, RefreshCw, Send } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
-const api = useApi()
 const store = useCollectionStore()
+const jobStore = useJobStore()
 
 const id = String(route.params.id)
 const collection = ref<Collection | null>(null)
@@ -45,8 +45,8 @@ async function submit() {
   submitError.value = ''
   submitting.value = true
   try {
-    // 直连 /api/jobs 带 collection_id（jobs store 未透传该字段）；domain 继承集合。
-    await api.post('/api/jobs', {
+    // 走 jobs store；collection_id 绑定集合，domain 继承集合。
+    await jobStore.createJob({
       url: url.value.trim(),
       domain: collection.value.domain,
       collection_id: collection.value.id,

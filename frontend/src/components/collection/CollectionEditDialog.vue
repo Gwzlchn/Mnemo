@@ -3,7 +3,8 @@ import { reactive, ref } from 'vue'
 import type { Collection } from '../../types'
 
 // 新建/编辑集合对话框。传入 collection 即编辑模式（domain 不可改）。
-const props = defineProps<{ collection?: Collection | null }>()
+// submitting/error 由父组件驱动：失败时对话框不关闭，内联展示错误。
+const props = defineProps<{ collection?: Collection | null; submitting?: boolean; error?: string }>()
 const emit = defineEmits<{
   submit: [payload: { name: string; domain: string; description: string; tags: string[] }]
   cancel: []
@@ -77,16 +78,17 @@ function onSubmit() {
           />
         </div>
       </div>
+      <p v-if="error" class="text-sm text-red-600 mt-3">{{ error }}</p>
       <div class="flex gap-3 justify-end mt-6">
-        <button @click="emit('cancel')" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors">
+        <button @click="emit('cancel')" :disabled="submitting" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
           取消
         </button>
         <button
           @click="onSubmit"
-          :disabled="!form.name.trim()"
+          :disabled="!form.name.trim() || submitting"
           class="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {{ isEdit ? '保存' : '创建' }}
+          {{ submitting ? '保存中...' : (isEdit ? '保存' : '创建') }}
         </button>
       </div>
     </div>

@@ -1524,3 +1524,96 @@ class TestCleanupStaleWorkers:
         # Redis 无注册键 -> 视为真死 -> 删除
         await scheduler.cleanup_stale_workers(timeout_sec=60)
         assert db.get_worker("cpu-legacy") is None
+
+
+class TestStaleExecGuard:
+    """H3:孤儿重排后旧执行的迟到完成/失败事件按 exec_id 丢弃,不顶替当前在跑实例。"""
+
+    @pytest.mark.asyncio
+    async def test_stale_exec_done_ignored(self, redis, db, config):
+        s = _stub_workers_present(Scheduler(redis, db, config))
+        job = make_job()
+        db.create_job(job)
+        await s.submit_job(job)
+        await redis.set_step_status("j_test_001", "A", "running")
+        await redis.set_step_exec_id("j_test_001", "A", "exec_2")
+        # 旧执行 exec_1 迟到上报完成 → 应被忽略
+        await s.on_step_done("j_test_001", "A", exec_id="exec_1")
+        assert await redis.get_step_status("j_test_001", "A") == "running"
+        # 当前执行 exec_2 上报 → 正常置 done
+        await s.on_step_done("j_test_001", "A", exec_id="exec_2")
+        assert await redis.get_step_status("j_test_001", "A") == "done"
+
+    @pytest.mark.asyncio
+    async def test_no_exec_record_backward_compatible(self, redis, db, config):
+        # 未写 exec_id(旧库) → 不过滤,按原 CAS 行为置 done
+        s = _stub_workers_present(Scheduler(redis, db, config))
+        job = make_job()
+        db.create_job(job)
+        await s.submit_job(job)
+        await redis.set_step_status("j_test_001", "A", "running")
+        await s.on_step_done("j_test_001", "A", exec_id="exec_x")
+        assert await redis.get_step_status("j_test_001", "A") == "done"
+
+
+class TestOrphanClaimMismatch:
+    """H4:在跑步骤的 worker 存活但其上报 current_step 不是本步(认领响应丢失),
+    超宽限期回收,修永久卡 running。"""
+
+    @pytest.mark.asyncio
+    async def test_reclaim_when_worker_not_running_this_step(self, redis, db, config):
+        s = Scheduler(redis, db, config)
+        s._CLAIM_MISMATCH_GRACE_SEC = 0
+        job = make_job()
+        db.create_job(job)
+        await s.submit_job(job)
+        await redis.set_step_status("j_test_001", "A", "running")
+        await redis.set_step_worker("j_test_001", "A", "w1")
+        await redis.register_worker(
+            "w1", {"type": "cpu", "pools": "cpu,io", "status": "idle",
+                   "current_job": "", "current_step": ""},
+        )
+        calls = []
+        async def fake_reclaim(job_id, step, reason):
+            calls.append((job_id, step))
+        s._reclaim_step = fake_reclaim
+        await s.orphan_scan()
+        assert ("j_test_001", "A") in calls
+
+    @pytest.mark.asyncio
+    async def test_no_reclaim_when_worker_runs_this_step(self, redis, db, config):
+        s = Scheduler(redis, db, config)
+        s._CLAIM_MISMATCH_GRACE_SEC = 0
+        job = make_job()
+        db.create_job(job)
+        await s.submit_job(job)
+        await redis.set_step_status("j_test_001", "A", "running")
+        await redis.set_step_worker("j_test_001", "A", "w1")
+        await redis.register_worker(
+            "w1", {"type": "cpu", "pools": "cpu,io", "status": "busy",
+                   "current_job": "j_test_001", "current_step": "A"},
+        )
+        calls = []
+        async def fake_reclaim(job_id, step, reason):
+            calls.append((job_id, step))
+        s._reclaim_step = fake_reclaim
+        await s.orphan_scan()
+        assert calls == []  # current_step 匹配 → 不回收
+
+    @pytest.mark.asyncio
+    async def test_within_grace_not_reclaimed(self, redis, db, config):
+        s = Scheduler(redis, db, config)  # 默认宽限 30s
+        job = make_job()
+        db.create_job(job)
+        await s.submit_job(job)
+        await redis.set_step_status("j_test_001", "A", "running")
+        await redis.set_step_worker("j_test_001", "A", "w1")
+        await redis.register_worker(
+            "w1", {"type": "cpu", "pools": "cpu,io", "status": "idle", "current_step": ""},
+        )
+        calls = []
+        async def fake_reclaim(job_id, step, reason):
+            calls.append((job_id, step))
+        s._reclaim_step = fake_reclaim
+        await s.orphan_scan()  # 首次只记时,不回收
+        assert calls == []

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, inject } from 'vue'
 import type { Worker } from '../../types'
 import StatusBadge from '../common/StatusBadge.vue'
 import { useWorkerStore } from '../../stores/workers'
@@ -7,6 +7,7 @@ import { Edit3, Trash2, PauseCircle, PlayCircle, Tag } from 'lucide-vue-next'
 
 const props = defineProps<{ worker: Worker }>()
 const workerStore = useWorkerStore()
+const showToast = inject<(msg: string, type: 'success' | 'error' | 'info') => void>('showToast')!
 
 const editing = ref(false)
 const noteInput = ref(props.worker.admin_note || '')
@@ -61,22 +62,38 @@ const gpuText = computed(() => {
 })
 
 async function toggleDrain() {
-  if (isDraining.value) {
-    await workerStore.undrain(props.worker.id)
-  } else {
-    await workerStore.drain(props.worker.id)
+  try {
+    if (isDraining.value) {
+      await workerStore.undrain(props.worker.id)
+      showToast('已恢复', 'success')
+    } else {
+      await workerStore.drain(props.worker.id)
+      showToast('已排空', 'success')
+    }
+  } catch (e: any) {
+    showToast(e.message || '操作失败', 'error')
   }
 }
 
 async function saveNote() {
-  await workerStore.updateNote(props.worker.id, noteInput.value)
-  editing.value = false
+  try {
+    await workerStore.updateNote(props.worker.id, noteInput.value)
+    editing.value = false
+    showToast('备注已保存', 'success')
+  } catch (e: any) {
+    showToast(e.message || '保存失败', 'error')
+  }
 }
 
 async function saveTags() {
   const tags = tagsInput.value.split(/[\s,]+/).filter(Boolean)
-  await workerStore.updateTags(props.worker.id, tags)
-  editingTags.value = false
+  try {
+    await workerStore.updateTags(props.worker.id, tags)
+    editingTags.value = false
+    showToast('标签已保存', 'success')
+  } catch (e: any) {
+    showToast(e.message || '保存失败', 'error')
+  }
 }
 
 async function remove() {
@@ -85,8 +102,12 @@ async function remove() {
   const msg = force
     ? `${props.worker.id} 仍在线，强制移除？`
     : `确定移除 ${props.worker.id} 的记录？`
-  if (confirm(msg)) {
+  if (!confirm(msg)) return
+  try {
     await workerStore.remove(props.worker.id, force)
+    showToast('已移除', 'success')
+  } catch (e: any) {
+    showToast(e.message || '移除失败', 'error')
   }
 }
 </script>

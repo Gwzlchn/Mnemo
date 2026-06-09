@@ -72,6 +72,9 @@ class StepBase:
         """步骤脚本统一入口：解析 --job-dir/--step-config，实例化并 run。"""
         import argparse
 
+        from shared.logging_setup import setup_logging
+        setup_logging()  # 步骤子进程日志也输出结构化 JSON,与 scheduler/worker 一致
+
         parser = argparse.ArgumentParser()
         parser.add_argument("--job-dir", required=True)
         parser.add_argument("--step-config", required=True)

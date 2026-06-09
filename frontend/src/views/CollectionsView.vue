@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, inject } from 'vue'
 import { useCollectionStore } from '../stores/collections'
 import CollectionCard from '../components/collection/CollectionCard.vue'
 import CollectionEditDialog from '../components/collection/CollectionEditDialog.vue'
@@ -9,22 +9,33 @@ import type { Collection } from '../types'
 import { Library, Plus, RefreshCw } from 'lucide-vue-next'
 
 const store = useCollectionStore()
+const showToast = inject<(msg: string, type: 'success' | 'error' | 'info') => void>('showToast')!
 
 // 对话框状态：editing=新建/编辑表单，removing=待删确认目标。
 const showEdit = ref(false)
 const editing = ref<Collection | null>(null)
 const removing = ref<Collection | null>(null)
+const submitting = ref(false)
+const submitError = ref('')
 
 onMounted(() => store.fetchAll())
 
 function openCreate() {
   editing.value = null
+  submitError.value = ''
   showEdit.value = true
 }
 
 function openEdit(c: Collection) {
   editing.value = c
+  submitError.value = ''
   showEdit.value = true
+}
+
+function closeEdit() {
+  showEdit.value = false
+  editing.value = null
+  submitError.value = ''
 }
 
 async function onSubmit(payload: {
@@ -33,23 +44,39 @@ async function onSubmit(payload: {
   description: string
   tags: string[]
 }) {
-  if (editing.value) {
-    await store.update(editing.value.id, {
-      name: payload.name,
-      description: payload.description,
-      tags: payload.tags,
-    })
-  } else {
-    await store.create(payload)
+  submitError.value = ''
+  submitting.value = true
+  try {
+    if (editing.value) {
+      await store.update(editing.value.id, {
+        name: payload.name,
+        description: payload.description,
+        tags: payload.tags,
+      })
+      showToast('集合已更新', 'success')
+    } else {
+      await store.create(payload)
+      showToast('集合已创建', 'success')
+    }
+    // 成功才关闭，失败保留对话框内的输入。
+    showEdit.value = false
+    editing.value = null
+  } catch (e: any) {
+    submitError.value = e.message || '保存失败'
+  } finally {
+    submitting.value = false
   }
-  showEdit.value = false
-  editing.value = null
 }
 
 async function onConfirmRemove() {
   if (!removing.value) return
-  await store.remove(removing.value.id)
-  removing.value = null
+  try {
+    await store.remove(removing.value.id)
+    showToast('集合已删除', 'success')
+    removing.value = null
+  } catch (e: any) {
+    showToast(e.message || '删除失败', 'error')
+  }
 }
 </script>
 
@@ -93,8 +120,10 @@ async function onConfirmRemove() {
     <CollectionEditDialog
       v-if="showEdit"
       :collection="editing"
+      :submitting="submitting"
+      :error="submitError"
       @submit="onSubmit"
-      @cancel="showEdit = false; editing = null"
+      @cancel="closeEdit"
     />
 
     <ConfirmDialog

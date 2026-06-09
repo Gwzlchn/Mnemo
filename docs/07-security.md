@@ -75,6 +75,10 @@ SSH              key-only (禁密码)            服务器管理
 
 即使 Cloudflare 被绕过（几乎不可能），API 仍需 Bearer Token。Token 只存在主机本地 `.env`。
 
+> 限流 / 防爆破在边缘层(Cloudflare/Caddy Basic Auth)做,应用内不内置限流——
+> API 默认零公网端口、仅绑本机(`API_BIND_IP`),verify_token 用常量时间比对。
+> 直接把 API 端口暴露到公网时,务必同时设强随机 `API_TOKEN` 并在边缘加限流。
+
 ## 4. 通信安全
 
 | 链路 | 协议 | 加密 | 认证 |

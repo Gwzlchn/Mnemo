@@ -276,13 +276,8 @@ async def delete_job(
     job = await asyncio.to_thread(db.get_job, job_id)
     if not job:
         raise HTTPException(404, "job not found")
-    await asyncio.to_thread(db.delete_job, job_id)
-    # 删 job 连带清掉它的全文索引，并把所属集合的 job_count 减 1。
-    await asyncio.to_thread(db.delete_job_index, job_id)
-    if job.collection_id:
-        await asyncio.to_thread(
-            db.increment_collection_count, job.collection_id, -1,
-        )
+    # 单事务删 job：jobs 行 + FTS 索引 + 集合计数 + glossary 悬空 source,避免中途崩溃留孤儿。
+    await asyncio.to_thread(db.delete_job_cascade, job_id, job.collection_id)
     job_dir = config.jobs_dir / job_id
     if job_dir.exists():
         await asyncio.to_thread(shutil.rmtree, job_dir)

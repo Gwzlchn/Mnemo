@@ -425,10 +425,12 @@ class TestHostPath:
         runner = DockerStepRunner("w1", host_work_root="/host/work")
         assert runner._host_path(Path("/tmp/mnemo-work/j_abc")) == "/host/work/j_abc"
 
-    def test_without_host_root(self, fake_docker, tmp_path):
+    def test_without_host_root_fails_fast(self, fake_docker, tmp_path):
+        # HOST_WORK_DIR 缺失 → fail-fast,不静默挂错误目录(L9)
         fake_docker["client"] = _FakeClient(None)
         runner = DockerStepRunner("w1", host_work_root=None)
-        assert runner._host_path(Path("/tmp/mnemo-work/j_abc")) == "/tmp/mnemo-work/j_abc"
+        with pytest.raises(ValueError):
+            runner._host_path(Path("/tmp/mnemo-work/j_abc"))
 
 
 class TestResolveImage:

@@ -26,6 +26,7 @@ from worker.transport import WorkerTransport
 
 logger = structlog.get_logger(component="worker")
 
+# worker 类型 → 订阅的池(拓扑权威,不在 pools.yaml;新增/重命名池在此维护)。
 WORKER_POOLS: dict[str, list[str]] = {
     "download": ["io"],
     "cpu": ["scene", "cpu", "io"],

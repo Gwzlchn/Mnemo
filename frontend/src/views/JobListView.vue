@@ -8,6 +8,7 @@ const jobStore = useJobStore()
 const activeTab = ref('')
 const offset = ref(0)
 const limit = 20
+const loadError = ref('')
 
 const tabs = [
   { value: '', label: '全部' },
@@ -24,12 +25,21 @@ watch(activeTab, () => {
 })
 
 async function load() {
-  await jobStore.fetchList({ status: activeTab.value || undefined, limit, offset: offset.value })
+  loadError.value = ''
+  try {
+    await jobStore.fetchList({ status: activeTab.value || undefined, limit, offset: offset.value })
+  } catch (e: any) {
+    loadError.value = e?.message || '加载失败'
+  }
 }
 
-function loadMore() {
+async function loadMore() {
   offset.value += limit
-  jobStore.fetchList({ status: activeTab.value || undefined, limit, offset: offset.value, append: true })
+  try {
+    await jobStore.fetchList({ status: activeTab.value || undefined, limit, offset: offset.value, append: true })
+  } catch (e: any) {
+    loadError.value = e?.message || '加载失败'
+  }
 }
 </script>
 
@@ -51,6 +61,12 @@ function loadMore() {
     </div>
 
     <div v-if="jobStore.loading && jobStore.list.length === 0" class="text-sm text-gray-400 py-8 text-center">加载中...</div>
+    <div v-else-if="loadError && jobStore.list.length === 0" class="bg-white border border-gray-200 rounded-xl p-8 flex flex-col items-center text-center">
+      <p class="text-sm text-gray-600">{{ loadError }}</p>
+      <button @click="load" class="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
+        重新加载
+      </button>
+    </div>
     <div v-else-if="jobStore.list.length === 0">
       <EmptyState />
     </div>

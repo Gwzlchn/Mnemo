@@ -229,35 +229,32 @@ volumes:
 
 > **audio/播客流水线需要 whisper-capable worker**：`00b_whisper` 步在 `gpu` 池，仅由 `--type gpu` 且装了 `[gpu]` 依赖（faster-whisper）的 worker 执行；该 worker 在无 GPU 的机器上用 CPU（int8）转写，较慢但可用。若集群无此 worker，含音频/无字幕视频的 job 会在约 90s 后 fail-fast 报「无可用 worker」而非永久挂起。默认 `docker compose up` 只起 download/cpu/ai worker，不含 whisper worker。
 
+现行接入走 worker-gateway 单出站 HTTPS（见 [ADR-0009](adr/0009-worker-gateway-outbound-https.md)）：
+GPU 机只需能出站访问主机 API，不暴露任何入站端口、不直连 Redis/MinIO。
+
+whisper 需 `[gpu]` 依赖(faster-whisper)，base 镜像未含——先构建一个带该 extra 的镜像：
+
+```dockerfile
+FROM ghcr.io/${IMAGE_OWNER:-gwzlchn}/mnemo:latest
+RUN pip install --no-cache-dir ".[gpu]"
+```
+
 ```bash
 docker run -d --gpus all \
-  --name gpu-worker \
-  -e REDIS_URL=rediss://:${REDIS_PASSWORD}@${RELAY_IP}:6380/0 \
-  -e MINIO_URL=https://${RELAY_IP}:9000 \
-  -e MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY} \
-  -e MINIO_SECRET_KEY=${MINIO_SECRET_KEY} \
+  --name mnemo-gpu-worker \
+  -e GATEWAY_URL=https://<主机域名> \
+  -e WORKER_REGISTRATION_TOKEN=<管理页铸造的接入 token> \
   -e IDLE_TIMEOUT=600 \
-  --read-only \
   --tmpfs /tmp:size=2G \
   --memory 8g \
   --security-opt no-new-privileges:true \
-  worker-gpu:latest \
-  python3 worker.py --type gpu
+  <上面构建的镜像> \
+  python -m worker.main --type gpu
 ```
 
-一条命令接入，空闲 10 分钟自动退出。
+一条命令接入，纯出站 HTTPS，空闲 10 分钟自动退出；删除 worker 即吊销其 token。
 
-### 主机 .env 追加
-
-```bash
-# GPU 中转服务器
-RELAY_REDIS_URL=rediss://:password@中转服务器IP:6380/0
-MINIO_URL=https://中转服务器IP:9000
-MINIO_ACCESS_KEY=your-access-key
-MINIO_SECRET_KEY=your-secret-key
-```
-
-> 如果主机和 GPU 都有公网 IP，不需要中转——GPU Worker 直连主机 Redis 即可（主机 Redis 加 TLS + 密码）。
+> 旧的「中转 Redis(TLS)+MinIO」直连模型见上方 compose，已被网关模型取代，仅在需要 worker 直连内部组件时保留。
 
 ## 5. 首次使用引导
 

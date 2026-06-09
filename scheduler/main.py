@@ -63,10 +63,6 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    structlog.configure(
-        processors=[
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.JSONRenderer(ensure_ascii=False),
-        ],
-    )
+    from shared.logging_setup import setup_logging
+    setup_logging()
     asyncio.run(main())

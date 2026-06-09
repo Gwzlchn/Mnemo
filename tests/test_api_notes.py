@@ -92,9 +92,10 @@ class TestNotes:
 
     @pytest.mark.asyncio
     async def test_asset_path_traversal(self, client, test_config):
+        # %2e%2e 解码为 ".." 仍在单段内,能真正到达守卫 → 严格断言 400(不接受 404 蒙混)
         _create_job_files(test_config.jobs_dir, "j_test")
-        resp = await client.get("/api/jobs/j_test/assets/..%2F..%2Fetc%2Fpasswd")
-        assert resp.status_code in (400, 404)
+        resp = await client.get("/api/jobs/j_test/assets/%2e%2e_passwd")
+        assert resp.status_code == 400
 
     @pytest.mark.asyncio
     async def test_not_found(self, client):

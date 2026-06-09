@@ -40,14 +40,16 @@ async def _update_step_result(
     redis: RedisClient, db: Database, job_id: str, step: str, *,
     status: str, worker_id: str,
     started_at: datetime, finished_at: datetime, duration_sec: float,
-    error: str | None = None,
+    error: str | None = None, only_if_active: bool = False,
 ) -> None:
     kwargs = dict(status=status, worker_id=worker_id,
                   started_at=started_at, finished_at=finished_at,
                   duration_sec=duration_sec)
     if error is not None:
         kwargs["error"] = error
-    await asyncio.to_thread(db.update_step, job_id, step, **kwargs)
+    await asyncio.to_thread(
+        db.update_step, job_id, step, only_if_active=only_if_active, **kwargs
+    )
 
 
 async def _increment_worker_stats(
@@ -111,6 +113,8 @@ async def claim_step(
         task, raw_json, score = matched
         job_id = task["job_id"]
         step = task["step"]
+        # 池拓扑权威在代码:scene 独占 cpu_bound —— 认领 scene 即冻结 cpu 池,
+        # 释放时解冻(见 release_step)。pools.yaml 只配 limit,不配这层关系。
         if pool == "scene":
             await redis.freeze_pool("cpu")
 
@@ -125,6 +129,7 @@ async def claim_step(
                 continue
 
             await redis.set_step_worker(job_id, step, worker_id)
+            await redis.set_step_exec_id(job_id, step, exec_id)
             await _set_status(redis, db, worker_id, "busy", job_id, step)
             await redis.publish("step_started", {
                 "job_id": job_id, "step": step, "status": "running",
@@ -207,6 +212,8 @@ async def report_step_failed(
         started_at=datetime.fromtimestamp(started_at, timezone.utc),
         finished_at=datetime.now(timezone.utc),
         duration_sec=round(duration, 1),
+        # 不覆盖已终态成功的步:成功上报响应丢失被改报 failed 时,DB 仍保 done。
+        only_if_active=True,
     )
     # 统计怪癖:仅 rc!=0(count_stats=True)累加 failed;timeout/异常分支不计(与旧 execute 一致)。
     if count_stats:

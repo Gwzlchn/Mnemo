@@ -9,6 +9,7 @@ from fastapi import FastAPI
 
 from shared.config import load_config
 from shared.db import Database
+from shared.logging_setup import setup_logging
 from shared.redis_client import RedisClient
 from shared.storage import create_storage
 
@@ -18,6 +19,7 @@ def create_app(
     redis: RedisClient | None = None,
     config=None,
 ) -> FastAPI:
+    setup_logging()  # 与 scheduler/worker 一致输出结构化 JSON 日志
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         if not hasattr(app.state, "db") or app.state.db is None:
@@ -73,4 +75,6 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=True)
+    # 生产默认关 reload(避免 StatReload 常驻 stat 源码树);开发用 API_RELOAD=1 开启。
+    reload = os.environ.get("API_RELOAD", "0") == "1"
+    uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=reload)

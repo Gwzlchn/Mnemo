@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref, watch, onUnmounted } from 'vue'
+import { ref, watch, onUnmounted, inject } from 'vue'
 import type { StepInfo } from '../../types'
-import { useApi } from '../../composables/useApi'
+import { useApi, useAuth } from '../../composables/useApi'
 import { Check, X, Minus, Loader, ChevronDown, ChevronRight, Download } from 'lucide-vue-next'
 
 const props = defineProps<{ steps: StepInfo[]; jobId: string }>()
 const api = useApi()
+const { authToken } = useAuth()
+const showToast = inject<(msg: string, type: 'success' | 'error' | 'info') => void>('showToast')
 
 const statusIcon: Record<string, any> = {
   done: Check,
@@ -53,6 +55,27 @@ function canExpand(step: StepInfo): boolean {
 
 function logUrl(step: string, raw = false): string {
   return `/api/jobs/${props.jobId}/steps/${step}/log${raw ? '?raw=1' : ''}`
+}
+
+// 用带鉴权的 fetch 下载 raw 日志：裸 <a> 导航不带 Authorization，token 回退模式下会 401。
+async function downloadRaw(step: string): Promise<void> {
+  try {
+    const headers: Record<string, string> = {}
+    if (authToken.value) headers['Authorization'] = `Bearer ${authToken.value}`
+    const resp = await fetch(logUrl(step, true), { headers })
+    if (!resp.ok) throw new Error(`下载失败 (${resp.status})`)
+    const blob = await resp.blob()
+    const objectUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = objectUrl
+    a.download = `${props.jobId}-${step}.log`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(objectUrl)
+  } catch (e: any) {
+    showToast?.(e?.message || '下载失败', 'error')
+  }
 }
 
 async function fetchLog(step: string): Promise<void> {
@@ -183,14 +206,13 @@ async function toggle(step: StepInfo) {
             <div class="flex items-center justify-between mb-1">
               <span v-if="step.status === 'running'" class="text-xs text-blue-500">实时刷新中...</span>
               <span v-else></span>
-              <a
-                :href="logUrl(step.name, true)"
-                target="_blank"
-                rel="noopener"
+              <button
+                type="button"
+                @click.stop="downloadRaw(step.name)"
                 class="text-xs text-gray-500 hover:text-gray-700 inline-flex items-center gap-1"
               >
                 <Download :size="12" /> 下载 raw
-              </a>
+              </button>
             </div>
             <pre class="text-xs bg-gray-900 text-gray-100 rounded-lg p-3 max-h-80 overflow-auto whitespace-pre-wrap break-all">{{ logs[step.name] }}</pre>
           </template>

@@ -19,19 +19,26 @@ const { steps, jobStatus, connected, setInitialSteps } = useJobWs(jobId)
 
 const job = ref<JobDetail | null>(null)
 const loading = ref(true)
+const loadError = ref('')
 const showDelete = ref(false)
 const rerunStep = ref('')
 
-onMounted(async () => {
+async function fetchDetail() {
+  loading.value = true
+  loadError.value = ''
   try {
     const detail = await jobStore.fetchDetail(jobId.value)
     job.value = detail
     jobStatus.value = detail.status
     setInitialSteps(detail.steps)
+  } catch (e: any) {
+    loadError.value = e?.status === 404 ? '任务不存在或已删除' : (e?.message || '加载失败')
   } finally {
     loading.value = false
   }
-})
+}
+
+onMounted(fetchDetail)
 
 const contentIcon = computed(() => {
   if (job.value?.content_type === 'video') return Video
@@ -82,6 +89,14 @@ async function confirmDelete() {
     </button>
 
     <div v-if="loading" class="text-sm text-gray-400 py-8 text-center">加载中...</div>
+
+    <div v-else-if="loadError" class="bg-white border border-gray-200 rounded-xl p-8 flex flex-col items-center text-center">
+      <p class="text-sm text-gray-600">{{ loadError }}</p>
+      <button @click="fetchDetail" class="mt-4 flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
+        <RotateCcw :size="14" />
+        重新加载
+      </button>
+    </div>
 
     <template v-else-if="job">
       <!-- Header -->

@@ -608,6 +608,20 @@ class TestArtifacts:
         ).status_code == 400
 
     @pytest.mark.asyncio
+    async def test_rel_absolute_and_null_rejected(self, jobs_client):
+        # L14:_validate_rel 不止挡 "..",绝对路径(/ 开头)与空字节也要 400
+        _, token = await _register_real(jobs_client)
+        h = {"Authorization": f"Bearer {token}"}
+        # rel 以 / 开头(绝对路径)
+        assert (
+            await jobs_client.get("/api/runner/jobs/j1/artifacts//etc/passwd", headers=h)
+        ).status_code == 400
+        # rel 含空字节
+        assert (
+            await jobs_client.get("/api/runner/jobs/j1/artifacts/a%00b", headers=h)
+        ).status_code == 400
+
+    @pytest.mark.asyncio
     async def test_job_id_traversal_rejected(self, jobs_client):
         _, token = await _register_real(jobs_client)
         h = {"Authorization": f"Bearer {token}"}

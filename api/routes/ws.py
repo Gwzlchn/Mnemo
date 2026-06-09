@@ -182,16 +182,13 @@ async def ws_global(websocket: WebSocket):
 async def _build_global_status(app) -> dict:
     db = app.state.db
 
-    total, _ = await asyncio.to_thread(db.list_jobs, limit=0)
-    done_total, _ = await asyncio.to_thread(db.list_jobs, status="done", limit=0)
-    failed_total, _ = await asyncio.to_thread(db.list_jobs, status="failed", limit=0)
-    processing_total, _ = await asyncio.to_thread(db.list_jobs, status="processing", limit=0)
+    counts = await asyncio.to_thread(db.count_jobs_by_status)
 
     return {
         "jobs": {
-            "total": total,
-            "done": done_total,
-            "processing": processing_total,
-            "failed": failed_total,
+            "total": sum(counts.values()),
+            "done": counts.get("done", 0),
+            "processing": counts.get("processing", 0),
+            "failed": counts.get("failed", 0),
         },
     }

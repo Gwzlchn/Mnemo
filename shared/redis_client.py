@@ -188,6 +188,13 @@ class RedisClient:
     async def get_step_worker(self, job_id: str, step: str) -> str | None:
         return await self.r.hget(f"job:{job_id}:step_worker", step)
 
+    async def set_step_exec_id(self, job_id: str, step: str, exec_id: str) -> None:
+        # 记当前在跑的执行实例 id;迟到的旧执行完成事件据此识别并丢弃,防陈旧顶替/双执行。
+        await self.r.hset(f"job:{job_id}:step_exec", step, exec_id)
+
+    async def get_step_exec_id(self, job_id: str, step: str) -> str | None:
+        return await self.r.hget(f"job:{job_id}:step_exec", step)
+
     async def incr_step_retries(self, job_id: str, step: str) -> int:
         return await self.r.hincrby(f"job:{job_id}:retries", step, 1)
 
@@ -204,6 +211,7 @@ class RedisClient:
             f"job:{job_id}:steps",
             f"job:{job_id}:retries",
             f"job:{job_id}:step_worker",
+            f"job:{job_id}:step_exec",
         ]
         await self.r.delete(*keys)
 
@@ -258,8 +266,12 @@ class RedisClient:
     async def get_registration_token(self) -> str | None:
         return await self.r.get(self._REGISTRATION_TOKEN_KEY)
 
-    async def set_registration_token(self, token: str) -> None:
-        await self.r.set(self._REGISTRATION_TOKEN_KEY, token)
+    async def set_registration_token(self, token: str, ttl_sec: int | None = None) -> None:
+        # ttl_sec 给接入 token 设过期,泄漏后自动失效;None 表示不过期(向后兼容)。
+        if ttl_sec:
+            await self.r.set(self._REGISTRATION_TOKEN_KEY, token, ex=ttl_sec)
+        else:
+            await self.r.set(self._REGISTRATION_TOKEN_KEY, token)
 
     # ── 活跃 Job 集合 ──
 

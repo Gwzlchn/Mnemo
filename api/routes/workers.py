@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import secrets
 from datetime import datetime, timezone
 
@@ -144,10 +145,12 @@ async def list_workers(
 
 @router.post("/registration-token")
 async def mint_registration_token(redis: RedisClient = Depends(get_redis)):
-    """铸/重置一次性接入 token（homelab 可复用 + 可重置，重铸即作废旧的）。"""
+    """铸/重置接入 token（可重置,重铸即作废旧的）。默认 24h 过期,泄漏自动失效;
+    长期接入用 env WORKER_REGISTRATION_TOKEN。TTL 可经 REGISTRATION_TOKEN_TTL_SEC 调。"""
     token = "mnw-" + secrets.token_urlsafe(18)
-    await redis.set_registration_token(token)
-    return {"token": token}
+    ttl = int(os.environ.get("REGISTRATION_TOKEN_TTL_SEC", "86400"))
+    await redis.set_registration_token(token, ttl_sec=ttl)
+    return {"token": token, "expires_in_sec": ttl}
 
 
 @router.get("/{worker_id}")

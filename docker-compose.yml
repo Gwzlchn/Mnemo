@@ -11,11 +11,13 @@ services:
       - redis-data:/data
 
   api:
-    image: ghcr.io/gwzlchn/mnemo:latest
+    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/mnemo:latest
     restart: unless-stopped
     command: python -m api.main
     ports:
-      - "${API_PORT:-8000}:8000"
+      # 默认仅绑本机(经 Caddy/Tunnel 暴露);裸 up 不直接暴露到局域网。
+      # 需局域网直连设 API_BIND_IP=<局域网IP> 并务必设 API_TOKEN。
+      - "${API_BIND_IP:-127.0.0.1}:${API_PORT:-8000}:8000"
     volumes:
       - ${MNEMO_DATA_DIR:-mnemo-data}:/data
     environment:
@@ -37,7 +39,7 @@ services:
       - redis
 
   scheduler:
-    image: ghcr.io/gwzlchn/mnemo:latest
+    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/mnemo:latest
     restart: unless-stopped
     command: python -m scheduler.main
     volumes:
@@ -59,7 +61,7 @@ services:
       - redis
 
   worker-cpu:
-    image: ghcr.io/gwzlchn/mnemo:latest
+    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/mnemo:latest
     restart: unless-stopped
     command: python -m worker.main --type cpu
     # 默认 subprocess 执行器,不挂 docker.sock(避免宿主 root 等价暴露);
@@ -87,7 +89,7 @@ services:
       - redis
 
   worker-ai:
-    image: ghcr.io/gwzlchn/mnemo:latest
+    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/mnemo:latest
     restart: unless-stopped
     command: python -m worker.main --type ai
     # 默认 subprocess 执行器,不挂 docker.sock(避免宿主 root 等价暴露);
@@ -131,7 +133,7 @@ services:
 
   # 单机全栈时启用：`docker compose --profile allinone up -d`。
   frontend:
-    image: ghcr.io/gwzlchn/mnemo-frontend:latest
+    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/mnemo-frontend:latest
     restart: unless-stopped
     profiles: ["allinone"]
     ports:
@@ -152,8 +154,10 @@ services:
     profiles: ["distributed"]
     command: server /data --console-address ":9001"
     environment:
+      # 无弱默认:启用 distributed profile 必须在 .env 设 MINIO_SECRET_KEY(>=8 位),
+      # 否则 MinIO 因空密码拒绝启动(fail-fast),不会以可猜的默认口令裸跑。
       - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-mnemo}
-      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-mnemochangeme}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-}
     volumes:
       - ${MINIO_DATA_DIR:-minio-data}:/data
 
