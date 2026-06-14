@@ -140,7 +140,7 @@ video:
       run: steps.video.step_09_review
       needs: ["08_smart"]
       tags: []
-      timeout: 600    # claude-cli 评审(文本),比 .review 的 120s 宽松
+      timeout: 1200   # claude-cli 对大 prompt(笔记+机械稿)生成评审较慢,给足时间
       ai:
         primary: {provider: $AI_REVIEW_PRIMARY_PROVIDER, model: $AI_REVIEW_PRIMARY_MODEL}
         fallback: {provider: $AI_REVIEW_FALLBACK_PROVIDER, model: $AI_REVIEW_FALLBACK_MODEL}
