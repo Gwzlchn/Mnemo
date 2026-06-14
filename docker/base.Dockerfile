@@ -11,7 +11,10 @@ RUN if [ "$USE_USTC_MIRROR" = "1" ]; then \
     && rm -rf /var/lib/apt/lists/*
 
 # Claude Code CLI:claude-cli provider(订阅出笔记、看帧图)需要 `claude` 在 PATH。
-RUN npm install -g @anthropic-ai/claude-code \
+RUN if [ "$USE_USTC_MIRROR" = "1" ]; then \
+        npm config set registry https://registry.npmmirror.com; \
+    fi \
+    && npm install -g @anthropic-ai/claude-code \
     && rm -rf /root/.npm
 
 RUN if [ "$USE_USTC_MIRROR" = "1" ]; then \
