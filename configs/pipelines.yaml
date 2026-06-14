@@ -49,6 +49,7 @@ video:
       run: steps.common.step_00_download
       pool: io
       retry: 3
+      timeout: 2400   # 长视频(30min+)1080p 下载 + 推 MinIO 可能超默认 600s
 
     # 无字幕时转写。pool=cpu(base 镜像已含 faster-whisper,无 GPU 用 int8 CPU 回退),
     # 不再钉 gpu tag——否则无 gpu worker 时整 job fail-fast。有 GPU 的 worker 仍会更快。
@@ -140,7 +141,7 @@ video:
       run: steps.video.step_09_review
       needs: ["08_smart"]
       tags: []
-      timeout: 1200   # claude-cli 对大 prompt(笔记+机械稿)生成评审较慢,给足时间
+      timeout: 1800   # claude-cli 对大 prompt(笔记+机械稿)生成评审较慢,给足时间
       ai:
         primary: {provider: $AI_REVIEW_PRIMARY_PROVIDER, model: $AI_REVIEW_PRIMARY_MODEL}
         fallback: {provider: $AI_REVIEW_FALLBACK_PROVIDER, model: $AI_REVIEW_FALLBACK_MODEL}
