@@ -53,13 +53,20 @@ class DedupStep(StepBase):
                 results.append({**cand, "keep": False, "phash": "", "reason": "error"})
                 continue
 
+            # 三段式带宽(移植老原型 03_dedup.py):明显不同直接跳过;足够近直接判重;
+            # 灰区才上 SSIM 复核——省算力且更准。
             duplicate = False
             for prev_hash, prev_idx in seen_hashes:
-                if ph - prev_hash <= phash_threshold:
-                    if self._ssim_check(img_path, assets_dir / candidates[prev_idx]["filename"],
-                                        ssim_threshold, ssim_resize):
-                        duplicate = True
-                        break
+                band = self._phash_band(ph - prev_hash, phash_threshold)
+                if band == "different":
+                    continue
+                if band == "duplicate":
+                    duplicate = True
+                    break
+                if self._ssim_check(img_path, assets_dir / candidates[prev_idx]["filename"],
+                                    ssim_threshold, ssim_resize):
+                    duplicate = True
+                    break
 
             results.append({**cand, "keep": not duplicate, "phash": str(ph)})
             if not duplicate:
@@ -69,6 +76,15 @@ class DedupStep(StepBase):
         self.write_output("intermediate/dedup.json", results)
         kept = sum(1 for r in results if r["keep"])
         return {"total": len(results), "kept": kept, "removed": len(results) - kept}
+
+    @staticmethod
+    def _phash_band(dist: int, threshold: int) -> str:
+        """pHash 距离分三段:>阈值+4 'different'(跳过)、≤阈值 'duplicate'、其间 'gray'(需 SSIM)。"""
+        if dist > threshold + 4:
+            return "different"
+        if dist <= threshold:
+            return "duplicate"
+        return "gray"
 
     def _ssim_check(self, path_a: Path, path_b: Path, threshold: float, resize: tuple) -> bool:
         try:

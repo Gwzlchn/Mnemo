@@ -61,6 +61,7 @@ class DownloadStep(StepBase):
             "yutto", target_url,
             "-d", str(input_dir),
             "-tp", "{title}",
+            "-q", "80",   # 1080P 上限:平衡主视觉清晰度与 NAS↔ECS 隧道/MinIO 带宽
         ]
 
         # 优先用 job.json 注入的 SESSDATA(扫码登录入库,随任务下发到远程 worker);
@@ -74,10 +75,40 @@ class DownloadStep(StepBase):
         else:
             self.log.warn("no_bilibili_cookies", msg="降级 480P")
 
+        # yutto 主力,失败转 yt-dlp 兜底(移植老原型双引擎),最后 ffprobe 验收挡坏下载。
+        try:
+            self.run_subprocess(cmd, timeout=self.config["step"]["timeout_sec"])
+            self._rename_downloaded_video(input_dir)
+            self._rename_downloaded_subtitle(input_dir)
+            self._rename_downloaded_danmaku(input_dir)
+        except Exception as e:
+            self.log.warn("yutto_failed_ytdlp_fallback", error=str(e)[:200])
+            self._download_bili_ytdlp(target_url, input_dir, sessdata)
+        self._verify_download(input_dir / "source.mp4")
+
+    def _download_bili_ytdlp(self, url: str, input_dir: Path, sessdata: str | None) -> None:
+        """yutto 失败时的兜底引擎。"""
+        cmd = [
+            "yt-dlp",
+            "-o", str(input_dir / "source.%(ext)s"),
+            "-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+            "--merge-output-format", "mp4",
+            "--referer", "https://www.bilibili.com/",
+        ]
+        if sessdata:
+            cmd += ["--add-header", f"Cookie:SESSDATA={sessdata}"]
+        cmd += ["--", url]
         self.run_subprocess(cmd, timeout=self.config["step"]["timeout_sec"])
-        self._rename_downloaded_video(input_dir)
-        self._rename_downloaded_subtitle(input_dir)
-        self._rename_downloaded_danmaku(input_dir)
+        self._rename_to_source_mp4(input_dir)
+
+    def _verify_download(self, mp4: Path) -> None:
+        """ffprobe 验收:文件存在 + >1MB + 可读出时长,挡半截/无源的坏下载污染下游。"""
+        from shared.errors import InputInvalidError
+        if not mp4.exists() or mp4.stat().st_size < 1_000_000:
+            raise InputInvalidError(f"download missing or too small: {mp4.name}")
+        duration = self._get_video_duration(mp4)
+        if not duration or duration < 1:
+            raise InputInvalidError(f"download has no playable duration: {mp4.name}")
 
     def _download_youtube(self, url: str) -> None:
         input_dir = self.job_dir / "input"

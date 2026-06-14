@@ -1,10 +1,10 @@
-"""tests for steps/video/step_02_frames.py (mock ffmpeg)"""
+"""tests for steps/video/step_02_frames.py (cv2 代表帧;mock VideoCapture/imwrite)"""
 
 import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
+import numpy as np
 
 from steps.video.step_02_frames import FramesStep
 from tests.steps.conftest import make_step_config
@@ -33,38 +33,30 @@ class TestFramesStep:
         step = FramesStep("02_frames", job_dir, config)
         assert len(step.validate_inputs()) == 2
 
-    def test_pick_timestamps_short(self, tmp_path):
-        job_dir = self._setup(tmp_path)
-        config = make_step_config(tmp_path, step_name="02_frames")
-        step = FramesStep("02_frames", job_dir, config)
-        ts = step._pick_timestamps(0.0, 10.0, 10.0)
-        assert len(ts) == 1
-        assert ts[0] == 5.0
+    def test_execute_mock(self, tmp_path):
+        import cv2
 
-    def test_pick_timestamps_long(self, tmp_path):
-        job_dir = self._setup(tmp_path)
-        config = make_step_config(tmp_path, step_name="02_frames")
-        step = FramesStep("02_frames", job_dir, config)
-        ts = step._pick_timestamps(0.0, 60.0, 60.0)
-        assert len(ts) > 1
-
-    @patch("subprocess.run")
-    def test_execute_mock(self, mock_run, tmp_path):
         job_dir = self._setup(tmp_path)
         config = make_step_config(tmp_path, step_name="02_frames", pool="cpu")
-
-        def fake_ffmpeg(*args, **kwargs):
-            cmd = args[0]
-            output = cmd[-1]
-            Path(output).write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 2000)
-            return MagicMock(returncode=0)
-
-        from unittest.mock import MagicMock
-        mock_run.side_effect = fake_ffmpeg
-
         step = FramesStep("02_frames", job_dir, config)
-        result = step.execute()
 
-        assert result["total"] >= 2
+        fake_frame = np.zeros((180, 320, 3), dtype=np.uint8)
+
+        class FakeCap:
+            def get(self, prop): return 25.0
+            def set(self, prop, val): pass
+            def read(self): return (True, fake_frame)
+            def release(self): pass
+
+        def fake_imwrite(path, *a, **k):
+            Path(path).write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 2000)
+            return True
+
+        with patch.object(cv2, "VideoCapture", return_value=FakeCap()), \
+             patch.object(cv2, "imwrite", side_effect=fake_imwrite):
+            result = step.execute()
+
+        assert result["total"] >= 2  # 两个场景各一代表帧
         candidates = json.loads((job_dir / "intermediate" / "candidates.json").read_text())
         assert len(candidates) >= 2
+        assert all({"index", "scene_index", "timestamp_sec", "filename"} <= set(c) for c in candidates)

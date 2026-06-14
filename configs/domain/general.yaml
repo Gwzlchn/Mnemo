@@ -23,6 +23,16 @@ scene:
   window_width: 4
   min_content_val: 18.0
 
+# 代表帧选取(step_02_frames):画面在变取 ratio 位置帧、静止取靠前帧。
+frame_pick:
+  dynamic_pick_ratio: 0.7
+  dynamic_scene_ssim: 0.85
+
+# 超长场景保底采样(step_02_frames):场景超 max_gap_sec 则每 forced_interval_sec 补一帧。
+sampling:
+  max_gap_sec: 60
+  forced_interval_sec: 15
+
 # 关键帧去重：老原型基线 phash_hash_size=16(比默认 8 判别力更强)。
 dedup:
   phash_hash_size: 16
