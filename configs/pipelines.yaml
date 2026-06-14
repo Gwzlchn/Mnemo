@@ -76,12 +76,14 @@ video:
       run: steps.video.step_02_frames
       image: mnemo/step-heavy
       needs: ["01_scene"]
+      timeout: 1800   # cv2 逐场景 SSIM 代表帧:长视频(数百场景)耗时,远超 .cpu-step 的 120s
 
     "03_dedup":
       extends: .cpu-step
       run: steps.video.step_03_dedup
       image: mnemo/step-heavy
       needs: ["02_frames"]
+      timeout: 900    # 数百帧 pHash + 灰区 SSIM 复核
 
     "04_ocr":
       extends: .cpu-step
@@ -127,6 +129,7 @@ video:
       run: steps.video.step_08_smart
       needs: ["07_mechanical"]
       tags: ["vision"]
+      timeout: 1800   # claude-cli 逐张 Read 帧图(最多 20+ 张),与 provider 超时上限对齐
       ai:
         primary: {provider: $AI_SMART_PRIMARY_PROVIDER, model: $AI_SMART_PRIMARY_MODEL}
         fallback: {provider: $AI_SMART_FALLBACK_PROVIDER, model: $AI_SMART_FALLBACK_MODEL}
@@ -137,6 +140,7 @@ video:
       run: steps.video.step_09_review
       needs: ["08_smart"]
       tags: []
+      timeout: 600    # claude-cli 评审(文本),比 .review 的 120s 宽松
       ai:
         primary: {provider: $AI_REVIEW_PRIMARY_PROVIDER, model: $AI_REVIEW_PRIMARY_MODEL}
         fallback: {provider: $AI_REVIEW_FALLBACK_PROVIDER, model: $AI_REVIEW_FALLBACK_MODEL}
