@@ -14,6 +14,31 @@ from shared.redis_client import RedisClient
 from shared.storage import create_storage
 
 
+async def _subscription_sync_loop(app: FastAPI) -> None:
+    """周期同步所有启用的订阅。失败只记日志,不影响 API。"""
+    import asyncio
+    import structlog
+    log = structlog.get_logger(component="subscription-sync")
+    hours = float(os.environ.get("SUBSCRIPTION_SYNC_HOURS", "6"))
+    if hours <= 0:
+        return
+    from api.routes.subscriptions import sync_subscription
+    await asyncio.sleep(120)  # 启动后等服务稳定再首扫
+    while True:
+        try:
+            subs = await asyncio.to_thread(app.state.db.list_subscriptions, True)
+            for sub in subs:
+                try:
+                    await sync_subscription(sub, app.state.db, app.state.redis, app.state.storage)
+                except Exception as e:
+                    log.warning("sync_failed", sub=sub.id, error=str(e)[:200])
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("sync_loop_error")
+        await asyncio.sleep(hours * 3600)
+
+
 def create_app(
     db: Database | None = None,
     redis: RedisClient | None = None,
@@ -37,8 +62,16 @@ def create_app(
         else:
             app.state._own_resources = False
 
+        # 周期自动同步订阅(默认每 6h;SUBSCRIPTION_SYNC_HOURS=0 关闭)。
+        sync_task = None
+        if getattr(app.state, "_own_resources", False):
+            import asyncio
+            sync_task = asyncio.create_task(_subscription_sync_loop(app))
+
         yield
 
+        if sync_task:
+            sync_task.cancel()
         if getattr(app.state, "_own_resources", False):
             await app.state.redis.close()
             app.state.db.close()
@@ -53,10 +86,11 @@ def create_app(
 
     from api.routes import (
         jobs, notes, workers, ws, auth, admin, profiles, runner, bili,
-        collections, search, glossary,
+        collections, search, glossary, subscriptions,
     )
     app.include_router(jobs.router)
     app.include_router(jobs.providers_router)
+    app.include_router(subscriptions.router)
     app.include_router(notes.router)
     app.include_router(workers.router)
     app.include_router(ws.router)

@@ -8,7 +8,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import AIUsage, Collection, Job, JobStatus, Step, StepStatus, Worker
+from .models import AIUsage, Collection, Job, JobStatus, Step, StepStatus, Subscription, Worker
 from .status import (
     DEFAULT_ONLINE_WINDOW_SEC,
     DEFAULT_STALE_WINDOW_SEC,
@@ -102,6 +102,18 @@ CREATE TABLE IF NOT EXISTS collections (
     job_count INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+    id TEXT PRIMARY KEY,
+    source_type TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    domain TEXT NOT NULL DEFAULT 'general',
+    collection_id TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_synced_at TEXT,
+    created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS worker_tokens (
@@ -853,6 +865,86 @@ class Database:
                 "DELETE FROM collections WHERE id=?", (collection_id,)
             )
             self._conn.commit()
+
+    # ── Subscription ──
+
+    def _row_to_subscription(self, r: sqlite3.Row) -> Subscription:
+        return Subscription(
+            id=r["id"], source_type=r["source_type"], source_id=r["source_id"],
+            name=r["name"], domain=r["domain"], collection_id=r["collection_id"],
+            enabled=bool(r["enabled"]), last_synced_at=_parse_dt(r["last_synced_at"]),
+            created_at=_parse_dt(r["created_at"]),
+        )
+
+    def create_subscription(self, sub: Subscription) -> None:
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO subscriptions
+                   (id, source_type, source_id, name, domain, collection_id,
+                    enabled, last_synced_at, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (sub.id, sub.source_type, sub.source_id, sub.name, sub.domain,
+                 sub.collection_id, 1 if sub.enabled else 0,
+                 sub.last_synced_at.isoformat() if sub.last_synced_at else None,
+                 sub.created_at.isoformat()),
+            )
+            self._conn.commit()
+
+    def get_subscription(self, sub_id: str) -> Subscription | None:
+        row = self._conn.execute(
+            "SELECT * FROM subscriptions WHERE id=?", (sub_id,)
+        ).fetchone()
+        return self._row_to_subscription(row) if row else None
+
+    def find_subscription(self, source_type: str, source_id: str) -> Subscription | None:
+        row = self._conn.execute(
+            "SELECT * FROM subscriptions WHERE source_type=? AND source_id=?",
+            (source_type, source_id),
+        ).fetchone()
+        return self._row_to_subscription(row) if row else None
+
+    def list_subscriptions(self, enabled_only: bool = False) -> list[Subscription]:
+        q = "SELECT * FROM subscriptions"
+        if enabled_only:
+            q += " WHERE enabled=1"
+        q += " ORDER BY created_at DESC"
+        return [self._row_to_subscription(r) for r in self._conn.execute(q).fetchall()]
+
+    def update_subscription(self, sub_id: str, **fields) -> None:
+        allowed = {"name", "domain", "collection_id", "enabled", "last_synced_at"}
+        invalid = set(fields) - allowed
+        if invalid:
+            raise ValueError(f"Invalid subscription columns: {invalid}")
+        if not fields:
+            return
+        if "enabled" in fields:
+            fields["enabled"] = 1 if fields["enabled"] else 0
+        if isinstance(fields.get("last_synced_at"), datetime):
+            fields["last_synced_at"] = fields["last_synced_at"].isoformat()
+        set_clause = ", ".join(f"{k}=?" for k in fields)
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE subscriptions SET {set_clause} WHERE id=?",
+                list(fields.values()) + [sub_id],
+            )
+            self._conn.commit()
+
+    def delete_subscription(self, sub_id: str) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM subscriptions WHERE id=?", (sub_id,))
+            self._conn.commit()
+
+    def ingested_bvids(self) -> set[str]:
+        """已入库的 B站 BV 号集合(从 jobs.url 提取),供订阅同步去重。"""
+        import re
+        out: set[str] = set()
+        for (u,) in self._conn.execute(
+            "SELECT url FROM jobs WHERE url LIKE '%BV%'"
+        ).fetchall():
+            m = re.search(r"(BV[0-9A-Za-z]{8,12})", u or "")
+            if m:
+                out.add(m.group(1))
+        return out
 
     def increment_collection_count(self, collection_id: str, delta: int) -> None:
         """维护集合的 job_count：建/删 job 时增减；负值不下穿 0。"""

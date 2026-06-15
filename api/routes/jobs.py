@@ -103,6 +103,44 @@ def _bili_sessdata(db: Database) -> str | None:
         return None
 
 
+async def create_job_core(
+    db: Database, redis: RedisClient, storage: StorageBackend,
+    url: str | None, content_type: str | None = None,
+    domain: str = "general", style_tags: list[str] | None = None,
+    collection_id: str | None = None,
+) -> Job:
+    """建 job 的核心流程(create_job 路由 + 订阅同步共用)。返回 Job。"""
+    style_tags = style_tags or []
+    ctype = content_type or _detect_content_type(url)
+    pipeline = _pipeline_for(ctype)
+    source = detect_source(url) if url else "upload"
+
+    job_id = generate_job_id()
+    job_doc = {
+        "id": job_id, "url": url, "source": source, "content_type": ctype,
+        "domain": domain, "style_tags": style_tags, "created_at": _now_iso(),
+    }
+    if source == "bilibili":
+        sessdata = await asyncio.to_thread(_bili_sessdata, db)
+        if sessdata:
+            job_doc["sessdata"] = sessdata
+    await storage.write_file(
+        job_id, "job.json",
+        json.dumps(job_doc, ensure_ascii=False, indent=2).encode("utf-8"),
+    )
+    job = Job(
+        id=job_id, content_type=ctype, pipeline=pipeline, url=url,
+        domain=domain, source=source, style_tags=style_tags, collection_id=collection_id,
+    )
+    await asyncio.to_thread(db.create_job, job)
+    if collection_id:
+        await asyncio.to_thread(db.increment_collection_count, collection_id, 1)
+    await redis.publish("job_command", {
+        "action": "new_job", "job_id": job_id, "pipeline": pipeline,
+    })
+    return job
+
+
 @router.post("", status_code=201)
 async def create_job(
     req: JobCreateRequest,
@@ -111,58 +149,16 @@ async def create_job(
     config: AppConfig = Depends(get_config),
     storage: StorageBackend = Depends(get_storage),
 ):
-    content_type = req.content_type or _detect_content_type(req.url)
-    pipeline = _pipeline_for(content_type)
-    source = detect_source(req.url) if req.url else "upload"
-
-    # 校验 collection_id 存在,避免孤儿绑定 + job_count 漂移(increment 对不存在行静默 no-op)。
+    # 校验 collection_id 存在,避免孤儿绑定 + job_count 漂移。
     if req.collection_id:
         if not await asyncio.to_thread(db.get_collection, req.collection_id):
             raise HTTPException(400, "collection_id not found")
-
-    job_id = generate_job_id()
-    job_doc = {
-        "id": job_id,
-        "url": req.url,
-        "source": source,
-        "content_type": content_type,
-        "domain": req.domain,
-        "style_tags": req.style_tags,
-        "created_at": _now_iso(),
-    }
-    # B站源若已登录,把 SESSDATA 写进 job.json,随存储下发到下载步(含远程 worker);无则匿名下载。
-    if source == "bilibili":
-        sessdata = await asyncio.to_thread(_bili_sessdata, db)
-        if sessdata:
-            job_doc["sessdata"] = sessdata
-    # 初始 job.json 经存储写入(本地或 MinIO),远程 worker 才能 pull 到 url 等信息。
-    job_json = json.dumps(job_doc, ensure_ascii=False, indent=2)
-    await storage.write_file(job_id, "job.json", job_json.encode("utf-8"))
-
-    job = Job(
-        id=job_id,
-        content_type=content_type,
-        pipeline=pipeline,
-        url=req.url,
-        domain=req.domain,
-        source=source,
-        style_tags=req.style_tags,
-        collection_id=req.collection_id,
+    job = await create_job_core(
+        db, redis, storage, req.url, req.content_type,
+        req.domain, req.style_tags, req.collection_id,
     )
-    await asyncio.to_thread(db.create_job, job)
-    # 维护集合 job_count：绑定到集合的 job 计入。
-    if req.collection_id:
-        await asyncio.to_thread(
-            db.increment_collection_count, req.collection_id, 1,
-        )
-
-    await redis.publish("job_command", {
-        "action": "new_job",
-        "job_id": job_id,
-        "pipeline": pipeline,
-    })
-
-    return {"job_id": job_id, "content_type": content_type, "status": "pending", "created_at": job.created_at.isoformat()}
+    return {"job_id": job.id, "content_type": job.content_type,
+            "status": "pending", "created_at": job.created_at.isoformat()}
 
 
 @router.post("/upload", status_code=201)

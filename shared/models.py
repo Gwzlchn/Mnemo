@@ -101,6 +101,20 @@ class Collection:
 
 
 @dataclass
+class Subscription:
+    """内容源订阅(如 B站 UP 主):周期/手动同步,新内容自动入库到绑定的集合。"""
+    id: str
+    source_type: str          # 目前: bilibili_up
+    source_id: str            # B站 mid
+    name: str
+    domain: str = "general"
+    collection_id: str | None = None
+    enabled: bool = True
+    last_synced_at: datetime | None = None
+    created_at: datetime = field(default_factory=_utcnow)
+
+
+@dataclass
 class AIUsage:
     exec_id: str
     provider: str
@@ -149,3 +163,8 @@ def generate_worker_id(worker_type: str) -> str:
     """生成 Worker ID: {type}-{8 hex chars}"""
     r = secrets.token_hex(4)
     return f"{worker_type}-{r}"
+
+
+def generate_id(prefix: str) -> str:
+    """通用 ID: {prefix}_{YYYYMMDD}_{6 hex}(集合/订阅等共用)。"""
+    return f"{prefix}_{date.today().strftime('%Y%m%d')}_{secrets.token_hex(3)}"

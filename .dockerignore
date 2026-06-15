@@ -1,0 +1,15 @@
+# 构建上下文排除:本地/部署/数据/历史,缩小上下文并避开权限问题。
+.local/
+_dist/
+_dist_edge/
+_tunnel/
+.git/
+data/
+frontend/node_modules/
+frontend/dist/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+*.egg-info/
+.env
+LOCAL.md
