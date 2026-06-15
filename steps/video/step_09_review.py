@@ -21,6 +21,8 @@ class ReviewStep(StepBase):
         return {
             "smart": file_hash(self.job_dir / "output" / "notes_smart.md"),
             "mechanical": file_hash(self.job_dir / "output" / "notes_mechanical.md"),
+            # provider 覆盖纳入指纹:换 provider 重跑时强制重评。
+            "provider": self.override_provider(),
         }
 
     def execute(self) -> dict | None:

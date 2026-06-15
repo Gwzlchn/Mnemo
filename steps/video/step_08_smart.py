@@ -33,6 +33,8 @@ class SmartStep(StepBase):
             for tag in sorted(self.config.get("style_tags", []))
             if (prompts_dir / "styles" / f"{tag}.yaml").exists()
         }, sort_keys=True)
+        # provider 覆盖纳入指纹:换 provider 重跑时指纹变化,绕过幂等跳过。
+        hashes["provider"] = self.override_provider()
         return hashes
 
     def execute(self) -> dict | None:

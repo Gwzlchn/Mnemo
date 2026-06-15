@@ -163,6 +163,15 @@ class StepBase:
 
     # ── AI 调用 ──
 
+    def override_provider(self) -> str:
+        """读 job.json 里本步的 provider 覆盖(无则空串)。供 input_hashes 纳入,
+        使"换 provider 重跑"改变指纹、绕过幂等跳过。"""
+        try:
+            job = json.loads((self.job_dir / "job.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return ""
+        return (job.get("ai_overrides") or {}).get(self.step_name, "") or ""
+
     def _apply_provider_override(self) -> None:
         """按 job.json 的 ai_overrides[step] 覆盖本步 provider(供"选 provider 重跑")。
         只用所选 provider(去掉 fallback),避免失败时静默回退到别的 provider,
