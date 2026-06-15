@@ -60,7 +60,11 @@ class ReviewStep(StepBase):
         )
 
         self.write_output("output/review.json", review)
-        return {"overall": review.get("overall", 0), "parse_failed": parse_failed}
+        # 版本化:按 provider 另存评分,与对应版本智能笔记配对显示。
+        provider = self.last_ai_provider or "unknown"
+        review["provider"] = provider
+        self.write_output(f"output/versions/review__{provider}.json", review)
+        return {"overall": review.get("overall", 0), "parse_failed": parse_failed, "provider": provider}
 
 
 if __name__ == "__main__":

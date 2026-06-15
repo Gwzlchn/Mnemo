@@ -56,6 +56,7 @@ def create_app(
         collections, search, glossary,
     )
     app.include_router(jobs.router)
+    app.include_router(jobs.providers_router)
     app.include_router(notes.router)
     app.include_router(workers.router)
     app.include_router(ws.router)

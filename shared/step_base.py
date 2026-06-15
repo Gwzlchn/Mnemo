@@ -36,6 +36,8 @@ class StepBase:
         self.log = self._setup_logger()
         self._gateway: AIGateway | None = None
         self._call_index = 0
+        # 最近一次 AI 调用实际命中的 provider(供版本化笔记按 provider 标记)。
+        self.last_ai_provider: str | None = None
 
     # ── 统一入口 ──
 
@@ -161,7 +163,25 @@ class StepBase:
 
     # ── AI 调用 ──
 
+    def _apply_provider_override(self) -> None:
+        """按 job.json 的 ai_overrides[step] 覆盖本步 provider(供"选 provider 重跑")。
+        只用所选 provider(去掉 fallback),避免失败时静默回退到别的 provider,
+        保证版本化笔记的 provider 标记如实。"""
+        try:
+            job = json.loads((self.job_dir / "job.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        provider = (job.get("ai_overrides") or {}).get(self.step_name)
+        if not provider:
+            return
+        pcfg = self.config.get("providers", {}).get("providers", {}).get(provider, {})
+        models = pcfg.get("models", [])
+        model = models[0] if models else "subscription"
+        self.config["ai"] = {"primary": {"provider": provider, "model": model}}
+        self._gateway = None  # 强制按新 ai 配置重建
+
     def call_ai(self, prompt: str, images: list[Path] | None = None, **kwargs) -> str:
+        self._apply_provider_override()
         if self._gateway is None:
             self._gateway = AIGateway(
                 self.config.get("providers", {}),
@@ -179,6 +199,7 @@ class StepBase:
         response = asyncio.run(
             self._gateway.call(self.step_name, request, job_id=self.job_dir.name)
         )
+        self.last_ai_provider = response.provider
 
         self.log.info(
             "ai_call",

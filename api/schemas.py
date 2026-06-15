@@ -50,6 +50,10 @@ class RerunRequest(BaseModel):
     from_step: str
 
 
+class RerunSmartRequest(BaseModel):
+    provider: str
+
+
 class WorkerResponse(BaseModel):
     id: str
     type: str

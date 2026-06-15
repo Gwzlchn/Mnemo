@@ -312,3 +312,35 @@ class TestListByCollection:
         ids = {i["job_id"] for i in items}
         assert "j_in" in ids and "j_out" not in ids
         assert items[0]["collection_id"] == "c_x"  # 响应含 collection_id
+
+
+class TestProviderVersions:
+    @pytest.mark.asyncio
+    async def test_list_providers_marks_availability(self, client):
+        # claude-cli(cli 类型)应可用;anthropic 等无 key 应不可用
+        resp = await client.get("/api/providers")
+        assert resp.status_code == 200
+        provs = {p["name"]: p for p in resp.json()["providers"]}
+        assert provs["claude-cli"]["available"] is True
+        assert provs["anthropic"]["available"] is False  # 测试环境无 key
+
+    @pytest.mark.asyncio
+    async def test_rerun_smart_unavailable_provider_rejected(self, client):
+        await client.post("/api/jobs", json={"url": "BV1xx411c7mD"})
+        jid = (await client.get("/api/jobs")).json()["items"][0]["job_id"]
+        resp = await client.post(f"/api/jobs/{jid}/rerun-smart", json={"provider": "anthropic"})
+        assert resp.status_code == 400  # 无 key 不可用
+
+    @pytest.mark.asyncio
+    async def test_rerun_smart_claude_writes_override(self, client, app, mock_redis):
+        await client.post("/api/jobs", json={"url": "BV1xx411c7mD"})
+        jid = (await client.get("/api/jobs")).json()["items"][0]["job_id"]
+        # 预置 job.json(storage 本地)
+        storage = app.state.storage
+        await storage.write_file(jid, "job.json", b'{"id":"x"}')
+        resp = await client.post(f"/api/jobs/{jid}/rerun-smart", json={"provider": "claude-cli"})
+        assert resp.status_code == 200 and resp.json()["provider"] == "claude-cli"
+        import json as _j
+        doc = _j.loads((await storage.read_file(jid, "job.json")).decode())
+        assert doc["ai_overrides"]["08_smart"] == "claude-cli"
+        assert doc["ai_overrides"]["09_review"] == "claude-cli"
