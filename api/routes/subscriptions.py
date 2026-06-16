@@ -67,7 +67,7 @@ async def sync_subscription(
             db, redis, storage,
             url=f"https://www.bilibili.com/video/{v['bvid']}",
             content_type="video", domain=sub.domain,
-            collection_id=sub.collection_id,
+            collection_id=sub.collection_id, title=(v.get("title") or "").strip() or None,
         )
         await asyncio.sleep(0.2)  # 轻微间隔,别瞬时灌爆队列/触发风控
 

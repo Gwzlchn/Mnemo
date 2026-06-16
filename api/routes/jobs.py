@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 import shutil
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from fastapi.responses import PlainTextResponse
 
 from shared.config import AppConfig
 from shared.db import Database
-from shared.models import Job, JobStatus, Step, StepStatus, generate_job_id
+from shared.models import Job, JobStatus, Step, StepStatus, derive_job_id
 from shared.redis_client import RedisClient
 from shared.source_detect import detect_source
 from shared.storage import StorageBackend
@@ -107,7 +108,7 @@ async def create_job_core(
     db: Database, redis: RedisClient, storage: StorageBackend,
     url: str | None, content_type: str | None = None,
     domain: str = "general", style_tags: list[str] | None = None,
-    collection_id: str | None = None,
+    collection_id: str | None = None, title: str | None = None,
 ) -> Job:
     """建 job 的核心流程(create_job 路由 + 订阅同步共用)。返回 Job。"""
     style_tags = style_tags or []
@@ -115,7 +116,10 @@ async def create_job_core(
     pipeline = _pipeline_for(ctype)
     source = detect_source(url) if url else "upload"
 
-    job_id = generate_job_id()
+    # 有意义的 id: jobs_{类别}_{inner}(bili=BV);撞已存在(同 BV 重投)加随机后缀。
+    job_id = derive_job_id(url, ctype, source)
+    if await asyncio.to_thread(db.get_job, job_id):
+        job_id = f"{job_id}_{secrets.token_hex(3)}"
     job_doc = {
         "id": job_id, "url": url, "source": source, "content_type": ctype,
         "domain": domain, "style_tags": style_tags, "created_at": _now_iso(),
@@ -129,7 +133,7 @@ async def create_job_core(
         json.dumps(job_doc, ensure_ascii=False, indent=2).encode("utf-8"),
     )
     job = Job(
-        id=job_id, content_type=ctype, pipeline=pipeline, url=url,
+        id=job_id, content_type=ctype, pipeline=pipeline, url=url, title=title,
         domain=domain, source=source, style_tags=style_tags, collection_id=collection_id,
     )
     await asyncio.to_thread(db.create_job, job)
@@ -178,7 +182,7 @@ async def upload_job(
         raise HTTPException(400, "invalid style_tags JSON")
 
     MAX_UPLOAD_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
-    job_id = generate_job_id()
+    job_id = derive_job_id(None, content_type, "upload")
     job_dir = config.jobs_dir / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     input_dir = job_dir / "input"

@@ -159,6 +159,23 @@ def generate_job_id() -> str:
     return f"j_{d}_{r}"
 
 
+_CATEGORY = {"video": "bili", "article": "article", "paper": "paper", "podcast": "podcast"}
+
+
+def derive_job_id(url: str | None, content_type: str | None = None, source: str | None = None) -> str:
+    """有意义的 Job ID: jobs_{类别}_{inner}。bilibili 用 BV 号(稳定/唯一/路径安全);
+    其余用 url 短哈希;无 url(上传)用随机。撞已存在由调用方加随机后缀消歧。"""
+    import hashlib
+    import re
+
+    m = re.search(r"(BV[0-9A-Za-z]{8,12})", url or "")
+    if m:
+        return f"jobs_bili_{m.group(1)}"
+    cat = _CATEGORY.get(content_type or "", content_type or "x")
+    inner = hashlib.sha1(url.encode()).hexdigest()[:8] if url else secrets.token_hex(4)
+    return f"jobs_{cat}_{inner}"
+
+
 def generate_worker_id(worker_type: str) -> str:
     """生成 Worker ID: {type}-{8 hex chars}"""
     r = secrets.token_hex(4)
