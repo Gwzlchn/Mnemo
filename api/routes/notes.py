@@ -12,7 +12,7 @@ from fastapi.responses import Response
 
 from shared.config import AppConfig
 from shared.db import Database
-from shared.notes_versions import latest_smart, parse_smart_version
+from shared.notes_versions import latest_smart, parse_smart_version, review_path_for_note
 from shared.storage import StorageBackend
 from api.deps import get_config, get_db, get_storage, verify_token
 
@@ -83,20 +83,24 @@ async def list_note_versions(job_id: str, storage: StorageBackend = Depends(get_
     _validate_job_id(job_id)
     import json as _json
     files = await storage.list_files(job_id)
-    reviewed_file, overall = None, None
-    rdata = await storage.read_file(job_id, "output/review.json")
-    if rdata:
-        try:
-            rj = _json.loads(rdata)
-            reviewed_file, overall = rj.get("note_file"), rj.get("overall")
-        except (ValueError, _json.JSONDecodeError):
-            pass
+    fileset = set(files)
     versions = []
     for f in files:
         v = parse_smart_version(f)
-        if v:
-            v["overall"] = overall if reviewed_file == f else None
-            versions.append(v)
+        if not v:
+            continue
+        # 与本版笔记 1:1 配对的评审文件 + 其总分。
+        rpath = review_path_for_note(f)
+        v["review_file"] = rpath if rpath in fileset else None
+        v["overall"] = None
+        if v["review_file"]:
+            rdata = await storage.read_file(job_id, v["review_file"])
+            if rdata:
+                try:
+                    v["overall"] = _json.loads(rdata).get("overall")
+                except (ValueError, _json.JSONDecodeError):
+                    pass
+        versions.append(v)
     versions.sort(key=lambda v: v["version"], reverse=True)   # 最新在前
     return {"versions": versions}
 
@@ -114,9 +118,17 @@ async def get_transcript(job_id: str, storage: StorageBackend = Depends(get_stor
 
 
 @router.get("/{job_id}/review")
-async def get_review(job_id: str, storage: StorageBackend = Depends(get_storage)):
-    # 单一规范评审:review.json(内含 note_file 标明评的是哪一版智能笔记)。
-    return await _serve(storage, job_id, "output/review.json", "application/json", "review not ready")
+async def get_review(job_id: str, file: str | None = None,
+                     storage: StorageBackend = Depends(get_storage)):
+    """默认取最新评审(review.json);file= 取与某版笔记配对的版本化评审。"""
+    _validate_job_id(job_id)
+    if file:
+        if ".." in file or not file.startswith("output/versions/review_") or not file.endswith(".json"):
+            raise HTTPException(400, "invalid review file")
+        rel = file
+    else:
+        rel = "output/review.json"
+    return await _serve(storage, job_id, rel, "application/json", "review not ready")
 
 
 @router.get("/{job_id}/assets/{filename}")

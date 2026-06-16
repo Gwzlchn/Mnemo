@@ -152,13 +152,19 @@ class StepBase:
         return rel
 
     def write_review(self, review: dict, note_file: str | None) -> None:
-        """评审结果落盘:补记 生成时间 / 方式 / 模型 + 评的是哪一版智能笔记(note_file)。"""
+        """评审结果落盘:补记 生成时间 / 方式 / 模型 + 评的是哪一版智能笔记(note_file)。
+        写 review.json(最新,供术语采集/默认),并按所评笔记版本 1:1 落一份版本化评审。"""
         prov, model = self.ai_provider_model()
         review["note_file"] = note_file
         review["provider"] = prov
         review["model"] = model
         review["generated_at"] = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
         self.write_output("output/review.json", review)
+        if note_file:
+            from shared.notes_versions import review_path_for_note
+            vrel = review_path_for_note(note_file)
+            if vrel:
+                self.write_output(vrel, review)
 
     def latest_smart_note(self) -> Path | None:
         """工作目录里最新的智能笔记版本文件(供评审步读取并标注评的是哪一版)。"""

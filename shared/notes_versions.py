@@ -22,3 +22,11 @@ def latest_smart(files: list[str]) -> str | None:
     if not cands:
         return None
     return max(cands, key=lambda f: _SMART_RE.search(f).group(3))
+
+
+def review_path_for_note(note_rel: str) -> str | None:
+    """与某版智能笔记 1:1 配对的评审文件路径:notes_smart_X.md → versions/review_X.json。"""
+    m = _SMART_RE.search(note_rel)
+    if not m:
+        return None
+    return f"output/versions/review_{m.group(1)}_{m.group(2)}_{m.group(3)}.json"

@@ -21,7 +21,7 @@ const error = ref('')
 const title = ref('')
 
 // 版本(按 provider/model/生成时间)+ 重跑
-type Version = { provider: string; model: string; version: string; file: string; overall: number | null }
+type Version = { provider: string; model: string; version: string; file: string; review_file: string | null; overall: number | null }
 const versions = ref<Version[]>([])
 const activeFile = ref<string | null>(null)   // null = 默认(最新版本)
 type Provider = { name: string; type: string; available: boolean; label: string }
@@ -46,7 +46,12 @@ const reviewDims = computed(() => {
 async function loadReview() {
   review.value = null
   if (isMechanical.value) return
-  try { review.value = await api.get<Record<string, any>>(`/api/jobs/${jobId.value}/review`) }
+  // 取与当前显示笔记版本配对的评审(无选择则最新版)。
+  const v = versions.value.find(x => x.file === activeFile.value) || versions.value[0]
+  const url = v?.review_file
+    ? `/api/jobs/${jobId.value}/review?file=${encodeURIComponent(v.review_file)}`
+    : `/api/jobs/${jobId.value}/review`
+  try { review.value = await api.get<Record<string, any>>(url) }
   catch { review.value = null }
 }
 
@@ -84,7 +89,7 @@ async function loadProviders() {
 
 async function selectVersion(file: string | null) {
   activeFile.value = file
-  await loadContent()
+  await Promise.all([loadContent(), loadReview()])
 }
 // 版本号(时间戳)转可读时间;无则原样。
 function verLabel(v: Version): string {
@@ -130,7 +135,9 @@ async function reload() {
     const detail = await api.get<{ title: string }>(`/api/jobs/${jobId.value}`)
     title.value = detail.title || jobId.value
   } catch { title.value = jobId.value }
-  await Promise.all([loadContent(), loadVersions(), loadProviders(), loadReview()])
+  // 先拿版本列表(评审要按版本配对),再并行取内容 + 评审。
+  await Promise.all([loadVersions(), loadProviders()])
+  await Promise.all([loadContent(), loadReview()])
 }
 
 onMounted(reload)
