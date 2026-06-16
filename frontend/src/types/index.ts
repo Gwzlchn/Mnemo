@@ -22,13 +22,18 @@ export interface JobSummary {
 
 export interface StepInfo {
   name: string
+  label: string | null          // 步骤中文名(来自 pipelines.yaml)
   status: string
+  started_at: string | null
+  finished_at: string | null
   duration_sec: number | null
   meta: Record<string, any>
   error: string | null
 }
 
 export interface JobDetail extends JobSummary {
+  url: string | null
+  updated_at: string | null
   meta: Record<string, any>
   steps: StepInfo[]
 }

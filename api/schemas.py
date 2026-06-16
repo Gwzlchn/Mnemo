@@ -18,7 +18,9 @@ class JobResponse(BaseModel):
     content_type: str
     status: str
     created_at: str
+    updated_at: str | None = None
     title: str | None = None
+    url: str | None = None
     progress_pct: int = 0
     source: str | None = None
     domain: str = "general"
@@ -32,7 +34,10 @@ class JobDetailResponse(JobResponse):
 
 class StepResponse(BaseModel):
     name: str
+    label: str | None = None          # 步骤中文名(来自 pipelines.yaml);前端展示用
     status: str
+    started_at: str | None = None
+    finished_at: str | None = None
     duration_sec: float | None = None
     meta: dict = Field(default_factory=dict)
     error: str | None = None

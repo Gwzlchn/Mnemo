@@ -1,5 +1,8 @@
 # GitLab-CI 风格流水线：变量/模板(extends)/needs/rules 在加载时归一化为内部 step 结构。
 # 顺序由 needs 决定；prod↔integration 的差异退化为 integration 文件里一份 variables 覆盖。
+#
+# label：步骤的中文显示名（前端各处展示）。英文键名(00_download 等)只在日志/技术视图出现。
+# 新增 pipeline 的步骤也应带 label，保证终端用户处处看到中文名。
 
 # 全局默认：所有 job 自动继承、可逐字段覆盖。
 default:
@@ -46,6 +49,7 @@ video:
     AI_PUNCT_FALLBACK_MODEL: subscription
   jobs:
     "00_download":
+      label: "下载"
       run: steps.common.step_00_download
       pool: io
       retry: 3
@@ -54,6 +58,7 @@ video:
     # 无字幕时转写。pool=cpu(base 镜像已含 faster-whisper,无 GPU 用 int8 CPU 回退),
     # 不再钉 gpu tag——否则无 gpu worker 时整 job fail-fast。有 GPU 的 worker 仍会更快。
     "00b_whisper":
+      label: "语音转写"
       run: steps.video.step_00b_whisper
       image: mnemo/step-gpu
       pool: cpu
@@ -66,6 +71,7 @@ video:
           when: skip
 
     "01_scene":
+      label: "场景检测"
       run: steps.video.step_01_scene
       image: mnemo/step-heavy
       pool: scene
@@ -73,6 +79,7 @@ video:
       retry: 2
 
     "02_frames":
+      label: "关键帧"
       extends: .cpu-step
       run: steps.video.step_02_frames
       image: mnemo/step-heavy
@@ -80,6 +87,7 @@ video:
       timeout: 1800   # cv2 逐场景 SSIM 代表帧:长视频(数百场景)耗时,远超 .cpu-step 的 120s
 
     "03_dedup":
+      label: "画面去重"
       extends: .cpu-step
       run: steps.video.step_03_dedup
       image: mnemo/step-heavy
@@ -87,6 +95,7 @@ video:
       timeout: 900    # 数百帧 pHash + 灰区 SSIM 复核
 
     "04_ocr":
+      label: "画面文字(OCR)"
       extends: .cpu-step
       run: steps.video.step_04_ocr
       image: mnemo/step-heavy
@@ -95,6 +104,7 @@ video:
       retry: $OCR_RETRIES
 
     "05_danmaku":
+      label: "弹幕"
       run: steps.video.step_05_danmaku
       pool: io
       needs: ["00_download"]
@@ -105,6 +115,7 @@ video:
           when: on
 
     "06_punctuate":
+      label: "口播稿"
       extends: .ai-step
       run: steps.video.step_06_punctuate
       needs: ["00_download"]
@@ -119,6 +130,7 @@ video:
         fallback: {provider: $AI_PUNCT_FALLBACK_PROVIDER, model: $AI_PUNCT_FALLBACK_MODEL}
 
     "07_mechanical":
+      label: "机械版笔记"
       run: steps.video.step_07_mechanical
       pool: io
       # 不硬依赖 06(标点是 AI 步):07 口播优先用 06 标点稿,没有则直接读原始中文字幕,
@@ -128,6 +140,7 @@ video:
       retry: 1
 
     "08_smart":
+      label: "智能版笔记"
       extends: .ai-step
       run: steps.video.step_08_smart
       needs: ["07_mechanical"]
@@ -139,6 +152,7 @@ video:
         text_fallback: {provider: $AI_SMART_TEXT_PROVIDER, model: $AI_SMART_TEXT_MODEL}
 
     "09_review":
+      label: "评审"
       extends: .review
       run: steps.video.step_09_review
       needs: ["08_smart"]
@@ -160,30 +174,35 @@ paper:
     AI_REVIEW_FALLBACK_MODEL: deepseek-v4-flash
   jobs:
     "00_download":
+      label: "下载"
       run: steps.common.step_00_download
       pool: io
       timeout: 300
       retry: 3
 
     "10_pdf_parse":
+      label: "PDF 解析"
       extends: .cpu-step
       run: steps.paper.step_10_pdf_parse
       image: mnemo/step-heavy
       needs: ["00_download"]
 
     "11_sections":
+      label: "章节切分"
       extends: .cpu-step
       run: steps.paper.step_11_sections
       needs: ["10_pdf_parse"]
       timeout: 60
 
     "12_figures":
+      label: "图表提取"
       extends: .cpu-step
       run: steps.paper.step_12_figures
       image: mnemo/step-heavy
       needs: ["10_pdf_parse"]
 
     "14_smart_paper":
+      label: "智能版笔记"
       extends: .ai-step
       run: steps.paper.step_14_smart_paper
       needs: ["11_sections", "12_figures"]
@@ -193,6 +212,7 @@ paper:
         fallback: {provider: $AI_SMART_FALLBACK_PROVIDER, model: $AI_SMART_FALLBACK_MODEL}
 
     "15_review":
+      label: "评审"
       extends: .review
       run: steps.paper.step_15_review
       needs: ["14_smart_paper"]
@@ -213,24 +233,28 @@ article:
     AI_REVIEW_FALLBACK_MODEL: deepseek-v4-flash
   jobs:
     "00_download":
+      label: "下载"
       run: steps.common.step_00_download
       pool: io
       timeout: 120
       retry: 3
 
     "16_parse_article":
+      label: "正文解析"
       extends: .cpu-step
       run: steps.article.step_16_parse_article
       needs: ["00_download"]
       timeout: 60
 
     "17_article_sections":
+      label: "章节切分"
       extends: .cpu-step
       run: steps.article.step_17_article_sections
       needs: ["16_parse_article"]
       timeout: 60
 
     "18_smart_article":
+      label: "智能版笔记"
       extends: .ai-step
       run: steps.article.step_18_smart_article
       needs: ["17_article_sections"]
@@ -240,6 +264,7 @@ article:
         fallback: {provider: $AI_SMART_FALLBACK_PROVIDER, model: $AI_SMART_FALLBACK_MODEL}
 
     "19_review":
+      label: "评审"
       extends: .review
       run: steps.article.step_19_review
       needs: ["18_smart_article"]
@@ -260,6 +285,7 @@ audio:
     AI_REVIEW_FALLBACK_MODEL: deepseek-v4-flash
   jobs:
     "00_download":
+      label: "下载"
       run: steps.common.step_00_download
       pool: io
       timeout: 120
@@ -267,6 +293,7 @@ audio:
 
     # 转写复用 video 的 whisper 步;落在 whisper-capable worker(gpu 池含 cpu fallback)。
     "00b_whisper":
+      label: "语音转写"
       run: steps.video.step_00b_whisper
       image: mnemo/step-gpu
       pool: gpu
@@ -276,12 +303,14 @@ audio:
       tags: ["gpu"]
 
     "20_transcript_parse":
+      label: "转写解析"
       extends: .cpu-step
       run: steps.audio.step_20_transcript_parse
       needs: ["00b_whisper"]
       timeout: 60
 
     "21_smart_podcast":
+      label: "智能版笔记"
       extends: .ai-step
       run: steps.audio.step_21_smart_podcast
       needs: ["20_transcript_parse"]
@@ -291,6 +320,7 @@ audio:
         fallback: {provider: $AI_SMART_FALLBACK_PROVIDER, model: $AI_SMART_FALLBACK_MODEL}
 
     "22_review":
+      label: "评审"
       extends: .review
       run: steps.audio.step_22_review
       needs: ["21_smart_podcast"]

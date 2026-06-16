@@ -183,7 +183,12 @@ class TestGetJob:
         job_id = create_resp.json()["job_id"]
         resp = await client.get(f"/api/jobs/{job_id}")
         assert resp.status_code == 200
-        assert resp.json()["job_id"] == job_id
+        body = resp.json()
+        assert body["job_id"] == job_id
+        # 详情契约:新增 url / updated_at,以及每步的 label(中文名)/起止时间。
+        assert "url" in body and "updated_at" in body
+        for s in body["steps"]:
+            assert "label" in s and "started_at" in s and "finished_at" in s
 
     @pytest.mark.asyncio
     async def test_get_nonexistent(self, client):

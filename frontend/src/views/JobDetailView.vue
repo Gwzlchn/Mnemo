@@ -3,12 +3,12 @@ import { ref, computed, onMounted, inject } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useJobStore } from '../stores/jobs'
 import { useJobWs } from '../composables/useJobWs'
-import StepProgressBar from '../components/job/StepProgressBar.vue'
-import StepArtifacts from '../components/job/StepArtifacts.vue'
+import StepWorkbench from '../components/job/StepWorkbench.vue'
 import StatusBadge from '../components/common/StatusBadge.vue'
 import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import type { JobDetail } from '../types'
-import { ArrowLeft, RotateCcw, Play, Trash2, BookOpen, FileText, ClipboardCheck, Video, Newspaper, Headphones } from 'lucide-vue-next'
+import { CONTENT_TYPE_LABELS } from '../types'
+import { ArrowLeft, RotateCcw, Play, Trash2, BookOpen, FileText, Video, Newspaper, Headphones, ExternalLink } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -17,6 +17,9 @@ const showToast = inject<(msg: string, type: 'success' | 'error' | 'info') => vo
 
 const jobId = computed(() => route.params.id as string)
 const { steps, jobStatus, connected, setInitialSteps } = useJobWs(jobId)
+
+// BV 号:job id 形如 jobs_bili_BV1Kth…,无则不显示(非 B 站来源)。
+const bv = computed(() => jobId.value.match(/_(BV[0-9A-Za-z]+)/)?.[1] ?? null)
 
 const job = ref<JobDetail | null>(null)
 const loading = ref(true)
@@ -110,10 +113,21 @@ async function confirmDelete() {
             <h2 class="text-lg font-bold truncate">{{ job.title || job.job_id }}</h2>
             <div class="flex flex-wrap items-center gap-2 mt-1 text-sm text-gray-500">
               <StatusBadge :status="jobStatus" />
+              <span class="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-xs">{{ CONTENT_TYPE_LABELS[job.content_type] || job.content_type }}</span>
               <span v-if="job.source">{{ job.source }}</span>
               <span v-if="job.domain !== 'general'">{{ job.domain }}</span>
-              <span>{{ job.content_type }}</span>
-              <span class="text-xs">{{ new Date(job.created_at).toLocaleString('zh-CN') }}</span>
+            </div>
+            <!-- 元信息:BV / 原始链接 / 创建·更新时间 -->
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs text-gray-500">
+              <span v-if="bv">BV号 <span class="font-mono text-gray-700">{{ bv }}</span></span>
+              <a
+                v-if="job.url" :href="job.url" target="_blank" rel="noopener"
+                class="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700"
+              >
+                原始链接 <ExternalLink :size="12" />
+              </a>
+              <span>创建 {{ new Date(job.created_at).toLocaleString('zh-CN') }}</span>
+              <span v-if="job.updated_at">更新 {{ new Date(job.updated_at).toLocaleString('zh-CN') }}</span>
             </div>
           </div>
         </div>
@@ -123,12 +137,6 @@ async function confirmDelete() {
       <div v-if="jobStatus === 'processing'" class="flex items-center gap-2 text-xs text-gray-500">
         <span class="w-2 h-2 rounded-full" :class="connected ? 'bg-green-500' : 'bg-red-500'" />
         {{ connected ? '实时更新中' : '连接断开，重连中...' }}
-      </div>
-
-      <!-- Step progress -->
-      <div class="bg-white border border-gray-200 rounded-xl p-4">
-        <h3 class="text-sm font-semibold text-gray-700 mb-4">步骤进度</h3>
-        <StepProgressBar :steps="steps" :job-id="jobId" />
       </div>
 
       <!-- Actions -->
@@ -175,8 +183,8 @@ async function confirmDelete() {
         </button>
       </div>
 
-      <!-- 分步产物查看 -->
-      <StepArtifacts :job-id="jobId" />
+      <!-- 步骤与产物(左右分栏:左步骤时间线,右选中步骤的可读详情+产物) -->
+      <StepWorkbench :job-id="jobId" :steps="steps" />
     </template>
 
     <ConfirmDialog

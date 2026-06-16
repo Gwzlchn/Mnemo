@@ -250,23 +250,36 @@ async def list_jobs(
 
 
 @router.get("/{job_id}")
-async def get_job(job_id: str, db: Database = Depends(get_db)):
+async def get_job(
+    job_id: str,
+    db: Database = Depends(get_db),
+    config: AppConfig = Depends(get_config),
+):
     _validate_job_id(job_id)
     job = await asyncio.to_thread(db.get_job, job_id)
     if not job:
         raise HTTPException(404, "job not found")
 
     steps = await asyncio.to_thread(db.get_steps, job_id)
+    # 步骤中文名取自 pipelines.yaml(单一事实源),按本 job 的 pipeline 查表。
+    labels = {
+        s["name"]: s.get("label")
+        for s in config.pipelines.get(job.pipeline, {}).get("steps", [])
+    }
     return JobDetailResponse(
         job_id=job.id, content_type=job.content_type, status=job.status.value,
-        created_at=job.created_at.isoformat(), title=job.title,
+        created_at=job.created_at.isoformat(),
+        updated_at=job.updated_at.isoformat() if job.updated_at else None,
+        title=job.title, url=job.url,
         progress_pct=job.progress_pct, source=job.source, domain=job.domain,
         collection_id=job.collection_id,
         meta=job.meta,
         steps=[
             StepResponse(
-                name=s.name, status=s.status.value, duration_sec=s.duration_sec,
-                meta=s.meta, error=s.error,
+                name=s.name, label=labels.get(s.name), status=s.status.value,
+                started_at=s.started_at.isoformat() if s.started_at else None,
+                finished_at=s.finished_at.isoformat() if s.finished_at else None,
+                duration_sec=s.duration_sec, meta=s.meta, error=s.error,
             )
             for s in steps
         ],
