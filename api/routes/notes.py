@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import mimetypes
 from pathlib import Path
 
@@ -13,6 +14,44 @@ from shared.storage import StorageBackend
 from api.deps import get_config, get_storage, verify_token
 
 router = APIRouter(prefix="/api/jobs", tags=["notes"], dependencies=[Depends(verify_token)])
+
+# 产物 → 步骤分组(按出现顺序归第一个命中的步;未命中归「其他」)。
+_STEP_GROUPS = [
+    ("00_download", "下载 / 原始", ["input/metadata.json", "input/article_meta.json",
+                                    "input/*.srt", "input/*.ass", "input/source.html", "input/source.pdf"]),
+    ("01_scene", "场景检测", ["intermediate/scenes.json"]),
+    ("02_frames", "代表帧", ["intermediate/frames.json", "assets/*"]),
+    ("03_dedup", "去重", ["intermediate/dedup.json"]),
+    ("04_ocr", "OCR", ["intermediate/ocr.json"]),
+    ("05_danmaku", "弹幕", ["intermediate/danmaku.json"]),
+    ("06_punctuate", "口播标点", ["output/transcript.md"]),
+    ("07_mechanical", "机械版笔记", ["output/notes_mechanical.md"]),
+    ("08_smart", "智能版笔记", ["output/notes_smart.md", "output/versions/smart__*"]),
+    ("09_review", "评审", ["output/review.json", "output/versions/review__*"]),
+    ("logs", "日志", ["logs/*"]),
+]
+# 不列出:大源文件 / yutto 中间件 / 内部点文件 / job.json(含 SESSDATA,绝不暴露)。
+_ARTIFACT_HIDE = ["input/source.mp4", "input/source.mp3", "input/*.m4s", "input/*_cover.*"]
+
+
+def _artifact_kind(path: str) -> str:
+    ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    if ext in ("jpg", "jpeg", "png", "gif", "webp"):
+        return "image"
+    if ext == "json":
+        return "json"
+    if ext in ("md", "srt", "txt", "html", "ass", "log"):
+        return "text"
+    return "other"
+
+
+def _artifact_hidden(f: str) -> bool:
+    base = f.rsplit("/", 1)[-1]
+    if base.startswith("."):  # .done / .{step}.config.json / .progress / .error.json
+        return True
+    if f == "job.json":  # 含 SESSDATA
+        return True
+    return any(fnmatch.fnmatch(f, p) for p in _ARTIFACT_HIDE)
 
 
 def _validate_job_id(job_id: str) -> None:
@@ -100,6 +139,52 @@ async def get_asset(job_id: str, filename: str, storage: StorageBackend = Depend
     media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     return await _serve(storage, job_id, f"assets/{filename}", media_type, "asset not found",
                         cache=True)
+
+
+@router.get("/{job_id}/artifacts")
+async def list_artifacts(job_id: str, storage: StorageBackend = Depends(get_storage)):
+    """列某 job 全部产物,按步骤分组(供前端分步查看)。隐藏大源文件/内部文件/job.json。"""
+    _validate_job_id(job_id)
+    files = [f for f in await storage.list_files(job_id) if not _artifact_hidden(f)]
+    assigned: set[str] = set()
+    groups = []
+    for step, label, pats in _STEP_GROUPS:
+        matched = sorted(
+            f for f in files
+            if f not in assigned and any(fnmatch.fnmatch(f, p) for p in pats)
+        )
+        assigned.update(matched)
+        if matched:
+            groups.append({"step": step, "label": label,
+                           "files": [{"path": f, "kind": _artifact_kind(f)} for f in matched]})
+    other = sorted(f for f in files if f not in assigned)
+    if other:
+        groups.append({"step": "其他", "label": "其他",
+                       "files": [{"path": f, "kind": _artifact_kind(f)} for f in other]})
+    return {"groups": groups}
+
+
+@router.get("/{job_id}/artifact")
+async def get_artifact(job_id: str, path: str, storage: StorageBackend = Depends(get_storage)):
+    """取任意产物(仅放行真实存在且未隐藏的;按扩展名定 content-type;图片长缓存)。"""
+    _validate_job_id(job_id)
+    if ".." in path or path.startswith("/") or "\x00" in path:
+        raise HTTPException(400, "invalid path")
+    files = await storage.list_files(job_id)
+    if path not in files or _artifact_hidden(path):
+        raise HTTPException(404, "artifact not found")
+    ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    ct = {
+        "md": "text/markdown; charset=utf-8",
+        "json": "application/json; charset=utf-8",
+        "txt": "text/plain; charset=utf-8",
+        "srt": "text/plain; charset=utf-8",
+        "html": "text/plain; charset=utf-8",  # 不渲染原始 HTML
+        "ass": "text/plain; charset=utf-8",
+        "log": "text/plain; charset=utf-8",
+    }.get(ext) or (mimetypes.guess_type(path)[0] or "application/octet-stream")
+    return await _serve(storage, job_id, path, ct, "artifact not found",
+                        cache=_artifact_kind(path) == "image")
 
 
 @router.get("/{job_id}/source")

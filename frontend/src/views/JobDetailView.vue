@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useJobStore } from '../stores/jobs'
 import { useJobWs } from '../composables/useJobWs'
 import StepProgressBar from '../components/job/StepProgressBar.vue'
+import StepArtifacts from '../components/job/StepArtifacts.vue'
 import StatusBadge from '../components/common/StatusBadge.vue'
 import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import type { JobDetail } from '../types'
@@ -173,6 +174,9 @@ async function confirmDelete() {
           删除
         </button>
       </div>
+
+      <!-- 分步产物查看 -->
+      <StepArtifacts :job-id="jobId" />
     </template>
 
     <ConfirmDialog
