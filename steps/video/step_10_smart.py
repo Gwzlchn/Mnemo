@@ -41,22 +41,37 @@ class SmartStep(StepBase):
         mechanical = (self.job_dir / "output" / "notes_mechanical.md").read_text(encoding="utf-8")
 
         assets_dir = self.job_dir / "assets"
-        images = sorted(assets_dir.glob("*.jpg")) if assets_dir.exists() else []
+        # 限 10 张:多图时 claude Read-per-轮的上下文超线性膨胀会拖垮(实测 20 张 >18min)。
+        images = (sorted(assets_dir.glob("*.jpg")) if assets_dir.exists() else [])[:10]
 
-        prompt = self._build_user_prompt(mechanical)
-
-        # 限 10 张:多图时 claude Read-per-轮的上下文超线性膨胀会拖垮(实测 20 张 >18min,10 张 ~1min)。
-        # 10 张代表帧足够覆盖视觉要点。
+        # 两段式生成:① 视觉 pass——claude 带 Read 多轮看帧,只产"逐帧视觉描述"(产物当输入,
+        # 其 agentic 口水无害);② 文本 pass——用 机械稿 + 视觉描述 走纯文本单轮(--tools "")干净
+        # 生成笔记。把"看图"(必须 agentic)与"成稿"(必须单轮纯输出)解耦,正文不再被 agentic 跑偏/
+        # 丢正文污染;落盘净化(_sanitize_smart_note)退居兜底而非主力。
+        frame_desc = ""
         if images:
-            result = self.call_ai(prompt, images=images[:10])
-        else:
-            result = self.call_ai(prompt)
+            frame_desc = self.call_ai(self._build_vision_prompt(images), images=images)
 
-        rel = self.write_smart_note(result)   # 版本化落盘(含生成时间/方式/模型),不再写 notes_smart.md
-        return {"chars": len(result), "images_sent": min(len(images), 10),
+        result = self.call_ai(self._build_user_prompt(mechanical, frame_desc))
+
+        rel = self.write_smart_note(result)   # 版本化落盘(含生成时间/方式/模型)
+        return {"chars": len(result), "images_sent": len(images),
                 "provider": self.last_ai_provider, "model": self.last_ai_model, "note_file": rel}
 
-    def _build_user_prompt(self, mechanical: str) -> str:
+    def _build_vision_prompt(self, images: list[Path]) -> str:
+        """视觉 pass:让 claude 逐张看帧,只产结构化"逐帧视觉描述"清单,不写笔记正文。"""
+        parts = [
+            "请用 Read 工具逐张查看下列截图,为**有信息量**的截图各输出一行,格式:\n"
+            "`文件名 | 这张图 OCR 文本给不出的视觉信息(箭头指向、红框位置、K线/分时形态、"
+            "放量特征、配色、版式等)`\n"
+            "纯氛围/装饰帧(空镜、背景板、片头片尾)直接跳过、不输出。\n"
+            "只输出这个清单,**不要写任何笔记正文、不要总结、不要保存文件**。\n\n",
+        ]
+        for p in images:
+            parts.append(str(Path(p).resolve()) + "\n")
+        return "".join(parts)
+
+    def _build_user_prompt(self, mechanical: str, frame_desc: str = "") -> str:
         profile = self._load_profile()
         style_hints = self._load_style_hints()
 
@@ -93,10 +108,13 @@ class SmartStep(StepBase):
                 if hint.get("screenshot_focus"):
                     parts.append(f"- 截图重点：{hint['screenshot_focus']}\n")
 
-        parts.append(
-            "\n如附有截图路径(见下方),请用 Read 工具逐张查看,并在笔记关键处用 "
-            "![中文描述](文件名) 内嵌最有信息量的几张(描述要写出图里 OCR 给不出的视觉信息)。\n"
-        )
+        if frame_desc.strip():
+            # 视觉描述已由视觉 pass 文本化喂入,本步纯文本生成、不读图:按文件名内嵌即可。
+            parts.append(
+                "\n以下是各截图的视觉信息(文件名 | 视觉要点)。请在笔记关键处用 "
+                "![中文描述](文件名) 内嵌其中最有信息量的几张,描述要写出 OCR 给不出的视觉信息:\n"
+                f"{frame_desc}\n"
+            )
         parts.append(f"\n---\n\n{mechanical}")
         return "".join(parts)
 

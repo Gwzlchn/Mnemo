@@ -35,6 +35,44 @@ class TestSmartStep:
         assert result["chars"] > 0
         assert list((job_dir / "output" / "versions").glob("notes_smart_*.md"))
 
+    def test_execute_two_pass_with_images(self, tmp_path):
+        # 有截图时走两段:① 带图的视觉 pass(出描述) ② 不带图的纯文本 pass(成稿)。
+        job_dir = self._setup_job(tmp_path)
+        (job_dir / "assets" / "scene_0001.jpg").write_bytes(b"\xff\xd8\xff\xe0fakejpg")
+        config = make_step_config(tmp_path, step_name="10_smart", pool="ai")
+        step = SmartStep("10_smart", job_dir, config)
+        calls = []
+        note = "# 力盛赛车案复盘\n\n" + "## 章节\n这是足够长的正文内容用于通过净化长度判废。\n" * 30
+
+        def fake_call_ai(prompt, images=None, **kw):
+            calls.append({"has_images": bool(images), "prompt": prompt})
+            return "scene_0001.jpg | 红框圈住分时跳水" if images else note
+        step.call_ai = fake_call_ai
+
+        result = step.execute()
+        assert len(calls) == 2
+        assert calls[0]["has_images"] is True                  # ① 视觉 pass 带图
+        assert "不要写任何笔记正文" in calls[0]["prompt"]        # 视觉 pass 只要描述
+        assert calls[1]["has_images"] is False                 # ② 文本 pass 不带图
+        assert "红框圈住分时跳水" in calls[1]["prompt"]          # 视觉描述喂进文本 pass
+        assert result["images_sent"] == 1
+        assert list((job_dir / "output" / "versions").glob("notes_smart_*.md"))
+
+    def test_execute_no_images_single_pass(self, tmp_path):
+        # 无截图时只一段纯文本调用。
+        job_dir = self._setup_job(tmp_path)
+        config = make_step_config(tmp_path, step_name="10_smart", pool="ai")
+        step = SmartStep("10_smart", job_dir, config)
+        calls = []
+        note = "# 标题\n\n" + "## 章节\n足够长的正文内容用于通过净化判废。\n" * 30
+
+        def fake_call_ai(prompt, images=None, **kw):
+            calls.append(bool(images)); return note
+        step.call_ai = fake_call_ai
+        result = step.execute()
+        assert calls == [False]                                # 仅一次、不带图
+        assert result["images_sent"] == 0
+
     def test_input_hashes_includes_styles(self, tmp_path):
         job_dir = self._setup_job(tmp_path)
         prompts_dir = tmp_path / "prompts"
