@@ -303,14 +303,42 @@ class StepBase:
         parse_failed = False
         try:
             result = json.loads(self._extract_json(raw))
+            # claude 有时把分数包进 "scores" 子对象(+rationale),抬平到顶层再按维度取键,
+            # 否则顶层取不到→维度全落默认 3。
+            if score_keys and isinstance(result.get("scores"), dict):
+                result = {**result.pop("scores"), **result}
         except (json.JSONDecodeError, ValueError):
-            self.log.warn("ai_json_parse_failed", raw=raw[:200])
-            result = {**fallback, "raw_response": raw[:500], "parse_failed": True}
-            parse_failed = True
+            # 整体 JSON 非法——常因 claude 多塞了 rationale 长文本,其中换行/引号未转义
+            # 或被单轮输出截断。但分数往往仍完好,按维度键正则抢救,救回则用真分数,
+            # 避免误落 fallback 的全 3(线上 11_review 实测此因 overall 恒为 3.0)。
+            salvaged = self._salvage_scores(raw, score_keys)
+            if salvaged is not None:
+                # 用救回的真分数;丢掉 fallback 的占位 overall,让其按真分重算(否则恒 3.0)。
+                result = {**fallback, **salvaged, "raw_response": raw[:500]}
+                result.pop("overall", None)
+            else:
+                self.log.warn("ai_json_parse_failed", raw=raw[:200])
+                result = {**fallback, "raw_response": raw[:500], "parse_failed": True}
+                parse_failed = True
         if score_keys and "overall" not in result:
             scores = [result.get(k, 3) for k in score_keys]
             result["overall"] = round(sum(scores) / max(len(scores), 1), 1)
         return result, parse_failed
+
+    @staticmethod
+    def _salvage_scores(raw: str, score_keys: list[str] | None) -> dict | None:
+        """JSON 整体解析失败时的兜底:按 `"维度": 数字` 正则逐项抢救 1-5 分。
+        rationale 里的同名键值是字符串("维度": "..."),数字正则不会误命中。
+        必须救回全部维度才返回(部分命中不可信),否则 None → 走 fallback。"""
+        if not score_keys:
+            return None
+        import re
+        found: dict = {}
+        for k in score_keys:
+            m = re.search(rf'"{re.escape(k)}"\s*:\s*([1-5])\b', raw or "")
+            if m:
+                found[k] = int(m.group(1))
+        return found if len(found) == len(score_keys) else None
 
     @staticmethod
     def _extract_json(raw: str) -> str:

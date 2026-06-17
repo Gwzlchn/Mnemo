@@ -34,17 +34,21 @@ class ReviewStep(StepBase):
 
         prompt = (
             "请对比以下两份笔记，对 AI 生成的智能版笔记进行质量评审。\n\n"
-            "评分维度（每项 1-5 分）：\n"
+            "评分维度（每项打 1-5 的整数）：\n"
             "1. completeness: 信息完整性（是否遗漏重要内容）\n"
             "2. accuracy: 准确性（是否有事实错误）\n"
             "3. structure: 结构清晰度\n"
             "4. terminology: 术语使用准确性\n"
             "5. visual_integration: 截图引用恰当性\n"
             "6. readability: 可读性\n\n"
-            "同时输出：\n"
-            "- missing_concepts: 遗漏的重要概念列表\n"
-            "- top3_improvements: 最重要的 3 条改进建议\n\n"
-            "请严格以 JSON 格式输出，不要包含其他文字。\n\n"
+            "只输出如下扁平 JSON：六个维度为顶层整数键，不要嵌套进 scores 子对象、"
+            "不要加 rationale 字段、不要代码围栏、不要任何额外说明文字。\n"
+            "{\n"
+            '  "completeness": 4, "accuracy": 4, "structure": 4,\n'
+            '  "terminology": 4, "visual_integration": 4, "readability": 4,\n'
+            '  "missing_concepts": ["遗漏的重要概念"],\n'
+            '  "top3_improvements": ["改进建议1", "改进建议2", "改进建议3"]\n'
+            "}\n\n"
             f"--- 机械版笔记 ---\n{mechanical[:5000]}\n\n"
             f"--- 智能版笔记 ---\n{smart[:5000]}"
         )

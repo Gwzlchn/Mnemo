@@ -386,3 +386,67 @@ class TestExtractJson:
     def test_plain(self):
         from shared.step_base import StepBase
         assert json.loads(StepBase._extract_json('{"a": 1}')) == {"a": 1}
+
+
+class TestScoreSalvage:
+    """评审分数抽取健壮性:嵌套 scores 抬平 + JSON 非法时正则抢救 1-5 分,
+    避免误落 fallback 的全 3(线上 11_review 实测 overall 恒 3.0 之因)。"""
+
+    SCORE_KEYS = ["completeness", "accuracy", "structure",
+                  "terminology", "visual_integration", "readability"]
+    FALLBACK = {
+        "completeness": 3, "accuracy": 3, "structure": 3,
+        "terminology": 3, "visual_integration": 3, "readability": 3,
+        "overall": 3.0, "missing_concepts": [], "top3_improvements": ["重试"],
+    }
+    # 6 维真分 → overall = (5+4+4+5+4+4)/6 = 4.3
+    NESTED = ('{"scores": {"completeness": 5, "accuracy": 4, "structure": 4, '
+              '"terminology": 5, "visual_integration": 4, "readability": 4}, '
+              '"missing_concepts": ["X"], "top3_improvements": ["a"]}')
+    # 上面再裹 ```json 围栏 + 追加未闭合的 rationale 长文本 → json.loads 必失败
+    TRUNCATED = ('```json\n{"scores": {"completeness": 5, "accuracy": 4, "structure": 4, '
+                 '"terminology": 5, "visual_integration": 4, "readability": 4}, '
+                 '"rationale": {"completeness": "讲得很清楚')
+
+    def test_salvage_from_truncated(self):
+        assert StepBase._salvage_scores(self.TRUNCATED, self.SCORE_KEYS) == {
+            "completeness": 5, "accuracy": 4, "structure": 4,
+            "terminology": 5, "visual_integration": 4, "readability": 4,
+        }
+
+    def test_salvage_ignores_rationale_strings(self):
+        # rationale 里同名键值是字符串("5 分太高"),数字正则不应误命中
+        raw = '{"completeness": 2, "rationale": {"completeness": "5 分太高"}}'
+        assert StepBase._salvage_scores(raw, ["completeness"]) == {"completeness": 2}
+
+    def test_salvage_partial_returns_none(self):
+        # 维度没救全不可信 → None,走 fallback
+        assert StepBase._salvage_scores('{"completeness": 5, "accuracy": 4}', self.SCORE_KEYS) is None
+
+    def test_salvage_no_score_keys_returns_none(self):
+        assert StepBase._salvage_scores('{"x": 1}', None) is None
+
+    def test_call_ai_json_lifts_nested_scores(self, tmp_path):
+        step = DummyStep(tmp_path)
+        step.call_ai = lambda *a, **k: self.NESTED
+        result, failed = step.call_ai_json("p", fallback=self.FALLBACK, score_keys=self.SCORE_KEYS)
+        assert not failed
+        assert result["completeness"] == 5 and result["terminology"] == 5
+        assert result["overall"] == 4.3
+        assert result["missing_concepts"] == ["X"]
+
+    def test_call_ai_json_salvages_malformed(self, tmp_path):
+        step = DummyStep(tmp_path)
+        step.call_ai = lambda *a, **k: self.TRUNCATED
+        result, failed = step.call_ai_json("p", fallback=self.FALLBACK, score_keys=self.SCORE_KEYS)
+        assert not failed                       # 救回分数,不算 parse 失败
+        assert result["overall"] == 4.3         # 真分均值,不是 fallback 的 3.0
+        assert result.get("parse_failed") is not True
+
+    def test_call_ai_json_fallback_when_unsalvageable(self, tmp_path):
+        step = DummyStep(tmp_path)
+        step.call_ai = lambda *a, **k: "完全不是 JSON 也没有分数"
+        result, failed = step.call_ai_json("p", fallback=self.FALLBACK, score_keys=self.SCORE_KEYS)
+        assert failed
+        assert result["overall"] == 3.0
+        assert result["parse_failed"] is True
