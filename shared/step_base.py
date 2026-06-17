@@ -150,6 +150,11 @@ class StepBase:
         "要不要我", "需要我", "如需", "需要的话", "如果需要", "我可以再", "我还可以",
         "是否需要", "可以帮你", "如有需要", "Let me know", "Would you like", "If you",
     )
+    # 结尾第一人称过程自述(展示型笔记是第三人称,不该出现"我已…重组/标注/内嵌…"的收尾签名)。
+    _TRAIL_META = (
+        "我已", "我把", "我按", "已按", "我对", "我将", "我用", "我把视频", "我已经",
+        "I've ", "I have ", "I've reorganized", "I restructured",
+    )
     # 抢救失败的退化标志:正文自称把笔记存进了文件(实际 --allowedTools 只放 Read,根本没写,
     # 即正文未被输出),或首个标题就是"我做了什么"之类元小节。
     _META_HEAD = (
@@ -171,11 +176,14 @@ class StepBase:
             m = re.search(r"(?m)^#{1,6} ", s)
             if m:
                 s = s[m.start():].strip()
-        # 2) 去结尾后续提议:从尾部逐段砍掉对话式提问/提议(限短段,避免误伤正文)。
+        # 2) 去结尾口水:从尾部逐段砍掉对话式提议("要不要我…")与第一人称过程签名("我已…重组")。
+        #    提议限短段(<200,marker 在段首附近);过程签名限段首命中且 <500(章节清单可能较长)。
         paras = s.split("\n\n")
         while paras:
             tail = paras[-1].strip().lstrip("-*># ").strip()
-            if tail and len(tail) < 200 and any(o in tail[:24] for o in cls._OFFER_MARK):
+            is_offer = len(tail) < 200 and any(o in tail[:24] for o in cls._OFFER_MARK)
+            is_meta = len(tail) < 500 and any(tail.startswith(o) for o in cls._TRAIL_META)
+            if tail and (is_offer or is_meta):
                 paras.pop()
                 while paras and paras[-1].strip() in ("---", "***", "___"):
                     paras.pop()

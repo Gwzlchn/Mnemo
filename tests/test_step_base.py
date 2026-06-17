@@ -420,6 +420,20 @@ class TestSanitizeSmartNote:
         out = self._SB._sanitize_smart_note(raw)
         assert out == raw.strip()
 
+    def test_strips_trailing_first_person_signoff(self):
+        # BV144 实况:正文后 --- 接一段"我已按…重组…内嵌了 N 张截图"的第一人称收尾签名。
+        raw = ("# 标题\n\n" + self.BODY +
+               "\n\n---\n\n我已按视频自然章节（引子 → 出货 → 结尾）重组，专业术语就近标注简释并内嵌了 11 张截图。")
+        out = self._SB._sanitize_smart_note(raw)
+        assert "我已按" not in out and "内嵌了 11 张" not in out
+        assert "第7章" in out                     # 正文保留
+
+    def test_keeps_legit_third_person_ending(self):
+        # 第三人称正文结尾不得误删(不以第一人称过程标记开头)。
+        raw = "# 标题\n\n" + self.BODY + "\n\n本案的核心教训是:控盘资金再精妙也终将受罚。"
+        out = self._SB._sanitize_smart_note(raw)
+        assert "本案的核心教训" in out
+
     def test_degenerate_lost_note_raises(self):
         # BV1Msh 实况:claude 只回"已保存到 xx.md + 我做了什么"元汇报,正文整段丢失。
         raw = ("已完成。结构化学习笔记保存在 `/tmp/mnemo-work/x/notes_structured.md`。\n\n"
