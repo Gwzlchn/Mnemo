@@ -578,6 +578,45 @@ class TestGlossary:
         assert got["status"] == "accepted"
         assert any(o["job_id"] == "j9" for o in got["occurrences"])
 
+    def test_add_suggestion_with_definition(self, db):
+        # (a) 带 definition 插入 -> 存定义且 status=suggested。
+        db.add_glossary_suggestion("ml", "反向传播", "j1", "video", definition="链式法则求梯度")
+        got = db.get_glossary_term("ml", "反向传播")
+        assert got["definition"] == "链式法则求梯度"
+        assert got["status"] == "suggested"
+
+    def test_add_suggestion_fills_empty_definition(self, db):
+        # (b) 已存在且原 definition 为空 -> 第二次带 definition 补填。
+        db.add_glossary_suggestion("ml", "梯度消失", "j1")  # 无定义
+        assert db.get_glossary_term("ml", "梯度消失")["definition"] == ""
+        db.add_glossary_suggestion("ml", "梯度消失", "j2", definition="深层网络梯度趋零")
+        got = db.get_glossary_term("ml", "梯度消失")
+        assert got["definition"] == "深层网络梯度趋零"
+        # 仍合并 occurrence，不降级。
+        assert {o["job_id"] for o in got["occurrences"]} == {"j1", "j2"}
+
+    def test_add_suggestion_does_not_overwrite_nonempty_definition(self, db):
+        # (c) 已存在且原 definition 非空 -> 第二次不覆盖。
+        db.add_glossary_suggestion("ml", "正则化", "j1", definition="原定义")
+        db.add_glossary_suggestion("ml", "正则化", "j2", definition="新定义")
+        got = db.get_glossary_term("ml", "正则化")
+        assert got["definition"] == "原定义"
+        assert {o["job_id"] for o in got["occurrences"]} == {"j1", "j2"}
+
+    def test_add_suggestion_respects_definition_locked(self, db):
+        # (d) definition_locked=1（即便原定义为空）-> 第二次不补填。
+        db.add_glossary_suggestion("ml", "钉住词", "j1")  # 无定义
+        db._conn.execute(
+            "UPDATE glossary SET definition_locked=1 WHERE domain=? AND term=?",
+            ("ml", "钉住词"),
+        )
+        db._conn.commit()
+        db.add_glossary_suggestion("ml", "钉住词", "j2", definition="不该写入")
+        got = db.get_glossary_term("ml", "钉住词")
+        assert got["definition"] == ""
+        # 钉住只锁定义，occurrence 仍照常并入。
+        assert {o["job_id"] for o in got["occurrences"]} == {"j1", "j2"}
+
     def test_accept_term(self, db):
         db.add_glossary_suggestion("ml", "候选词", "j1")
         db.accept_glossary_term("ml", "候选词")

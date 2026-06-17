@@ -42,10 +42,19 @@ class PaperReviewStep(StepBase):
             "4. terminology: 术语使用\n"
             "5. formula_integrity: 公式完整性（LaTeX 格式是否正确）\n"
             "6. figure_references: 图表引用是否恰当\n\n"
-            "同时输出：\n"
-            "- missing_concepts: 遗漏的概念\n"
-            "- top3_improvements: 改进建议\n\n"
-            "请严格以 JSON 格式输出。\n\n"
+            "另外输出：\n"
+            "- key_terms: 这篇笔记**讲清楚**的关键概念 + 一句话候选定义（用于沉淀进概念库）\n"
+            "- missing_concepts: 笔记**遗漏**的重要概念（知识缺口，仅供选题/查漏）\n"
+            "- top3_improvements: 最重要的 3 条改进建议\n\n"
+            "只输出如下扁平 JSON：六个维度为顶层整数键，不要嵌套进 scores 子对象、"
+            "不要加 rationale 字段、不要代码围栏、不要任何额外说明文字。\n"
+            "{\n"
+            '  "completeness": 4, "accuracy": 4, "structure": 4,\n'
+            '  "terminology": 4, "formula_integrity": 4, "figure_references": 4,\n'
+            '  "key_terms": [{"term": "概念名", "definition": "一句话候选定义"}],\n'
+            '  "missing_concepts": ["遗漏的重要概念"],\n'
+            '  "top3_improvements": ["改进建议1", "改进建议2", "改进建议3"]\n'
+            "}\n\n"
             f"原文章节：{json.dumps(original_titles, ensure_ascii=False)}\n\n"
             f"--- 笔记 ---\n{smart[:5000]}"
         )
@@ -56,6 +65,7 @@ class PaperReviewStep(StepBase):
                 "completeness": 3, "accuracy": 3, "structure": 3,
                 "terminology": 3, "formula_integrity": 3, "figure_references": 3,
                 "overall": 3.0,
+                "key_terms": [],
                 "missing_concepts": [],
                 "top3_improvements": ["AI 返回的不是有效 JSON"],
             },

@@ -1031,15 +1031,18 @@ class Database:
         job_id: str,
         content_type: str = "",
         location: str | None = None,
+        definition: str = "",
     ) -> None:
-        """抽取/评审采集候选概念：不存在则插 status='suggested' 记一条 occurrence；
-        已存在则把该 job 的 occurrence 并入(按 job_id 去重)，绝不降级已 accepted 的条目。
-        occurrence = {job_id, content_type, location}（类型化出现索引，§1.5）。"""
+        """抽取(①「这篇讲清楚了什么」)采集候选概念：不存在则插 status='suggested' 记一条
+        occurrence + 候选定义；已存在则把该 job 的 occurrence 并入(按 job_id 去重)，
+        绝不降级已 accepted 的条目。候选定义仅在该条尚无定义且未钉住时补写——不覆盖
+        已有/已钉住定义(§1.10-11)。occurrence = {job_id, content_type, location}（§1.5）。"""
         now = _now_iso()
         occ = {"job_id": job_id, "content_type": content_type, "location": location}
         with self._lock:
             row = self._conn.execute(
-                "SELECT occurrences FROM glossary WHERE domain=? AND term=?",
+                "SELECT occurrences, definition, definition_locked "
+                "FROM glossary WHERE domain=? AND term=?",
                 (domain, term),
             ).fetchone()
             if row is None:
@@ -1048,17 +1051,26 @@ class Database:
                        (domain, term, definition, occurrences, related, status,
                         created_at, updated_at)
                        VALUES (?,?,?,?,?,?,?,?)""",
-                    (domain, term, "", json.dumps([occ], ensure_ascii=False), "[]",
-                     "suggested", now, now),
+                    (domain, term, definition, json.dumps([occ], ensure_ascii=False),
+                     "[]", "suggested", now, now),
                 )
             else:
                 occs = json.loads(row["occurrences"] or "[]")
+                changed = False
                 if not any(o.get("job_id") == job_id for o in occs):
                     occs.append(occ)
+                    changed = True
+                new_def = row["definition"]
+                # 候选定义补空:仅当本条还没定义且未钉住时填(不覆盖已有/已钉住，§1.10-11)。
+                if definition and not (row["definition"] or "").strip() \
+                        and not row["definition_locked"]:
+                    new_def = definition
+                    changed = True
+                if changed:
                     self._conn.execute(
-                        "UPDATE glossary SET occurrences=?, updated_at=? "
+                        "UPDATE glossary SET occurrences=?, definition=?, updated_at=? "
                         "WHERE domain=? AND term=?",
-                        (json.dumps(occs, ensure_ascii=False), now, domain, term),
+                        (json.dumps(occs, ensure_ascii=False), new_def, now, domain, term),
                     )
             self._conn.commit()
 

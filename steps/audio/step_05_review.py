@@ -31,17 +31,26 @@ class PodcastReviewStep(StepBase):
 
         prompt = (
             "请对以下播客笔记进行质量评审。\n\n"
-            "评分维度（每项 1-5 分）：\n"
+            "评分维度（每项打 1-5 的整数）：\n"
             "1. completeness: 信息完整性（是否遗漏重要内容）\n"
             "2. accuracy: 准确性（是否有事实错误）\n"
             "3. structure: 结构清晰度\n"
             "4. terminology: 术语使用准确性\n"
             "5. conciseness: 口语净化程度（是否去除冗余/停顿）\n"
             "6. readability: 可读性\n\n"
-            "同时输出：\n"
-            "- missing_concepts: 遗漏的重要概念\n"
-            "- top3_improvements: 改进建议\n\n"
-            "请严格以 JSON 格式输出。\n\n"
+            "另外输出：\n"
+            "- key_terms: 这篇笔记**讲清楚**的关键概念 + 一句话候选定义（用于沉淀进概念库）\n"
+            "- missing_concepts: 笔记**遗漏**的重要概念（知识缺口，仅供选题/查漏）\n"
+            "- top3_improvements: 最重要的 3 条改进建议\n\n"
+            "只输出如下扁平 JSON：六个维度为顶层整数键，不要嵌套进 scores 子对象、"
+            "不要加 rationale 字段、不要代码围栏、不要任何额外说明文字。\n"
+            "{\n"
+            '  "completeness": 4, "accuracy": 4, "structure": 4,\n'
+            '  "terminology": 4, "conciseness": 4, "readability": 4,\n'
+            '  "key_terms": [{"term": "概念名", "definition": "一句话候选定义"}],\n'
+            '  "missing_concepts": ["遗漏的重要概念"],\n'
+            '  "top3_improvements": ["改进建议1", "改进建议2", "改进建议3"]\n'
+            "}\n\n"
             f"--- 转写正文（节选）---\n{full_text[:3000]}\n\n"
             f"--- 笔记 ---\n{smart[:5000]}"
         )
@@ -52,6 +61,7 @@ class PodcastReviewStep(StepBase):
                 "completeness": 3, "accuracy": 3, "structure": 3,
                 "terminology": 3, "conciseness": 3, "readability": 3,
                 "overall": 3.0,
+                "key_terms": [],
                 "missing_concepts": [],
                 "top3_improvements": ["AI 返回的不是有效 JSON"],
             },

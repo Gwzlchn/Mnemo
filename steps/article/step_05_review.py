@@ -39,10 +39,19 @@ class ArticleReviewStep(StepBase):
             "3. structure: 结构清晰度\n"
             "4. readability: 可读性\n"
             "5. insight: 观点提炼深度\n\n"
-            "同时输出：\n"
-            "- missing_concepts: 遗漏的要点\n"
-            "- top3_improvements: 改进建议\n\n"
-            "请严格以 JSON 格式输出。\n\n"
+            "另外输出：\n"
+            "- key_terms: 这篇笔记**讲清楚**的关键概念 + 一句话候选定义（用于沉淀进概念库）\n"
+            "- missing_concepts: 笔记**遗漏**的重要概念（知识缺口，仅供选题/查漏）\n"
+            "- top3_improvements: 最重要的 3 条改进建议\n\n"
+            "只输出如下扁平 JSON：五个维度为顶层整数键，不要嵌套进 scores 子对象、"
+            "不要加 rationale 字段、不要代码围栏、不要任何额外说明文字。\n"
+            "{\n"
+            '  "completeness": 4, "accuracy": 4, "structure": 4,\n'
+            '  "readability": 4, "insight": 4,\n'
+            '  "key_terms": [{"term": "概念名", "definition": "一句话候选定义"}],\n'
+            '  "missing_concepts": ["遗漏的重要概念"],\n'
+            '  "top3_improvements": ["改进建议1", "改进建议2", "改进建议3"]\n'
+            "}\n\n"
             f"原文章节：{json.dumps(original_titles, ensure_ascii=False)}\n\n"
             f"--- 笔记 ---\n{smart[:5000]}"
         )
@@ -53,6 +62,7 @@ class ArticleReviewStep(StepBase):
                 "completeness": 3, "accuracy": 3, "structure": 3,
                 "readability": 3, "insight": 3,
                 "overall": 3.0,
+                "key_terms": [],
                 "missing_concepts": [],
                 "top3_improvements": ["AI 返回的不是有效 JSON"],
             },

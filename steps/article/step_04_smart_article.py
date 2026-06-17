@@ -59,7 +59,12 @@ class SmartArticleStep(StepBase):
 
         if profile and profile.get("terminology"):
             terms = "; ".join(profile["terminology"][:30])
-            parts.append(f"\n术语参考：{terms}\n")
+            # 回流(§1.8 ③)：注入本域已沉淀概念的标准定义,命中用统一措辞、不重复展开,
+            # 只对未列出的新概念做首次解释——避免同概念每篇换一套说法。
+            parts.append(
+                "\n本领域已沉淀的标准概念（命中时沿用统一措辞、无需重新展开解释；"
+                f"只对下列未涵盖的新概念做首次解释）：\n{terms}\n"
+            )
 
         parts.append(f"\n文章标题：{sections.get('title', '未知')}\n")
         authors = sections.get("authors", [])

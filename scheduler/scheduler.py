@@ -34,8 +34,8 @@ _NOTE_STEPS = {
 _NOTE_FILES = {
     "mechanical": "output/notes_mechanical.md",
 }
-# 评审步：完成后读 review.json，把 missing_concepts 采集为候选术语。
-_REVIEW_STEPS = {"11_review", "06_review"}
+# 评审步：完成后读 review.json，把 key_terms(①讲清楚的概念+候选定义)采集为候选术语。
+_REVIEW_STEPS = {"11_review", "06_review", "05_review"}  # video / paper / (article|audio)
 
 
 def _markdown_to_text(md: str) -> str:
@@ -379,7 +379,8 @@ class Scheduler:
         logger.info("notes_indexed", job_id=job_id, note_type=note_type)
 
     async def _collect_glossary(self, job_id: str) -> None:
-        """读评审产物 review.json，把 missing_concepts 逐个采集为候选术语。"""
+        """读评审产物 review.json，把 key_terms(①这篇讲清楚的概念 + 候选定义)采集为候选术语。
+        主喂养源是「讲清楚了什么」(§1.8)；missing_concepts(知识缺口)只留评审面板，不喂术语库。"""
         data = await self.storage.read_file(job_id, "output/review.json")
         if not data:
             return
@@ -387,20 +388,26 @@ class Scheduler:
             review = json.loads(data.decode("utf-8", errors="replace"))
         except (json.JSONDecodeError, ValueError):
             return
-        concepts = review.get("missing_concepts") or []
-        if not isinstance(concepts, list) or not concepts:
+        key_terms = review.get("key_terms") or []
+        if not isinstance(key_terms, list) or not key_terms:
             return
         job = await asyncio.to_thread(self.db.get_job, job_id)
         domain = (job.domain if job else "") or "general"
         content_type = job.content_type if job else ""
-        for c in concepts:
-            term = c.get("term") if isinstance(c, dict) else c
+        collected = 0
+        for t in key_terms:
+            if isinstance(t, dict):
+                term, definition = t.get("term"), (t.get("definition") or "")
+            else:
+                term, definition = t, ""
             if not term or not isinstance(term, str):
                 continue
             await asyncio.to_thread(
-                self.db.add_glossary_suggestion, domain, term, job_id, content_type,
+                self.db.add_glossary_suggestion,
+                domain, term, job_id, content_type, None, definition,
             )
-        logger.info("glossary_collected", job_id=job_id, count=len(concepts))
+            collected += 1
+        logger.info("glossary_collected", job_id=job_id, count=collected)
 
     async def on_step_failed(
         self,
