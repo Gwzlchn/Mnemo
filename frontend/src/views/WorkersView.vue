@@ -4,6 +4,7 @@ import { useWorkerStore } from '../stores/workers'
 import WorkerCard from '../components/worker/WorkerCard.vue'
 import WorkerJoinGuide from '../components/worker/WorkerJoinGuide.vue'
 import EmptyState from '../components/common/EmptyState.vue'
+import LoadingState from '../components/common/LoadingState.vue'
 import { RefreshCw, HardDrive } from 'lucide-vue-next'
 
 const workerStore = useWorkerStore()
@@ -47,7 +48,7 @@ const todayCompleted = computed(() =>
     </div>
 
     <!-- Worker list -->
-    <div v-if="workerStore.loading && workerStore.workers.length === 0" class="text-sm text-gray-400 py-8 text-center">加载中...</div>
+    <LoadingState v-if="workerStore.loading && workerStore.workers.length === 0" />
     <div v-else-if="workerStore.workers.length === 0">
       <EmptyState message="暂无 Worker" />
     </div>

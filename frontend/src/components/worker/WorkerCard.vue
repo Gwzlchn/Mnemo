@@ -2,6 +2,10 @@
 import { ref, computed, inject } from 'vue'
 import type { Worker } from '../../types'
 import StatusBadge from '../common/StatusBadge.vue'
+import Card from '../common/Card.vue'
+import Badge from '../common/Badge.vue'
+import PrimaryButton from '../common/PrimaryButton.vue'
+import ConfirmDialog from '../common/ConfirmDialog.vue'
 import { useWorkerStore } from '../../stores/workers'
 import { Edit3, Trash2, PauseCircle, PlayCircle, Tag } from 'lucide-vue-next'
 
@@ -13,6 +17,7 @@ const editing = ref(false)
 const noteInput = ref(props.worker.admin_note || '')
 const editingTags = ref(false)
 const tagsInput = ref(props.worker.tags.join(' '))
+const showRemoveConfirm = ref(false)
 
 // 在线/离线一律以后端 status 为准,前端不再用时间戳自算(时区会算错,导致在线判离线)。
 const statusLight = computed(() => {
@@ -96,15 +101,18 @@ async function saveTags() {
   }
 }
 
-async function remove() {
-  // 离线/失联直接删；在线的需要 force 二次确认。
-  const force = isOnline.value || isDraining.value
-  const msg = force
+// 离线/失联直接删；在线的需要 force 二次确认。
+const removeForce = computed(() => isOnline.value || isDraining.value)
+const removeMessage = computed(() =>
+  removeForce.value
     ? `${props.worker.id} 仍在线，强制移除？`
     : `确定移除 ${props.worker.id} 的记录？`
-  if (!confirm(msg)) return
+)
+
+async function confirmRemove() {
+  showRemoveConfirm.value = false
   try {
-    await workerStore.remove(props.worker.id, force)
+    await workerStore.remove(props.worker.id, removeForce.value)
     showToast('已移除', 'success')
   } catch (e: any) {
     showToast(e.message || '移除失败', 'error')
@@ -113,28 +121,24 @@ async function remove() {
 </script>
 
 <template>
-  <div class="bg-white border border-gray-200 rounded-xl p-4">
+  <Card padding="p-4">
     <div class="flex items-start gap-3">
       <span class="w-3 h-3 rounded-full mt-1.5 flex-shrink-0" :class="statusLight" />
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2 flex-wrap">
           <span class="font-mono text-sm font-medium">{{ worker.id }}</span>
           <StatusBadge :status="worker.status" />
-          <span class="px-1.5 py-0.5 bg-gray-100 rounded text-xs text-gray-600 uppercase">{{ worker.type }}</span>
+          <Badge variant="default" class="uppercase">{{ worker.type }}</Badge>
         </div>
 
         <!-- Tags -->
         <div v-if="!editingTags" class="flex items-center gap-1 flex-wrap mt-1">
-          <span
-            v-for="t in worker.tags"
-            :key="t"
-            class="px-1.5 py-0.5 bg-indigo-50 text-indigo-600 rounded text-xs"
-          >{{ t }}</span>
-          <span v-if="worker.tags.length === 0" class="text-xs text-gray-400">无标签</span>
+          <Badge v-for="t in worker.tags" :key="t" variant="info">{{ t }}</Badge>
+          <span v-if="worker.tags.length === 0" class="text-xs text-gray-500">无标签</span>
         </div>
         <div v-else class="mt-1 flex gap-2">
           <input v-model="tagsInput" class="flex-1 px-2 py-1 border border-gray-300 rounded text-sm" placeholder="空格分隔标签" />
-          <button @click="saveTags" class="px-2 py-1 bg-blue-600 text-white text-xs rounded">保存</button>
+          <PrimaryButton @click="saveTags">保存</PrimaryButton>
           <button @click="editingTags = false" class="px-2 py-1 text-gray-500 text-xs">取消</button>
         </div>
 
@@ -156,7 +160,7 @@ async function remove() {
         <!-- Edit note -->
         <div v-if="editing" class="mt-2 flex gap-2">
           <input v-model="noteInput" class="flex-1 px-2 py-1 border border-gray-300 rounded text-sm" placeholder="备注" />
-          <button @click="saveNote" class="px-2 py-1 bg-blue-600 text-white text-xs rounded">保存</button>
+          <PrimaryButton @click="saveNote">保存</PrimaryButton>
           <button @click="editing = false" class="px-2 py-1 text-gray-500 text-xs">取消</button>
         </div>
       </div>
@@ -180,10 +184,20 @@ async function remove() {
         <Edit3 :size="14" />
         备注
       </button>
-      <button @click="remove" class="flex items-center gap-1 px-2 py-1 text-xs text-red-600 rounded hover:bg-red-50 transition-colors">
+      <button @click="showRemoveConfirm = true" class="flex items-center gap-1 px-2 py-1 text-xs text-red-600 rounded hover:bg-red-50 transition-colors">
         <Trash2 :size="14" />
         {{ isRemovable ? '移除' : '强制移除' }}
       </button>
     </div>
-  </div>
+
+    <ConfirmDialog
+      v-if="showRemoveConfirm"
+      title="移除 Worker"
+      :message="removeMessage"
+      :confirm-text="isRemovable ? '移除' : '强制移除'"
+      danger
+      @confirm="confirmRemove"
+      @cancel="showRemoveConfirm = false"
+    />
+  </Card>
 </template>

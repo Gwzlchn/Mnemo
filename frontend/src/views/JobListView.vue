@@ -3,6 +3,8 @@ import { ref, onMounted, watch } from 'vue'
 import { useJobStore } from '../stores/jobs'
 import JobCard from '../components/job/JobCard.vue'
 import EmptyState from '../components/common/EmptyState.vue'
+import LoadingState from '../components/common/LoadingState.vue'
+import ErrorState from '../components/common/ErrorState.vue'
 
 const jobStore = useJobStore()
 const activeTab = ref('')
@@ -60,13 +62,8 @@ async function loadMore() {
       </button>
     </div>
 
-    <div v-if="jobStore.loading && jobStore.list.length === 0" class="text-sm text-gray-400 py-8 text-center">加载中...</div>
-    <div v-else-if="loadError && jobStore.list.length === 0" class="bg-white border border-gray-200 rounded-xl p-8 flex flex-col items-center text-center">
-      <p class="text-sm text-gray-600">{{ loadError }}</p>
-      <button @click="load" class="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
-        重新加载
-      </button>
-    </div>
+    <LoadingState v-if="jobStore.loading && jobStore.list.length === 0" />
+    <ErrorState v-else-if="loadError && jobStore.list.length === 0" :message="loadError" @retry="load" />
     <div v-else-if="jobStore.list.length === 0">
       <EmptyState />
     </div>

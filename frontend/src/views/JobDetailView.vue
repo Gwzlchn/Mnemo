@@ -6,6 +6,10 @@ import { useJobWs } from '../composables/useJobWs'
 import StepWorkbench from '../components/job/StepWorkbench.vue'
 import StatusBadge from '../components/common/StatusBadge.vue'
 import ConfirmDialog from '../components/common/ConfirmDialog.vue'
+import Card from '../components/common/Card.vue'
+import Badge from '../components/common/Badge.vue'
+import LoadingState from '../components/common/LoadingState.vue'
+import ErrorState from '../components/common/ErrorState.vue'
 import type { JobDetail } from '../types'
 import { CONTENT_TYPE_LABELS } from '../types'
 import { fmtDateTime } from '../utils/datetime'
@@ -112,19 +116,13 @@ async function confirmDelete() {
       返回任务列表
     </button>
 
-    <div v-if="loading" class="text-sm text-gray-400 py-8 text-center">加载中...</div>
+    <LoadingState v-if="loading" />
 
-    <div v-else-if="loadError" class="bg-white border border-gray-200 rounded-xl p-8 flex flex-col items-center text-center">
-      <p class="text-sm text-gray-600">{{ loadError }}</p>
-      <button @click="fetchDetail" class="mt-4 flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
-        <RotateCcw :size="14" />
-        重新加载
-      </button>
-    </div>
+    <ErrorState v-else-if="loadError" :message="loadError" @retry="fetchDetail" />
 
     <template v-else-if="job">
       <!-- Header -->
-      <div class="bg-white border border-gray-200 rounded-xl p-4">
+      <Card>
         <div class="flex items-start gap-3">
           <div class="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
             <component :is="contentIcon" :size="20" class="text-gray-500" />
@@ -133,7 +131,7 @@ async function confirmDelete() {
             <h2 class="text-lg font-bold truncate">{{ job.title || job.job_id }}</h2>
             <div class="flex flex-wrap items-center gap-2 mt-1 text-sm text-gray-500">
               <StatusBadge :status="jobStatus" />
-              <span class="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-xs">{{ CONTENT_TYPE_LABELS[job.content_type] || job.content_type }}</span>
+              <Badge>{{ CONTENT_TYPE_LABELS[job.content_type] || job.content_type }}</Badge>
               <span v-if="job.source">{{ job.source }}</span>
               <span v-if="job.domain !== 'general'">{{ job.domain }}</span>
             </div>
@@ -155,7 +153,7 @@ async function confirmDelete() {
             </div>
           </div>
         </div>
-      </div>
+      </Card>
 
       <!-- WS connection indicator -->
       <div v-if="jobStatus === 'processing'" class="flex items-center gap-2 text-xs text-gray-500">
@@ -185,7 +183,7 @@ async function confirmDelete() {
 
         <!-- Rerun from step -->
         <div v-if="jobStatus === 'done' || jobStatus === 'failed'" class="flex items-center gap-2">
-          <select v-model="rerunStep" class="px-2 py-2 border border-gray-300 rounded-lg text-sm bg-white">
+          <select v-model="rerunStep" class="px-2 py-2 border border-gray-300 rounded-lg text-sm bg-white max-w-[180px] truncate">
             <option value="">从步骤重跑...</option>
             <option v-for="s in steps" :key="s.name" :value="s.name">{{ s.name }}</option>
           </select>

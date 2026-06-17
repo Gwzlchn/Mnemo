@@ -4,6 +4,10 @@ import { useRoute, useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
 import MarkdownViewer from '../components/notes/MarkdownViewer.vue'
 import ChapterNav from '../components/notes/ChapterNav.vue'
+import Card from '../components/common/Card.vue'
+import LoadingState from '../components/common/LoadingState.vue'
+import ErrorState from '../components/common/ErrorState.vue'
+import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import { ArrowLeft, BookOpen, FileText, RefreshCw, Star, ChevronDown } from 'lucide-vue-next'
 
 const route = useRoute()
@@ -136,10 +140,18 @@ function verLabel(v: Version): string {
   return m ? `${m[1]}/${m[2]}/${m[3]} ${m[4]}:${m[5]}` : v.version
 }
 
-async function rerunWith(provider: Provider) {
+// 选 provider 后弹确认框,确认后再真正发起重跑。
+const pendingProvider = ref<Provider | null>(null)
+function rerunWith(provider: Provider) {
   if (!provider.available || rerunning.value) return
-  if (!confirm(`用「${provider.name}」重新生成智能笔记 + 评分?\n旧版本会保留,生成后可切换对比。`)) return
   showRerun.value = false
+  pendingProvider.value = provider
+}
+
+async function confirmRerun() {
+  const provider = pendingProvider.value
+  pendingProvider.value = null
+  if (!provider) return
   rerunning.value = true
   try {
     await api.post(`/api/jobs/${jobId.value}/rerun-smart`, { provider: provider.name })
@@ -232,7 +244,7 @@ const showChapters = ref(false)
 
     <!-- 版本条(仅智能版) -->
     <div v-if="!isMechanical" class="flex items-center flex-wrap gap-2 mb-3">
-      <span class="text-xs text-gray-400">版本:</span>
+      <span class="text-xs text-gray-500">版本:</span>
       <button
         v-if="versions.length === 0"
         class="px-2 py-1 text-xs rounded-md bg-blue-100 text-blue-700 font-medium cursor-default"
@@ -241,11 +253,11 @@ const showChapters = ref(false)
         v-for="v in versions"
         :key="v.file"
         @click="selectVersion(v.file)"
-        class="px-2 py-1 text-xs rounded-md transition-colors flex items-center gap-1"
+        class="px-2 py-1 text-xs rounded-md transition-colors flex items-center gap-1 max-w-[220px]"
         :class="(activeFile ?? versions[0]?.file) === v.file ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-500 hover:bg-gray-100 border border-gray-200'"
       >
-        {{ v.provider }}/{{ v.model }} · {{ verLabel(v) }}
-        <span v-if="v.overall != null" class="flex items-center gap-0.5 text-amber-600">
+        <span class="truncate">{{ v.provider }}/{{ v.model }} · {{ verLabel(v) }}</span>
+        <span v-if="v.overall != null" class="flex items-center gap-0.5 text-amber-600 flex-shrink-0">
           <Star :size="11" />{{ v.overall }}
         </span>
       </button>
@@ -267,24 +279,24 @@ const showChapters = ref(false)
             :key="p.name"
             @click="rerunWith(p)"
             :disabled="!p.available"
-            class="w-full text-left px-3 py-2 text-xs flex items-center justify-between transition-colors"
+            class="w-full text-left px-3 py-2 text-xs flex items-center justify-between gap-2 transition-colors"
             :class="p.available ? 'hover:bg-gray-50 text-gray-700' : 'text-gray-300 cursor-not-allowed'"
           >
-            <span>{{ p.name }} <span class="text-gray-400">({{ p.label }})</span></span>
-            <span v-if="!p.available" class="text-[10px] text-gray-300">未配置 key</span>
+            <span class="truncate">{{ p.name }} <span class="text-gray-500">({{ p.label }})</span></span>
+            <span v-if="!p.available" class="text-xs text-gray-300 flex-shrink-0">未配置 key</span>
           </button>
         </div>
       </div>
     </div>
 
     <!-- 质量评审面板(仅智能版,有 review 时) -->
-    <div v-if="!isMechanical && review" class="mb-4 bg-white border border-gray-200 rounded-xl p-4">
+    <Card v-if="!isMechanical && review" class="mb-4">
       <div class="flex items-center flex-wrap gap-x-3 gap-y-1 mb-2">
         <span class="text-sm font-semibold text-gray-700">质量评审</span>
         <span v-if="review.overall != null" class="flex items-center gap-0.5 text-amber-600 font-medium">
           <Star :size="14" />{{ review.overall }}/5
         </span>
-        <span class="text-xs text-gray-400">
+        <span class="text-xs text-gray-500">
           {{ review.provider }}<template v-if="review.model">/{{ review.model }}</template>
           <template v-if="review.generated_at"> · {{ review.generated_at }}</template>
         </span>
@@ -293,16 +305,16 @@ const showChapters = ref(false)
         <span v-for="d in reviewDims" :key="d.label">{{ d.label }} <span class="font-medium text-gray-800">{{ d.score }}</span></span>
       </div>
       <div v-if="review.missing_concepts?.length" class="text-xs text-gray-600 mb-1">
-        <span class="text-gray-400">缺失概念:</span> {{ review.missing_concepts.join(' / ') }}
+        <span class="text-gray-500">缺失概念:</span> {{ review.missing_concepts.join(' / ') }}
       </div>
       <div v-if="review.top3_improvements?.length" class="text-xs text-gray-600">
-        <span class="text-gray-400">改进建议:</span>
+        <span class="text-gray-500">改进建议:</span>
         <ol class="list-decimal ml-5 mt-0.5 space-y-0.5">
           <li v-for="(t, i) in review.top3_improvements" :key="i">{{ t }}</li>
         </ol>
       </div>
       <div v-if="keyTerms.length" class="text-xs text-gray-600 mt-2">
-        <span class="text-gray-400">已讲清的概念(可采纳):</span>
+        <span class="text-gray-500">已讲清的概念(可采纳):</span>
         <ul class="mt-1 space-y-1">
           <li v-for="kt in keyTerms" :key="kt.term" class="flex items-start gap-2">
             <span class="flex-1 min-w-0">
@@ -312,7 +324,7 @@ const showChapters = ref(false)
             <button
               @click="acceptKeyTerm(kt.term, kt.definition)"
               :disabled="terms.includes(kt.term)"
-              class="flex-shrink-0 px-2 py-0.5 text-[11px] rounded-md transition-colors"
+              class="flex-shrink-0 px-2 py-0.5 text-xs rounded-md transition-colors"
               :class="terms.includes(kt.term)
                 ? 'bg-green-50 text-green-600 cursor-default'
                 : 'border border-gray-200 text-gray-600 hover:bg-gray-50'"
@@ -320,7 +332,7 @@ const showChapters = ref(false)
           </li>
         </ul>
       </div>
-    </div>
+    </Card>
 
     <!-- Mobile chapter dropdown -->
     <div v-if="headings.length > 0" class="lg:hidden mb-3">
@@ -329,25 +341,34 @@ const showChapters = ref(false)
         class="w-full px-3 py-2 text-sm text-left bg-white border border-gray-200 rounded-lg flex items-center justify-between"
       >
         <span class="text-gray-600">章节导航 ({{ headings.length }})</span>
-        <span class="text-gray-400 text-xs">{{ showChapters ? '收起' : '展开' }}</span>
+        <span class="text-gray-500 text-xs">{{ showChapters ? '收起' : '展开' }}</span>
       </button>
       <div v-if="showChapters" class="mt-1 bg-white border border-gray-200 rounded-lg p-3 max-h-64 overflow-y-auto">
         <ChapterNav :headings="headings" />
       </div>
     </div>
 
-    <div v-if="loading" class="text-sm text-gray-400 py-8 text-center">加载中...</div>
-    <div v-else-if="error" class="text-sm text-red-600 py-8 text-center">{{ error }}</div>
+    <LoadingState v-if="loading" />
+    <ErrorState v-else-if="error" :message="error" />
 
     <div v-else class="flex gap-6">
-      <div class="flex-1 min-w-0 bg-white border border-gray-200 rounded-xl p-4 md:p-6">
+      <Card padding="p-4 md:p-6" class="flex-1 min-w-0">
         <MarkdownViewer :content="content" :job-id="jobId" :terms="terms" :domain="domain" @headings="onHeadings" />
-      </div>
+      </Card>
       <aside class="hidden lg:block w-56 flex-shrink-0">
         <div class="sticky top-6">
           <ChapterNav :headings="headings" />
         </div>
       </aside>
     </div>
+
+    <ConfirmDialog
+      v-if="pendingProvider"
+      title="重新生成智能笔记"
+      :message="`用「${pendingProvider.name}」重新生成智能笔记 + 评分?旧版本会保留,生成后可切换对比。`"
+      confirm-text="重跑"
+      @confirm="confirmRerun"
+      @cancel="pendingProvider = null"
+    />
   </div>
 </template>

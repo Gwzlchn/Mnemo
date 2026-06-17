@@ -4,6 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDomainStore } from '../stores/domains'
 import JobCard from '../components/job/JobCard.vue'
 import EmptyState from '../components/common/EmptyState.vue'
+import Card from '../components/common/Card.vue'
+import LoadingState from '../components/common/LoadingState.vue'
+import ErrorState from '../components/common/ErrorState.vue'
 import type { JobSummary } from '../types'
 import { ArrowLeft, Hash, RefreshCw } from 'lucide-vue-next'
 
@@ -87,31 +90,23 @@ watch(() => [route.params.domain, route.params.topic], load)
     </div>
 
     <!-- 主题元信息：所属 domain(可点回工作台) + 内容数 -->
-    <div class="bg-white border border-gray-200 rounded-xl p-4">
+    <Card>
       <div class="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
         <span>主题</span>
         <span class="text-gray-300">·</span>
-        <button @click="back" class="text-blue-600 hover:underline">{{ domain }}</button>
+        <button @click="back" class="text-blue-600 hover:underline truncate max-w-[12rem]">{{ domain }}</button>
         <span class="text-gray-300">·</span>
         <span>{{ total }} 篇内容</span>
       </div>
-    </div>
+    </Card>
 
     <!-- 错误态 -->
-    <div v-if="errored" class="bg-white border border-gray-200 rounded-xl p-6 text-center">
-      <p class="text-sm text-gray-500 mb-3">加载主题内容失败</p>
-      <button
-        @click="load()"
-        class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
-      >
-        重试
-      </button>
-    </div>
+    <Card v-if="errored" padding="p-6">
+      <ErrorState message="加载主题内容失败" @retry="load()" />
+    </Card>
 
     <!-- 加载态 -->
-    <div v-else-if="loading && jobs.length === 0" class="text-sm text-gray-400 py-8 text-center">
-      加载中...
-    </div>
+    <LoadingState v-else-if="loading && jobs.length === 0" />
 
     <!-- 空态：主题靠抽取自动聚合，不在此直接投递 -->
     <EmptyState v-else-if="jobs.length === 0" message="这个主题还没有内容(内容被解析、抽到该概念时自动聚合)" />

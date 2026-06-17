@@ -4,6 +4,10 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDomainStore } from '../stores/domains'
 import { useApi } from '../composables/useApi'
 import EmptyState from '../components/common/EmptyState.vue'
+import Card from '../components/common/Card.vue'
+import LoadingState from '../components/common/LoadingState.vue'
+import Badge from '../components/common/Badge.vue'
+import PrimaryButton from '../components/common/PrimaryButton.vue'
 import type { TermOccurrence, GlossaryTerm } from '../types'
 import { ArrowLeft, ChevronRight, Network, Link2, FileBox, Bookmark } from 'lucide-vue-next'
 
@@ -101,20 +105,18 @@ watch(() => [route.params.domain, route.params.term], load)
       <div class="flex items-center gap-1 text-sm text-gray-500 min-w-0">
         <button @click="goBack" class="hover:text-gray-700 truncate">{{ domain }}</button>
         <ChevronRight :size="14" class="flex-shrink-0" />
-        <span class="text-gray-400">术语</span>
+        <span>术语</span>
       </div>
     </div>
 
     <!-- 加载态 -->
-    <div v-if="loading" class="text-sm text-gray-400 py-12 text-center">加载中...</div>
+    <LoadingState v-if="loading" />
 
     <!-- 404：概念不存在 / 已删除 -->
     <div v-else-if="notFound" class="space-y-4">
       <EmptyState message="概念不存在或已删除" />
       <div class="text-center">
-        <button @click="goBack" class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-          返回领域工作台
-        </button>
+        <PrimaryButton @click="goBack">返回领域工作台</PrimaryButton>
       </div>
     </div>
 
@@ -122,15 +124,13 @@ watch(() => [route.params.domain, route.params.term], load)
     <div v-else-if="errored" class="space-y-4">
       <EmptyState message="加载失败" />
       <div class="text-center">
-        <button @click="load" class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-          重试
-        </button>
+        <PrimaryButton @click="load">重试</PrimaryButton>
       </div>
     </div>
 
     <template v-else-if="data">
       <!-- 概念名 + domain + 状态 + 主题徽章/切换 -->
-      <div class="bg-white border border-gray-200 rounded-xl p-5">
+      <Card padding="p-5">
         <div class="flex items-start gap-3 flex-wrap">
           <h1 class="text-2xl font-bold text-gray-800 break-all min-w-0">{{ data.term }}</h1>
           <span
@@ -139,11 +139,11 @@ watch(() => [route.params.domain, route.params.term], load)
           >
             <Bookmark :size="12" class="fill-indigo-500 text-indigo-500" />主题
           </span>
-          <span
+          <Badge
             v-if="data.status"
-            class="mt-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-            :class="data.status === 'suggested' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'"
-          >{{ statusLabel }}</span>
+            :variant="data.status === 'suggested' ? 'warn' : 'success'"
+            class="mt-1.5"
+          >{{ statusLabel }}</Badge>
           <button
             @click="toggleTopic"
             :disabled="toggling"
@@ -158,29 +158,29 @@ watch(() => [route.params.domain, route.params.term], load)
           </button>
         </div>
         <div class="mt-2 flex items-center gap-3 text-xs text-gray-500 flex-wrap">
-          <span>
-            domain：<button @click="goBack" class="text-blue-600 hover:underline">{{ data.domain }}</button>
+          <span class="inline-flex items-center gap-1 min-w-0">
+            domain：<button @click="goBack" class="text-blue-600 hover:underline truncate max-w-[14rem]">{{ data.domain }}</button>
           </span>
           <span>{{ occurrences.length }} 处出现</span>
           <span>{{ related.length }} 个关联</span>
         </div>
-      </div>
+      </Card>
 
       <!-- 定义（可空显示占位） -->
-      <section class="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
+      <Card padding="p-4 space-y-2">
         <h2 class="text-sm font-semibold text-gray-700">定义</h2>
         <p v-if="data.definition" class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap break-words">
           {{ data.definition }}
         </p>
-        <p v-else class="text-sm text-gray-400">暂无定义</p>
-      </section>
+        <p v-else class="text-sm text-gray-500">暂无定义</p>
+      </Card>
 
       <!-- 关联概念 related（仅同域，点进同域术语详情） -->
-      <section class="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+      <Card padding="p-4 space-y-3">
         <h2 class="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
           <Network :size="15" class="text-gray-400" />
           关联概念
-          <span class="text-xs text-gray-400 font-normal">（仅同域）</span>
+          <span class="text-xs text-gray-500 font-normal">（仅同域）</span>
         </h2>
         <div v-if="related.length > 0" class="flex flex-wrap gap-2">
           <button
@@ -193,15 +193,15 @@ watch(() => [route.params.domain, route.params.term], load)
             <span class="break-all">{{ r }}</span>
           </button>
         </div>
-        <p v-else class="text-sm text-gray-400">暂无关联概念</p>
-      </section>
+        <p v-else class="text-sm text-gray-500">暂无关联概念</p>
+      </Card>
 
       <!-- 出现处 occurrences（类型化：内容 + 类型 + 位置，链接到 /jobs/:job_id） -->
-      <section class="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+      <Card padding="p-4 space-y-3">
         <h2 class="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
           <FileBox :size="15" class="text-gray-400" />
           出现处
-          <span class="text-xs text-gray-400 font-normal">（{{ occurrences.length }} 处）</span>
+          <span class="text-xs text-gray-500 font-normal">（{{ occurrences.length }} 处）</span>
         </h2>
         <div v-if="occurrences.length > 0" class="space-y-2">
           <button
@@ -212,13 +212,13 @@ watch(() => [route.params.domain, route.params.term], load)
           >
             <FileBox :size="15" class="text-gray-400 flex-shrink-0" />
             <span class="text-sm text-gray-700 font-mono break-all min-w-0 flex-1">{{ o.job_id }}</span>
-            <span v-if="o.content_type" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 flex-shrink-0">{{ o.content_type }}</span>
-            <span v-if="o.location" class="text-xs text-gray-400 flex-shrink-0">{{ o.location }}</span>
+            <Badge v-if="o.content_type" class="flex-shrink-0">{{ o.content_type }}</Badge>
+            <span v-if="o.location" class="text-xs text-gray-500 flex-shrink-0 truncate max-w-[8rem]">{{ o.location }}</span>
             <ChevronRight :size="15" class="text-gray-300 flex-shrink-0" />
           </button>
         </div>
         <EmptyState v-else message="还没有内容提到这个概念" />
-      </section>
+      </Card>
     </template>
   </div>
 </template>

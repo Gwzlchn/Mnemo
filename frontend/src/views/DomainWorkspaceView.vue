@@ -4,6 +4,10 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDomainStore } from '../stores/domains'
 import JobCard from '../components/job/JobCard.vue'
 import EmptyState from '../components/common/EmptyState.vue'
+import Card from '../components/common/Card.vue'
+import LoadingState from '../components/common/LoadingState.vue'
+import ErrorState from '../components/common/ErrorState.vue'
+import Badge from '../components/common/Badge.vue'
 import { fmtDateTime } from '../utils/datetime'
 import type { JobSummary, TopicConcept } from '../types'
 import {
@@ -138,18 +142,12 @@ function goTerm(term: string) {
     </div>
 
     <!-- 加载态 -->
-    <div v-if="loading && !data" class="text-sm text-gray-400 py-12 text-center">加载中...</div>
+    <LoadingState v-if="loading && !data" />
 
     <!-- 错误态 -->
-    <div v-else-if="error && !data" class="bg-white border border-gray-200 rounded-xl p-8 text-center">
-      <p class="text-sm text-red-600">{{ error }}</p>
-      <button
-        @click="load()"
-        class="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
-      >
-        <RefreshCw :size="14" />重试
-      </button>
-    </div>
+    <Card v-else-if="error && !data" padding="p-8">
+      <ErrorState :message="error" @retry="load()" />
+    </Card>
 
     <!-- 空领域态 -->
     <div v-else-if="data && stats && stats.job_count === 0 && stats.collection_count === 0">
@@ -166,7 +164,7 @@ function goTerm(term: string) {
         </div>
 
         <!-- 集合 -->
-        <div class="bg-white border border-gray-200 rounded-xl p-4">
+        <Card>
           <h3 class="text-sm font-semibold text-gray-700 mb-3">集合</h3>
           <div v-if="data.collections.length === 0">
             <EmptyState message="暂无集合" />
@@ -186,23 +184,23 @@ function goTerm(term: string) {
                 <Library v-else :size="16" class="text-gray-500" />
               </div>
               <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 min-w-0">
                   <span class="text-sm font-medium truncate">{{ c.name }}</span>
-                  <span
+                  <Badge
                     v-if="c.is_subscription"
-                    class="text-[10px] px-1.5 py-0.5 rounded flex-shrink-0"
-                    :class="c.sync_enabled ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-400'"
-                  >{{ c.sync_enabled ? '订阅' : '已暂停' }}</span>
+                    :variant="c.sync_enabled ? 'info' : 'default'"
+                    class="flex-shrink-0"
+                  >{{ c.sync_enabled ? '订阅' : '已暂停' }}</Badge>
                 </div>
-                <div class="text-xs text-gray-400">{{ c.job_count }} 篇</div>
+                <div class="text-xs text-gray-500">{{ c.job_count }} 篇</div>
               </div>
               <ChevronRight :size="16" class="text-gray-300 flex-shrink-0" />
             </button>
           </div>
-        </div>
+        </Card>
 
         <!-- 主题 -->
-        <div class="bg-white border border-gray-200 rounded-xl p-4">
+        <Card>
           <h3 class="text-sm font-semibold text-gray-700 mb-3">主题</h3>
           <div v-if="data.topics.length === 0">
             <EmptyState message="暂无可浏览主题" />
@@ -215,10 +213,10 @@ function goTerm(term: string) {
               class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 text-xs hover:bg-gray-200 transition-colors"
             >
               <span>#{{ t.topic }}</span>
-              <span class="text-gray-400">{{ t.count }}</span>
+              <span class="text-gray-500">{{ t.count }}</span>
             </button>
           </div>
-        </div>
+        </Card>
 
         <!-- 最近内容 -->
         <div>
@@ -240,10 +238,10 @@ function goTerm(term: string) {
         </div>
 
         <!-- 概念 -->
-        <div class="bg-white border border-gray-200 rounded-xl p-4">
+        <Card>
           <div class="flex items-center justify-between mb-3">
             <h3 class="text-sm font-semibold text-gray-700">概念</h3>
-            <span class="text-xs text-gray-400">按佐证 ★</span>
+            <span class="text-xs text-gray-500">按佐证 ★</span>
           </div>
           <div v-if="sortedConcepts.length === 0">
             <EmptyState message="暂无概念" />
@@ -257,7 +255,7 @@ function goTerm(term: string) {
             >
               <div class="flex-1 min-w-0">
                 <div class="text-sm font-medium truncate">{{ c.term }}</div>
-                <div v-if="c.definition" class="text-xs text-gray-400 truncate">{{ c.definition }}</div>
+                <div v-if="c.definition" class="text-xs text-gray-500 truncate">{{ c.definition }}</div>
               </div>
               <div class="flex items-center gap-0.5 flex-shrink-0" :title="`佐证强度 ${strength(c.source_count)}/5`">
                 <Star
@@ -267,13 +265,13 @@ function goTerm(term: string) {
                   :class="i <= strength(c.source_count) ? 'text-amber-400 fill-amber-400' : 'text-gray-200'"
                 />
               </div>
-              <span class="text-xs text-gray-400 flex-shrink-0 w-8 text-right">{{ c.source_count }} 源</span>
+              <span class="text-xs text-gray-500 flex-shrink-0 w-8 text-right">{{ c.source_count }} 源</span>
             </button>
           </div>
-        </div>
+        </Card>
 
         <!-- 概念主题（域内 is_topic 概念，点进术语详情） -->
-        <div class="bg-white border border-gray-200 rounded-xl p-4">
+        <Card>
           <div class="flex items-center gap-1.5 mb-3">
             <Bookmark :size="14" class="text-indigo-400" />
             <h3 class="text-sm font-semibold text-gray-700">概念主题</h3>
@@ -291,12 +289,12 @@ function goTerm(term: string) {
               <Bookmark :size="14" class="text-indigo-400 fill-indigo-100 flex-shrink-0" />
               <div class="flex-1 min-w-0">
                 <div class="text-sm font-medium truncate">{{ tc.term }}</div>
-                <div v-if="tc.definition" class="text-xs text-gray-400 truncate">{{ tc.definition }}</div>
+                <div v-if="tc.definition" class="text-xs text-gray-500 truncate">{{ tc.definition }}</div>
               </div>
-              <span class="text-xs text-gray-400 flex-shrink-0 w-12 text-right">{{ tc.occurrence_count }} 处</span>
+              <span class="text-xs text-gray-500 flex-shrink-0 w-12 text-right">{{ tc.occurrence_count }} 处</span>
             </button>
           </div>
-        </div>
+        </Card>
 
         <!-- 待确认概念提示 -->
         <div

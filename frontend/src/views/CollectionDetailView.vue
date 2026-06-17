@@ -6,6 +6,9 @@ import { useJobStore } from '../stores/jobs'
 import { useApi } from '../composables/useApi'
 import JobCard from '../components/job/JobCard.vue'
 import EmptyState from '../components/common/EmptyState.vue'
+import Card from '../components/common/Card.vue'
+import Badge from '../components/common/Badge.vue'
+import LoadingState from '../components/common/LoadingState.vue'
 import { fmtDateTime } from '../utils/datetime'
 import type { Collection, JobSummary } from '../types'
 import { ArrowLeft, Library, RefreshCw, Send, Rss, ExternalLink } from 'lucide-vue-next'
@@ -126,47 +129,43 @@ onMounted(load)  // 进入集合详情页即加载集合信息 + 名下 job 列�
 
     <template v-else-if="collection">
       <!-- 集合元信息 -->
-      <div class="bg-white border border-gray-200 rounded-xl p-4">
+      <Card>
         <div class="flex items-center gap-2 text-xs text-gray-500 flex-wrap mb-1">
-          <span class="font-mono text-gray-400">{{ collection.id }}</span>
+          <span class="font-mono text-gray-500">{{ collection.id }}</span>
           <span v-if="collection.domain && collection.domain !== 'general'">{{ collection.domain }}</span>
-          <span
-            v-for="t in collection.tags"
-            :key="t"
-            class="px-1.5 py-0.5 bg-gray-100 rounded text-gray-600"
-          >{{ t }}</span>
+          <Badge v-for="t in collection.tags" :key="t">{{ t }}</Badge>
           <span>{{ collection.job_count }} 篇</span>
         </div>
         <p v-if="collection.description" class="text-sm text-gray-600">{{ collection.description }}</p>
-      </div>
+      </Card>
 
       <!-- 订阅源（仅订阅集合）：UP 主信息 + 自动追更开关 + 立即同步 -->
-      <div v-if="collection.subscription" class="bg-white border border-gray-200 rounded-xl p-4">
+      <Card v-if="collection.subscription">
         <div class="flex items-center gap-2 mb-3">
           <Rss :size="16" class="text-blue-500" />
           <h3 class="text-sm font-semibold text-gray-700">订阅源</h3>
-          <span class="text-[10px] px-1.5 py-0.5 rounded" :class="collection.subscription.enabled ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'">
+          <Badge :variant="collection.subscription.enabled ? 'success' : 'default'">
             {{ collection.subscription.enabled ? '自动追更中' : '已暂停自动追更' }}
-          </span>
+          </Badge>
         </div>
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-y-2 gap-x-4 text-xs">
           <div>
-            <div class="text-gray-400 mb-0.5">来源</div>
+            <div class="text-gray-500 mb-0.5">来源</div>
             <div class="text-gray-700">B站 UP 主</div>
           </div>
-          <div>
-            <div class="text-gray-400 mb-0.5">UP 主页</div>
+          <div class="min-w-0">
+            <div class="text-gray-500 mb-0.5">UP 主页</div>
             <a :href="upHomeUrl(collection.subscription.source_id)" target="_blank" rel="noopener"
-               class="text-blue-600 hover:underline inline-flex items-center gap-1">
-              {{ collection.subscription.source_id }}<ExternalLink :size="11" />
+               class="text-blue-600 hover:underline inline-flex items-center gap-1 max-w-full">
+              <span class="truncate">{{ collection.subscription.source_id }}</span><ExternalLink :size="11" class="flex-shrink-0" />
             </a>
           </div>
           <div>
-            <div class="text-gray-400 mb-0.5">已入库</div>
+            <div class="text-gray-500 mb-0.5">已入库</div>
             <div class="text-gray-700">{{ collection.job_count }} 个视频</div>
           </div>
           <div>
-            <div class="text-gray-400 mb-0.5">上次同步</div>
+            <div class="text-gray-500 mb-0.5">上次同步</div>
             <div class="text-gray-700">{{ collection.subscription.last_synced_at ? fmtDateTime(collection.subscription.last_synced_at) : '从未' }}</div>
           </div>
         </div>
@@ -186,10 +185,10 @@ onMounted(load)  // 进入集合详情页即加载集合信息 + 名下 job 列�
             自动同步
           </button>
         </div>
-      </div>
+      </Card>
 
       <!-- 投递到此集合 -->
-      <div class="bg-white border border-gray-200 rounded-xl p-4">
+      <Card>
         <h3 class="text-sm font-semibold text-gray-700 mb-3">投递到此集合</h3>
         <form @submit.prevent="submit" class="flex gap-2">
           <input
@@ -208,10 +207,10 @@ onMounted(load)  // 进入集合详情页即加载集合信息 + 名下 job 列�
           </button>
         </form>
         <p v-if="submitError" class="text-sm text-red-600 mt-2">{{ submitError }}</p>
-      </div>
+      </Card>
 
       <!-- 集合内 job 列表 -->
-      <div v-if="loading && jobs.length === 0" class="text-sm text-gray-400 py-8 text-center">加载中...</div>
+      <LoadingState v-if="loading && jobs.length === 0" />
       <div v-else-if="jobs.length === 0">
         <EmptyState message="此集合暂无任务" />
       </div>

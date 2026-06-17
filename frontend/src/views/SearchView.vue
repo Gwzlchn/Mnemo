@@ -3,6 +3,10 @@ import { ref, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { Search } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
+import Card from '../components/common/Card.vue'
+import Badge from '../components/common/Badge.vue'
+import LoadingState from '../components/common/LoadingState.vue'
+import EmptyState from '../components/common/EmptyState.vue'
 import type { SearchResponse, SearchResultItem } from '../types'
 
 const api = useApi()
@@ -123,36 +127,32 @@ function openNote(item: SearchResultItem) {
     </div>
 
     <!-- 状态/结果 -->
-    <p v-if="tooShort" class="text-sm text-gray-400 py-2">请至少输入 3 个字符。</p>
-    <div v-else-if="loading" class="text-sm text-gray-400 py-8 text-center">搜索中...</div>
-    <div v-else-if="searched && result.items.length === 0" class="text-sm text-gray-400 py-12 text-center">
-      未找到匹配的笔记。
-    </div>
-    <div v-else-if="!searched" class="text-sm text-gray-400 py-12 text-center">
-      输入关键词开始搜索。
-    </div>
+    <p v-if="tooShort" class="text-sm text-gray-500 py-2">请至少输入 3 个字符。</p>
+    <LoadingState v-else-if="loading" text="搜索中…" />
+    <EmptyState v-else-if="searched && result.items.length === 0" message="未找到匹配的笔记。" />
+    <EmptyState v-else-if="!searched" message="输入关键词开始搜索。" />
 
     <div v-else class="space-y-2">
-      <p class="text-xs text-gray-400">共 {{ result.total }} 条结果</p>
-      <div
+      <p class="text-xs text-gray-500">共 {{ result.total }} 条结果</p>
+      <Card
         v-for="item in result.items"
         :key="`${item.job_id}-${item.note_type}`"
         @click="openNote(item)"
-        class="bg-white border border-gray-200 rounded-xl p-4 cursor-pointer hover:shadow-sm transition-shadow"
+        class="cursor-pointer hover:shadow-sm transition-shadow"
       >
         <div class="flex items-center gap-2 mb-1">
           <h4 class="text-sm font-medium truncate flex-1">{{ item.title || item.job_id }}</h4>
-          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+          <Badge variant="info">
             {{ typeLabels[item.note_type] || item.note_type }}
-          </span>
+          </Badge>
         </div>
         <!-- snippet 经 safeSnippet 转义，仅保留 <mark> 高亮，杜绝注入。 -->
         <p class="text-sm text-gray-600 search-snippet" v-html="safeSnippet(item.snippet)"></p>
-        <div class="flex items-center gap-2 mt-2 text-xs text-gray-400">
+        <div class="flex items-center gap-2 mt-2 text-xs text-gray-500">
           <span v-if="item.content_type">{{ contentTypeLabels[item.content_type] || item.content_type }}</span>
           <span v-if="item.domain && item.domain !== 'general'">{{ item.domain }}</span>
         </div>
-      </div>
+      </Card>
     </div>
   </div>
 </template>

@@ -7,6 +7,10 @@ import { useApi } from '../composables/useApi'
 import JobSubmitForm from '../components/job/JobSubmitForm.vue'
 import JobCard from '../components/job/JobCard.vue'
 import EmptyState from '../components/common/EmptyState.vue'
+import Card from '../components/common/Card.vue'
+import LoadingState from '../components/common/LoadingState.vue'
+import ErrorState from '../components/common/ErrorState.vue'
+import PrimaryButton from '../components/common/PrimaryButton.vue'
 import { fmtDateTime } from '../utils/datetime'
 import type { DomainOverview, JobSummary, JobListResponse } from '../types'
 import {
@@ -18,8 +22,7 @@ import {
   FileText,
   Lightbulb,
   Rss,
-  RefreshCw,
-  AlertCircle,
+  Inbox,
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -115,68 +118,55 @@ onMounted(() => {
     </div>
 
     <!-- 快速投递（收起式）：容器内嵌 JobSubmitForm（其根带 data-submit-form） -->
-    <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+    <Card padding="overflow-hidden">
       <button
         @click="submitOpen = !submitOpen"
         class="w-full flex items-center gap-2 px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
       >
         <span>快速投递</span>
-        <span class="text-xs font-normal text-gray-400">粘贴 URL / 上传文件，自动归入领域</span>
-        <component :is="submitOpen ? ChevronDown : ChevronRight" :size="16" class="ml-auto text-gray-400" />
+        <span class="text-xs font-normal text-gray-500">粘贴 URL / 上传文件，自动归入领域</span>
+        <component :is="submitOpen ? ChevronDown : ChevronRight" :size="16" class="ml-auto text-gray-500" />
       </button>
       <div v-show="submitOpen" class="border-t border-gray-100">
         <!-- JobSubmitForm 根元素自带 data-submit-form，底部导航「投递」按钮以此定位 -->
         <JobSubmitForm />
       </div>
-    </div>
+    </Card>
 
     <!-- 领域网格 -->
     <section>
       <!-- 加载骨架 -->
       <div v-if="loading && domains.length === 0" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        <div
+        <Card
           v-for="i in 3"
           :key="i"
-          class="bg-white border border-gray-200 rounded-xl p-4 animate-pulse space-y-3"
+          padding="p-4 animate-pulse space-y-3"
         >
           <div class="h-4 w-24 bg-gray-100 rounded" />
           <div class="h-3 w-32 bg-gray-100 rounded" />
           <div class="h-3 w-20 bg-gray-100 rounded" />
-        </div>
+        </Card>
       </div>
 
       <!-- 错误态 -->
-      <div
-        v-else-if="error"
-        class="bg-white border border-gray-200 rounded-xl p-6 flex flex-col items-center text-center gap-3"
-      >
-        <AlertCircle :size="32" class="text-red-400" />
-        <p class="text-sm text-gray-600">{{ error }}</p>
-        <button
-          @click="loadDomains"
-          class="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
-        >
-          <RefreshCw :size="14" />
-          重试
-        </button>
-      </div>
+      <Card v-else-if="error" padding="p-6">
+        <ErrorState :message="error" @retry="loadDomains" />
+      </Card>
 
       <!-- 领域为空：大空态引导 -->
-      <div
+      <Card
         v-else-if="!hasDomains"
-        class="bg-white border border-gray-200 rounded-xl py-10 px-6 flex flex-col items-center text-center"
+        padding="py-10 px-6 flex flex-col items-center text-center gap-3"
       >
-        <EmptyState message="还没有知识领域" />
-        <p class="-mt-6 text-xs text-gray-400 max-w-sm">
+        <Inbox :size="48" :stroke-width="1" class="text-gray-400" />
+        <p class="text-sm text-gray-500">还没有知识领域</p>
+        <p class="text-xs text-gray-500 max-w-sm">
           从一条视频 / 论文 / 文章开始，系统会自动把内容归入对应领域，逐步沉淀成你的知识体系。
         </p>
-        <button
-          @click="scrollToSubmit"
-          class="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
-        >
+        <PrimaryButton class="mt-1" @click="scrollToSubmit">
           快速投递一条内容
-        </button>
-      </div>
+        </PrimaryButton>
+      </Card>
 
       <!-- 领域卡片网格 -->
       <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -193,7 +183,7 @@ onMounted(() => {
             <h3 class="text-sm font-semibold truncate min-w-0">{{ d.domain }}</h3>
             <span
               v-if="d.subscription_count > 0"
-              class="ml-auto flex items-center gap-0.5 text-[11px] text-blue-600 flex-shrink-0"
+              class="ml-auto flex items-center gap-0.5 text-xs text-blue-600 flex-shrink-0"
               :title="`${d.subscription_count} 个订阅集合在自动追更`"
             >
               <Rss :size="12" />{{ d.subscription_count }}
@@ -215,7 +205,7 @@ onMounted(() => {
             </span>
           </div>
 
-          <div class="flex items-center gap-1.5 text-[11px] text-gray-400">
+          <div class="flex items-center gap-1.5 text-xs text-gray-500">
             <span
               class="w-1.5 h-1.5 rounded-full flex-shrink-0"
               :class="d.last_active_at ? 'bg-green-500' : 'bg-gray-300'"
@@ -230,19 +220,17 @@ onMounted(() => {
     <section v-if="hasDomains">
       <div class="flex items-center gap-2 mb-2">
         <h3 class="text-sm font-semibold text-gray-700">近期内容</h3>
-        <span class="text-xs text-gray-400">跨领域</span>
+        <span class="text-xs text-gray-500">跨领域</span>
         <button
           @click="router.push('/jobs')"
-          class="ml-auto flex items-center gap-1 text-xs text-gray-400 hover:text-gray-700 transition-colors"
+          class="ml-auto flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition-colors"
         >
           全部内容
           <ChevronRight :size="13" />
         </button>
       </div>
 
-      <div v-if="recentLoading && recentJobs.length === 0" class="text-sm text-gray-400 py-4 text-center">
-        加载中...
-      </div>
+      <LoadingState v-if="recentLoading && recentJobs.length === 0" />
       <div v-else-if="recentJobs.length === 0">
         <EmptyState message="还没有内容，去上方投递一条" />
       </div>

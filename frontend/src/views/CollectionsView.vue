@@ -5,6 +5,7 @@ import CollectionCard from '../components/collection/CollectionCard.vue'
 import CollectionEditDialog from '../components/collection/CollectionEditDialog.vue'
 import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import EmptyState from '../components/common/EmptyState.vue'
+import LoadingState from '../components/common/LoadingState.vue'
 import type { Collection } from '../types'
 import { Library, Plus, RefreshCw } from 'lucide-vue-next'
 
@@ -103,9 +104,7 @@ async function onConfirmRemove() {
       </div>
     </div>
 
-    <div v-if="store.loading && store.collections.length === 0" class="text-sm text-gray-400 py-8 text-center">
-      加载中...
-    </div>
+    <LoadingState v-if="store.loading && store.collections.length === 0" />
     <div v-else-if="store.collections.length === 0">
       <EmptyState message="暂无集合，点击右上角新建" />
     </div>
