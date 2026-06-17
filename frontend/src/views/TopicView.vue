@@ -20,10 +20,9 @@ const jobs = ref<JobSummary[]>([])
 const total = ref(0)
 const loading = ref(false)
 const errored = ref(false)
-const notFound = ref(false)
 
 // 后端 job_brief 与 JobSummary 字段一致(job_id/content_type/status/created_at/title/
-// progress_pct/source/domain)，做一次防御性归一，缺字段时给安全默认，保证 JobCard 可渲染。
+// progress_pct/source/domain/collection_id)，做一次防御性归一，缺字段时给安全默认。
 function normalizeJob(raw: any): JobSummary {
   return {
     job_id: String(raw?.job_id ?? ''),
@@ -34,24 +33,21 @@ function normalizeJob(raw: any): JobSummary {
     progress_pct: Number(raw?.progress_pct ?? 0),
     source: raw?.source ?? null,
     domain: String(raw?.domain ?? domain.value),
+    collection_id: raw?.collection_id ?? null,
   }
 }
 
 async function load() {
   loading.value = true
   errored.value = false
-  notFound.value = false
   try {
     const res = await store.topic(domain.value, topic.value)
     const list: any[] = Array.isArray(res?.jobs) ? res.jobs : []
     jobs.value = list.map(normalizeJob)
     total.value = typeof res?.total === 'number' ? res.total : jobs.value.length
-  } catch (e: any) {
-    if (String(e?.message ?? '').includes('404')) {
-      notFound.value = true
-    } else {
-      errored.value = true
-    }
+  } catch {
+    // 主题页对不存在主题也返回空列表(不会 404)，任何异常都按错误态可重试。
+    errored.value = true
   } finally {
     loading.value = false
   }
@@ -111,9 +107,6 @@ watch(() => [route.params.domain, route.params.topic], load)
         重试
       </button>
     </div>
-
-    <!-- 主题不存在 -->
-    <EmptyState v-else-if="notFound" message="主题不存在或已删除" />
 
     <!-- 加载态 -->
     <div v-else-if="loading && jobs.length === 0" class="text-sm text-gray-400 py-8 text-center">

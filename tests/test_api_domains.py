@@ -91,18 +91,8 @@ class TestDomains:
         assert r2["total"] == 1
 
     @pytest.mark.asyncio
-    async def test_jobs_domain_and_uncategorized_filter(self, client, app):
+    async def test_jobs_domain_filter_internal(self, client, app):
+        # /api/jobs 不再暴露 domain/uncategorized 查询(无前端消费方，已移除)；
+        # domain 过滤仅供领域工作台内部用，经 /api/domains/:d 验证(test_workspace)。
         _seed(app.state.db)
-        assert (await client.get("/api/jobs?domain=finance")).json()["total"] == 2
-        assert (await client.get("/api/jobs?uncategorized=true")).json()["total"] == 2  # j2,j3
-
-    @pytest.mark.asyncio
-    async def test_patch_job_categorize(self, client, app):
-        _seed(app.state.db)
-        # j2(finance,未分类) → 归入 col_bili_up_1(finance)
-        r = await client.patch("/api/jobs/j2", json={"collection_id": "col_bili_up_1"})
-        assert r.status_code == 200
-        assert app.state.db.get_job("j2").collection_id == "col_bili_up_1"
-        # 领域不匹配：j3(deep-learning) → finance 集合 → 400
-        r2 = await client.patch("/api/jobs/j3", json={"collection_id": "col_bili_up_1"})
-        assert r2.status_code == 400
+        assert (await client.get("/api/jobs")).json()["total"] == 3

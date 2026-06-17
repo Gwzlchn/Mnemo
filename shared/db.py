@@ -297,7 +297,6 @@ class Database:
         limit: int = 20,
         offset: int = 0,
         domain: str | None = None,
-        uncategorized: bool = False,
     ) -> tuple[int, list[Job]]:
         where_parts: list[str] = []
         params: list = []
@@ -310,8 +309,6 @@ class Database:
         if domain:
             where_parts.append("domain=?")
             params.append(domain)
-        if uncategorized:
-            where_parts.append("collection_id IS NULL")
 
         where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
@@ -929,7 +926,8 @@ class Database:
         ]
 
     def domain_top_terms(self, domain: str, limit: int = 30) -> list[dict]:
-        """领域工作台语义栏：该 domain 已接受术语，按来源数(佐证强度代理)降序。"""
+        """领域工作台语义栏：该 domain 的术语(含候选 suggested，各带 status)，按来源数(佐证强度代理)降序。
+        候选数另由 suggested_count 单独提示；前端可按 status 区分展示。"""
         rows = self._conn.execute(
             "SELECT term, definition, sources, status FROM glossary WHERE domain=?",
             (domain,),

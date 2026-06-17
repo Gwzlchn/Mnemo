@@ -180,11 +180,6 @@ def generate_worker_id(worker_type: str) -> str:
     return f"{worker_type}-{r}"
 
 
-def generate_id(prefix: str) -> str:
-    """通用 ID: {prefix}_{YYYYMMDD}_{6 hex}(订阅等共用)。"""
-    return f"{prefix}_{date.today().strftime('%Y%m%d')}_{secrets.token_hex(3)}"
-
-
 def collection_id_for_subscription(source_type: str, source_id: str) -> str:
     """订阅集合用有含义、稳定的 ID(去重友好,一眼看出来源)。
     B站 UP: col_bili_up_{mid};其余: col_{source_type}_{source_id}(非字母数字归一为 _)。"""

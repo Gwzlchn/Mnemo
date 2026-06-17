@@ -3,7 +3,6 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDomainStore } from '../stores/domains'
 import EmptyState from '../components/common/EmptyState.vue'
-import StatusBadge from '../components/common/StatusBadge.vue'
 import { ArrowLeft, ChevronRight, Network, Link2, FileBox } from 'lucide-vue-next'
 
 // 术语详情 /domains/:domain/terms/:term —— 概念节点的知识页：
@@ -113,16 +112,9 @@ watch(() => [route.params.domain, route.params.term], load)
           <h1 class="text-2xl font-bold text-gray-800 break-all min-w-0">{{ data.term }}</h1>
           <span
             v-if="data.status"
-            class="mt-1.5"
-            :class="data.status === 'suggested' ? '' : ''"
-          >
-            <StatusBadge v-if="data.status === 'processing' || data.status === 'done' || data.status === 'failed'" :status="data.status" />
-            <span
-              v-else
-              class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-              :class="data.status === 'suggested' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'"
-            >{{ statusLabel }}</span>
-          </span>
+            class="mt-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+            :class="data.status === 'suggested' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'"
+          >{{ statusLabel }}</span>
         </div>
         <div class="mt-2 flex items-center gap-3 text-xs text-gray-500 flex-wrap">
           <span>

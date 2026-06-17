@@ -147,6 +147,9 @@ async def update_collection(
     c = await asyncio.to_thread(db.get_collection, collection_id)
     if not c:
         raise HTTPException(404, "collection not found")
+    # sync_enabled 仅订阅集合有意义；手动集合传该字段是无效写入。
+    if req.sync_enabled is not None and not c.is_subscription:
+        raise HTTPException(400, "非订阅集合没有自动追更开关")
     await asyncio.to_thread(
         db.update_collection, collection_id,
         req.name, req.description, req.tags, req.sync_enabled,
@@ -209,6 +212,7 @@ async def list_collection_jobs(
                 job_id=j.id, content_type=j.content_type, status=j.status.value,
                 created_at=j.created_at.isoformat(), title=j.title,
                 progress_pct=j.progress_pct, source=j.source, domain=j.domain,
+                collection_id=j.collection_id,
             )
             for j in jobs
         ],

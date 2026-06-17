@@ -18,6 +18,7 @@ export interface JobSummary {
   progress_pct: number
   source: string | null
   domain: string
+  collection_id: string | null
 }
 
 export interface StepInfo {
