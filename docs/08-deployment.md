@@ -227,7 +227,7 @@ volumes:
 
 ### GPU 机器启动命令
 
-> **audio/播客流水线需要 whisper-capable worker**：`00b_whisper` 步在 `gpu` 池，仅由 `--type gpu` 且装了 `[gpu]` 依赖（faster-whisper）的 worker 执行；该 worker 在无 GPU 的机器上用 CPU（int8）转写，较慢但可用。若集群无此 worker，含音频/无字幕视频的 job 会在约 90s 后 fail-fast 报「无可用 worker」而非永久挂起。默认 `docker compose up` 只起 download/cpu/ai worker，不含 whisper worker。
+> **audio/播客流水线需要 whisper-capable worker**：`02_whisper` 步在 `gpu` 池，仅由 `--type gpu` 且装了 `[gpu]` 依赖（faster-whisper）的 worker 执行；该 worker 在无 GPU 的机器上用 CPU（int8）转写，较慢但可用。若集群无此 worker，含音频/无字幕视频的 job 会在约 90s 后 fail-fast 报「无可用 worker」而非永久挂起。默认 `docker compose up` 只起 download/cpu/ai worker，不含 whisper worker。
 
 现行接入走 worker-gateway 单出站 HTTPS（见 [ADR-0009](adr/0009-worker-gateway-outbound-https.md)）：
 GPU 机只需能出站访问主机 API，不暴露任何入站端口、不直连 Redis/MinIO。

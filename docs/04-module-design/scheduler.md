@@ -3,6 +3,8 @@
 > 职责：监听步骤完成事件，推进 DAG 中的下一步骤到对应资源池队列。
 > 不执行任何步骤，只做"推进"逻辑。
 
+> 现状提示：pipeline 已改为 GitLab-CI 风格（`needs` 推导 DAG、`rules` 声明式跳过、`extends`/`variables`，见 `configs/pipelines.yaml` 与 [docs/03-contracts.md §4.1](../03-contracts.md)）；步骤名为各 pipeline 内独立 `01..N`（如 video: `01_download`/`02_whisper`/.../`11_smart`→`10_smart`/`11_review`）。worker 已 GitLab-runner 化：认领/上报搬到服务端 `/api/runner/jobs/*`，远程 worker 不直连 Redis（见 [worker.md](worker.md) 与 [ADR-0009](../adr/0009-worker-gateway-outbound-https.md)）。本文余下的 `depends_on`/`condition`/Worker 直取 ZSET 等为早期设计示意，核心不变量（DAG / 资源池 / scene↔cpu 互斥 / 优先级 / 孤儿回收 / 幂等）仍成立，仅落地形态以代码为准。
+
 ## 1. 职责边界
 
 | 调度器做 | 调度器不做 |
@@ -163,23 +165,23 @@ Job C 刚开始      → score = 0  (最低)
 ```
 场景：视频无弹幕
 
-05_danmaku condition="has_danmaku" → skipped
-07_mechanical depends_on=[04_ocr, 05_danmaku, 06_punctuate]
-  → 05_danmaku=skipped 视为满足 → 等 04_ocr 和 06_punctuate 即可
+07_danmaku rules:[exists danmaku → on] → 不满足 → skipped
+09_mechanical needs=[06_ocr, 07_danmaku, 08_punctuate]
+  → 07_danmaku=skipped 视为满足 → 等 06_ocr 和 08_punctuate 即可
 ```
 
 跳过后立即触发一次 `on_step_done` 检查，让下游步骤有机会推进。
 
-### 特殊情况：00b_whisper → 06_punctuate
+### 特殊情况：02_whisper → 08_punctuate
 
-06_punctuate 的 DAG 依赖只写了 `00_download`，但 condition 是 `has_subtitle`（检查 srt 是否存在）。
+08_punctuate 的 DAG 依赖只写了 `01_download`，但 `rules` 是 `exists input/*.srt → when: on`（有字幕才标点）。
 
-- 有字幕的视频：00_download 完成后 srt 已存在 → 06 立即就绪
-- 无字幕的视频：00_download 完成后无 srt → 06 的 condition 不满足 → 标记 skipped
-  - 但 00b_whisper 生成了 srt → whisper 完成后调度器重新检查所有 waiting/skipped 步骤
-  - 此时 06 的 condition 满足 → 从 skipped 恢复为 ready → 入队执行
+- 有字幕的视频：01_download 完成后 srt 已存在 → 08 立即就绪
+- 无字幕的视频：01_download 完成后无 srt → 08 的 rules 不满足 → 标记 skipped
+  - 但 02_whisper 生成了 srt → whisper 完成后调度器重新检查所有 waiting/skipped 步骤
+  - 此时 08 的 rules 满足 → 从 skipped 恢复为 ready → 入队执行
 
-`on_step_done` 中不仅检查 waiting 步骤，也重新检查 skipped 步骤的 condition 是否因新产物而满足。
+`on_step_done` 中不仅检查 waiting 步骤，也重新检查 skipped 步骤的 rules 是否因新产物而满足。
 
 ## 5. 资源池管理（PoolManager）
 
@@ -214,7 +216,7 @@ class PoolManager:
 
 ```
 POST /api/jobs/{id}/rerun
-Body: {"from_step": "08_smart"}
+Body: {"from_step": "10_smart"}
 ```
 
 调度器收到后：

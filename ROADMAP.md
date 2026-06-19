@@ -5,8 +5,8 @@
 ## 当前状态
 
 **进度**：M1 核心 MVP · Worker 层 GitLab-runner 化 · M2 知识库 · M6 文章+播客 全部完成
-**能力**：视频 / 论文 / 文章 / 播客四类入库；远程 worker 单出站 HTTPS 接入、真零隧道；笔记按集合组织、FTS5 全文搜索、术语动态积累
-**测试**：单元测试 782 pass（容器内 docker compose test 实跑，CI 绿）
+**能力**：视频 / 论文 / 文章 / 播客四类入库；远程 worker 单出站 HTTPS 接入、真零隧道；笔记按集合组织、FTS5 全文搜索；领域中心式知识库 + 概念图（术语 + 主题，多源类型化 occurrence）；术语库 CRUD/采纳并回流 Profile；订阅集合（B 站 UP 追更）
+**测试**：单元测试 903 pass / 18 skip（容器内 docker compose test 实跑，CI 绿）
 **下一步**：M5 GPU 加速（whisper 已就绪待 GPU 机验证 + PaddleOCR-GPU）/ M2.5 AI-native（RAG + 知识对话，先证伪 FTS5 不足再上向量）
 
 ## 里程碑
@@ -76,9 +76,11 @@
 目标：多视频成为知识库，可搜索、有记忆。
 
 - [x] 集合管理（按主题/课程/系列组织笔记）——CRUD + 删集合解绑保留 job + job_count 维护
-- [x] Profile 动态积累——glossary 表 + scheduler 从 review.missing_concepts 采集候选 → 一键采纳 → 同步进 Profile.terminology（OCR/字幕高频词抽取为后续增强，未做）
+- [x] 订阅集合——集合带 `source_type`/`source_id` 即订阅（B 站 UP 追更）；无独立 subscription 表/实体，统一为集合字段
+- [x] Profile 动态积累——glossary 表（PK `(domain,term)`，typed occurrences）+ scheduler 从 review.key_terms（讲清楚的概念 + 候选定义）采集候选 → 一键采纳 → 回流 Profile.terminology（missing_concepts 仅评审面板，不入库）
+- [x] 领域中心 + 概念图——领域为派生视图（jobs∪collections∪glossary 的 distinct domain ∪ 有 profile 的领域），profile yaml 存展示元数据；术语库 CRUD/accept/标主题（is_topic）；概念时间线/主题聚合
 - [x] SQLite FTS5 全文搜索——notes_fts5 虚表(trigram 中文子串)+ scheduler 侧索引 + /api/search facet/高亮
-- [x] 前端：集合视图 + 搜索 + 术语 + Profile 编辑
+- [x] 前端全站重建（Notion 设计，领域中心式 IA）：领域知识库列表 + 工作台 + 术语/主题页 + 集合视图 + 搜索 + 术语库 CRUD + Profile 编辑
 
 ### M2.5 · AI-native 知识交互（核心拐点）
 
@@ -138,7 +140,7 @@
 
 目标：网页文章/公众号/播客也能入库。
 
-- [x] 网页抓取适配器（source_detect http_article + step_00_download 抓 HTML）
+- [x] 网页抓取适配器（source_detect http_article + step_01_download 抓 HTML）
 - [x] 正文提取（trafilatura，中文友好，纯 Python）
 - [x] 文章笔记模板（article pipeline：parse→sections→smart→review）
 - [x] 播客 / 音频支持（单集音频 URL + 上传；audio pipeline：whisper→分段→smart_podcast→review；RSS 订阅追更留 M4/Agent）

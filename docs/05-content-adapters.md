@@ -1,6 +1,6 @@
 # 05 · 内容适配器
 
-> 不同来源的内容如何接入系统。视频是 M1，论文是 M1，文章是 M5。
+> 不同来源的内容如何接入系统。视频是 M1，论文是 M1，文章 + 音频/播客是 M6。
 
 ## 1. 适配器模型
 
@@ -10,10 +10,10 @@
 graph TD
     A["用户投递 URL / 文件"] --> B["来源识别 → content_type + source"]
     B --> C["适配器（下载+转换）"]
-    C -->|"input/ 目录 + metadata.json<br/>video: source.mp4 + subtitle.srt + danmaku.ass<br/>paper: source.pdf<br/>article: source.html"| D["加载对应 pipeline → 内容特定步骤链"]
+    C -->|"input/ 目录 + metadata.json<br/>video: source.mp4 + *.srt + *.ass<br/>paper: source.pdf<br/>article: source.html<br/>audio: source.mp3 (+ source.mp4 复用 whisper)"| D["加载对应 pipeline → 内容特定步骤链"]
 ```
 
-适配器是 `00_download` 步骤的内部实现——同一个步骤脚本，根据 content_type 和 source 选择不同的下载/转换逻辑。
+适配器是 `01_download` 步骤（`steps/common/step_01_download.py`）的内部实现——同一个步骤脚本，根据 content_type 和 source 选择不同的下载/转换逻辑。
 
 ## 2. 视频适配器（M1）
 
@@ -54,21 +54,30 @@ yt-dlp 支持的其他网站，作为兜底。
 
 ```
 输入: PDF 上传 或 arXiv URL
-输出: input/paper.pdf + input/metadata.json
+输出: input/source.pdf + input/metadata.json
 ```
 
 arXiv URL 自动下载 PDF。本地 PDF 直接上传。
 
-## 4. 文章适配器（M5）
+## 4. 文章适配器（M6 已实现）
 
 ```
 输入: 网页 URL（公众号/博客/新闻）
-输出: input/article.html + input/metadata.json
+输出: input/source.html + input/article_meta.json
 ```
 
-用 trafilatura 或 readability 提取正文，保留图片引用。
+用 trafilatura 提取正文（中文友好，纯 Python），保留图片引用；同时落一份正文/标题供后续解析步使用。
 
-## 5. Cookies 管理
+## 5. 音频 / 播客适配器（M6 已实现）
+
+```
+输入: 单集音频 URL 或音频文件上传（.mp3/.m4a/.wav/.aac）
+输出: input/source.mp3 (+ input/source.mp4 复用 whisper) + input/metadata.json
+```
+
+只取单集音频，无 RSS 订阅（RSS 追更留 M4/Agent）。下载后复用 video 的 whisper 步转写（`02_whisper` 入参约定为 `source.mp4`，故同时落一份），再走 audio pipeline：`01_download → 02_whisper → 03_transcript_parse → 04_smart_podcast → 05_review`。
+
+## 6. Cookies 管理
 
 ```
 /data/cookies/
@@ -89,7 +98,7 @@ arXiv URL 自动下载 PDF。本地 PDF 直接上传。
 下载步骤遇到 403/画质降级时自动检测：
 
 ```
-00_download 执行 → 下载失败 (HTTP 403) 或 画质 < 预期
+01_download 执行 → 下载失败 (HTTP 403) 或 画质 < 预期
   → step meta 写入 {"cookies_expired": true, "platform": "bilibili"}
   → 发布 WebSocket 事件: {"event": "cookies_expired", "platform": "bilibili", "message": "B站 cookies 过期，请重新扫码"}
   → 前端弹窗提示用户扫码刷新

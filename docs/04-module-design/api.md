@@ -5,19 +5,30 @@
 
 ## 1. 模块结构
 
+以 `api/routes/` 为准：
+
 ```
 api/
-├── main.py                 # FastAPI app + 启动
+├── main.py                 # FastAPI app + 启动（挂载各 router，含 jobs.providers_router）
 ├── deps.py                 # 依赖注入（Redis/DB/Auth）
 ├── routes/
-│   ├── jobs.py             # POST/GET/DELETE /jobs
-│   ├── notes.py            # 笔记/截图/视频文件服务
-│   ├── ws.py               # WebSocket 进度推送
-│   ├── auth.py             # B站扫码 / YouTube cookies
-│   ├── admin.py            # 系统状态 / 配置热更新
-│   └── collections.py      # 集合管理 (M2)
+│   ├── jobs.py             # /api/jobs（+facets、/{id}/concepts、/retry/rerun/rerun-smart/resubmit）+ /api/providers
+│   ├── notes.py            # 笔记/截图/产物文件服务（含视频 Range 流）
+│   ├── ws.py               # WebSocket 进度推送（/api/ws/jobs/{id}、/api/ws/global）
+│   ├── auth.py             # YouTube cookies / 平台 cookie 文件状态
+│   ├── bili.py             # B站扫码登录（/api/bili/*，cookie 入库）
+│   ├── admin.py            # 系统状态 / 健康 / 配置热更新（/api/status、/api/health、/api/config/*）
+│   ├── collections.py      # 集合管理（含订阅集合 /{id}/sync）
+│   ├── domains.py          # 领域知识中心（总览/建库/工作台/术语/主题/概念时间线）
+│   ├── glossary.py         # 术语库 / 概念图（CRUD + accept + topic）
+│   ├── search.py           # FTS5 全文检索（/api/search）
+│   ├── profiles.py         # 领域 Profile（角色/风格/术语表 + 展示元数据）
+│   ├── workers.py          # Worker 管理（列表/详情/更新/移除 + 铸接入 token）
+│   └── runner.py           # Worker 网关（/api/runner/*：注册/心跳/认领/上报/产物代理）
 └── Dockerfile
 ```
+
+各端点契约以 [docs/03-contracts.md](../03-contracts.md) 为准。
 
 ## 2. 认证
 

@@ -1,16 +1,18 @@
 # Worker
 
-> 职责：从资源池队列自取任务，执行步骤脚本，上报结果。
+> 职责：认领资源池中的任务，执行步骤脚本，上报结果。
 > Worker 不知道 DAG，只管"取任务 → 跑 → 报结果"。
+
+> 现状提示（M-W 已完成）：worker 已 GitLab-runner 化。**远程 worker 单条出站 HTTPS 接入网关，不直连 Redis/MinIO**——经 `/api/runner/*` 注册换 per-worker token、长轮询认领步骤、上报结果、产物经网关代理读写（见 [ADR-0009](../adr/0009-worker-gateway-outbound-https.md)、[docs/03-contracts.md §1.7](../03-contracts.md)）。本文 §2/§4 中「直接 zpopmin 队列」「直连 Redis/MinIO」是 M-W 前的本地/同机形态示意；认领/资源槽/exec_id 去重等逻辑已搬到服务端共享 `runner_ops`，单机部署仍可走直连模式，远程一律走网关。步骤名为各 pipeline 内 `01..N`。
 
 ## 1. Worker 类型
 
-| 类型 | 运行位置 | 消费池 | 负责步骤 |
+| 类型 | 运行位置 | 消费池 | 负责步骤（video 示例） |
 |------|---------|--------|---------|
-| download | 主机 | io | 00_download |
-| cpu | 主机 / GPU机器 | scene, cpu, io | 01-05, 07 |
-| ai | 主机 | ai, io | 06, 08, 09 |
-| gpu | GPU 机器 | gpu, scene, cpu, io | 00b, 01(GPU), 04(GPU) |
+| download | 主机 | io | 01_download |
+| cpu | 主机 / GPU机器 | scene, cpu, io | 03_scene / 04_frames / 05_dedup / 06_ocr / 07_danmaku / 09_mechanical |
+| ai | 主机 | ai, io | 08_punctuate / 10_smart / 11_review |
+| gpu | GPU 机器 | gpu, scene, cpu, io | 02_whisper / 03_scene(GPU) / 06_ocr(GPU) |
 
 Worker 类型决定了它消费哪些池的队列。一个 Worker 可以消费多个池。
 
@@ -242,10 +244,10 @@ def auto_discover_tags(self) -> set:
 
 | tag | 含义 | 步骤示例 | Worker 示例 |
 |-----|------|---------|-----------|
-| `vision` | 支持图片输入 | 08_smart | 有 Claude/GPT-4o 的 Worker |
-| `gpu` | 有 GPU 硬件 | 00b_whisper | GPU 机器 |
+| `vision` | 支持图片输入 | 10_smart（视觉 pass） | 有 Claude/GPT-4o 的 Worker |
+| `gpu` | 有 GPU 硬件 | 02_whisper | GPU 机器 |
 | `claude-cli` | Claude CLI 订阅 | — | 挂载了 ~/.claude 的 Worker |
-| `cn-network` | 可访问中国网络 | 00_download (B站) | 在国内网络的 Worker |
+| `cn-network` | 可访问中国网络 | 01_download (B站) | 在国内网络的 Worker |
 | `heavy` | 大内存/高配额 | 长视频处理 | 高配机器 |
 
 **常用排斥标签**（Worker 声明拒绝）：

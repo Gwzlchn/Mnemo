@@ -172,73 +172,74 @@ graph TD
 
 ### 各内容类型的步骤链
 
-调度器从 `pipelines.yaml` 加载对应 content_type 的步骤 DAG：
+调度器从 `pipelines.yaml`（GitLab-CI 风格：`extends`/`variables`/`needs`/`rules`）加载对应 content_type 的步骤 DAG——执行顺序由 `needs` 推导，条件跳过/开关由 `rules`（如 `exists` 匹配输入文件）决定。步骤键在每条 pipeline 内各自从 `01` 递增，跨 pipeline 不共享编号空间：
 
 **视频 (video)** — M1 实现：
 ```mermaid
 graph LR
-    dl["00_download"]
+    dl["01_download"]
 
-    dl --> scene["01_scene"]
-    scene --> frames["02_frames"]
-    frames --> dedup["03_dedup"]
-    dedup --> ocr["04_ocr"]
+    dl --> whisper["02_whisper<br/>(条件)"]
+    dl --> scene["03_scene"]
+    scene --> frames["04_frames"]
+    frames --> dedup["05_dedup"]
+    dedup --> ocr["06_ocr"]
 
-    dl --> danmaku["05_danmaku"]
-    dl --> punctuate["06_punctuate"]
-    dl --> whisper["00b_whisper<br/>(条件)"]
-    whisper --> punctuate
+    dl --> danmaku["07_danmaku"]
+    dl --> punctuate["08_punctuate<br/>(条件)"]
 
-    ocr --> mechanical["07_mechanical"]
+    ocr --> mechanical["09_mechanical"]
     danmaku --> mechanical
-    punctuate --> mechanical
 
-    mechanical --> smart["08_smart"]
-    smart --> review_v["09_review"]
+    mechanical --> smart["10_smart"]
+    smart --> review_v["11_review"]
 
     style whisper fill:#fff3cd,stroke:#d97706
+    style punctuate fill:#fff3cd,stroke:#d97706
 ```
 
 **论文 (paper)** — M1 实现：
 ```mermaid
 graph LR
-    dl_p["00_download"] --> parse["10_pdf_parse"]
-    parse --> sections["11_sections"]
-    parse --> figures["12_figures"]
-    sections --> smart_p["14_smart_paper"]
+    dl_p["01_download"] --> parse["02_pdf_parse"]
+    parse --> sections["03_sections"]
+    parse --> figures["04_figures"]
+    sections --> smart_p["05_smart_paper"]
     figures --> smart_p
-    smart_p --> review_p["15_review"]
+    smart_p --> review_p["06_review"]
 ```
 
 **文章 (article)** — M6 实现：
 ```mermaid
 graph LR
-    dl_a["00_download"] --> parse_a["16_parse_article"] --> sections_a["17_article_sections"] --> smart_a["18_smart_article"] --> review_a["19_review"]
+    dl_a["01_download"] --> parse_a["02_parse_article"] --> sections_a["03_article_sections"] --> smart_a["04_smart_article"] --> review_a["05_review"]
 ```
 
 **音频 / 播客 (audio)** — M6 实现：
 ```mermaid
 graph LR
-    dl_au["00_download"] --> whisper_au["00b_whisper"] --> transcript["20_transcript_parse"] --> smart_au["21_smart_podcast"] --> review_au["22_review"]
+    dl_au["01_download"] --> whisper_au["02_whisper"] --> transcript["03_transcript_parse"] --> smart_au["04_smart_podcast"] --> review_au["05_review"]
 ```
 
-每种类型共享 `00_download`（下载/获取原始内容）和 `*_smart` / `*_review`（AI 笔记 + 评审）的模式，中间的处理步骤按内容类型各异。audio 复用 video 的 `00b_whisper` 做转写（落在 gpu 池，含 cpu fallback）。
+每种类型共享 `01_download`（下载/获取原始内容）和 `*_smart` / `*_review`（AI 笔记 + 评审）的模式，中间的处理步骤按内容类型各异。audio 复用 video 的 whisper 步做转写（落在 gpu 池，含 cpu fallback）。
 
 ### 视频步骤 DAG 详解
 
-无依赖的步骤并行执行。07_mechanical 等待 04_ocr + 05_danmaku + 06_punctuate 三路汇合。
+无依赖的步骤并行执行。`09_mechanical` 等待 `06_ocr` + `07_danmaku` 汇合（机械版优先用 `08_punctuate` 标点稿，没有则直接读原始字幕，故不硬依赖 AI 步）。
 
 ## 5. 资源池模型
 
 步骤映射到资源池，资源池限制并发。池与内容类型无关——不同类型的步骤可以共享同一个池：
 
+> 步骤编号在每条 pipeline 内独立，下表「示例步骤」标注所属 pipeline（v=video, p=paper, a=article, au=audio）。
+
 | 池名 | 并发上限 | 说明 | 示例步骤 |
 |------|---------|------|---------|
-| io | 不限 | 轻量 IO | 00_download, 05_danmaku, 07_mechanical |
-| scene | 1 | CPU 全占，与 cpu 池互斥 | 01_scene |
-| cpu | 3 | 中等 CPU | 02_frames, 03_dedup, 04_ocr, 10_pdf_parse, 16_parse_article, 17_article_sections, 20_transcript_parse |
-| ai | 2 | LLM 并发（按 Provider 各自限速） | 06_punctuate, 08_smart, 09_review, 14_smart_paper, 18_smart_article, 21_smart_podcast |
-| gpu | 1 | GPU 独占 | 00b_whisper |
+| io | 不限 | 轻量 IO | 01_download（各 pipeline）, 07_danmaku(v), 09_mechanical(v) |
+| scene | 1 | CPU 全占，与 cpu 池互斥 | 03_scene(v) |
+| cpu | 3 | 中等 CPU | 04_frames/05_dedup/06_ocr(v)、02_whisper(v)、02_pdf_parse(p)、02_parse_article/03_article_sections(a)、03_transcript_parse(au) |
+| ai | 2 | LLM 并发（按 Provider 各自限速） | 08_punctuate/10_smart/11_review(v)、05_smart_paper/06_review(p)、04_smart_article/05_review(a)、04_smart_podcast/05_review(au) |
+| gpu | 1 | GPU 独占 | 02_whisper(au)（video 的 02_whisper 落 cpu 池兜底） |
 
 **互斥规则**：scene 运行时冻结 cpu 池（场景检测吃满全部核心）。
 
@@ -299,22 +300,23 @@ graph LR
 |------|------|-----|
 | 语言 | Python 3.11+ | [ADR-0001](adr/0001-language-python.md) |
 | 队列 | Redis (Sorted Set + Pub/Sub) | [ADR-0002](adr/0002-queue-redis.md) |
-| 存储 | 本地文件系统 (M4+ MinIO 中转) | [ADR-0003](adr/0003-storage-local-first.md) |
+| 存储 | 本地文件系统（远程 worker 经网关代理产物，见 ADR-0009） | [ADR-0003](adr/0003-storage-local-first.md) |
 | LLM | 多 Provider AI 网关 | [ADR-0004](adr/0004-llm-multi-provider.md) |
 | 前端 | Vue 3 + Vite + Tailwind | [ADR-0005](adr/0005-frontend-vue3.md) |
 | 用户入口 | Cloudflare Tunnel | [ADR-0006](adr/0006-gateway-cloudflare-tunnel.md) |
 | 远程 Worker 接入 | 出站 HTTPS 网关（`/api/runner/*`） | [ADR-0009](adr/0009-worker-gateway-outbound-https.md)（取代 [ADR-0007](adr/0007-remote-worker-polling.md)） |
 | 搜索 | SQLite FTS5 | [ADR-0008](adr/0008-search-sqlite-fts5.md) |
 
-## 9. M1 → M4 演进路径
+## 9. 演进路径
 
-| 阶段 | 部署 | 新增组件 | 测试 |
-|------|------|---------|------|
-| **M1** | All-in-One | 调度器 + Worker + StorageBackend + AI Gateway + Profile + 风格标签 + 视频 pipeline + 论文 pipeline + API + Worker 管理 + 前端 + Tunnel | 单步验证 + 并发安全 + DRY_RUN |
-| **M2** | All-in-One | 集合管理 + FTS5 搜索 + Profile 动态积累 | 搜索质量 |
-| **M3** | All-in-One | 视频回放 + 标注 + PDF 导出 | 前端交互 |
-| **M4** | 分层部署 | `/api/runner/*` 网关 + GatewayStorage + 远程 GPU Worker | 网关认领回路 + 产物代理 |
+| 阶段 | 状态 | 部署 | 新增组件 | 测试 |
+|------|------|------|---------|------|
+| **M1** | ✅ 完成 | All-in-One | 调度器 + Worker + StorageBackend + AI Gateway + Profile + 风格标签 + 视频 pipeline + 论文 pipeline + API + Worker 管理 + 前端 + Tunnel | 单步验证 + 并发安全 + DRY_RUN |
+| **M2** | ✅ 完成 | All-in-One | 领域知识库（概念图：术语/主题/typed occurrences/回流）+ 集合与订阅 + FTS5 搜索 + 术语库 CRUD + 前端全站重建 | 搜索质量 |
+| **M6** | ✅ 完成 | All-in-One | 文章 pipeline + 音频/播客 pipeline | 适配器产物 |
+| **M-W** | ✅ 完成 | 分层部署 | `/api/runner/*` 网关 + GatewayStorage + 远程 GPU Worker | 网关认领回路 + 产物代理 |
+| **M3** | 未做 | All-in-One | 视频回放 + 标注 + PDF 导出 | 前端交互 |
 
-**开发路径**：M1-M3 全在 All-in-One 模式下开发和测试。M4 只加分层部署能力，应用代码不变——worker 端仅靠环境变量切到网关模式，验证认领回路与产物代理。
+**开发路径**：核心能力全在 All-in-One 模式下开发和测试。分层部署（M-W）只加接入能力，应用代码不变——worker 端仅靠环境变量切到网关模式，验证认领回路与产物代理。
 
 **M1 测试重点**：LLM 调用花真钱。必须在 `DRY_RUN=1` 下验证乐观锁、exec_id 去重、事件幂等后，再接真 Provider。详见 [09-testing.md §5](09-testing.md)。

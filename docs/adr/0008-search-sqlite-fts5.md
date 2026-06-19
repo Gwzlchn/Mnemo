@@ -29,4 +29,4 @@ SQLite FTS5。
 
 - M2 在 SQLite 中创建 FTS5 虚拟表
 - 每个视频完成后更新搜索索引
-- API 暴露 `/api/knowledge/search` 端点
+- API 暴露 `/api/search` 端点

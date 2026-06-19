@@ -15,7 +15,7 @@
 ```mermaid
 graph TD
     subgraph Callers["调用方"]
-        Pipeline["Pipeline 步骤<br/>(06_punctuate, 08_smart, 09_review)"]
+        Pipeline["Pipeline 步骤<br/>(08_punctuate, 10_smart, 11_review)"]
         Frontend["前端 API（笔记问答/摘要）<br/>(POST /api/ai/chat)"]
     end
 
@@ -210,44 +210,39 @@ providers:
 
 | 步骤 | 需要视觉 | 复杂度 | 可用最低模型 |
 |------|---------|--------|-------------|
-| 06_punctuate | 否 | 低 | 本地 7B / DeepSeek Flash |
-| 08_smart | **是**（看截图写笔记） | 高 | Sonnet / GPT-4o（需 vision） |
-| 08_smart 降级 | 否（仅用 OCR 文字） | 中 | DeepSeek Pro / 本地 32B |
-| 09_review | 否 | 低-中 | Haiku / DeepSeek Flash |
+| 08_punctuate | 否 | 低 | 本地 7B / DeepSeek Flash |
+| 10_smart 视觉 pass | **是**（逐帧看图产视觉描述） | 高 | Sonnet / GPT-4o（需 vision，claude-cli 带 Read 逐帧） |
+| 10_smart 文本 pass | 否（机械稿 + 视觉描述生成笔记） | 中-高 | DeepSeek Pro / Sonnet（纯文本单轮） |
+| 11_review | 否 | 低-中 | Haiku / DeepSeek Flash |
 | 前端问答 | 否（通常） | 低 | Haiku / DeepSeek Flash |
 | 前端看图提问 | **是** | 中 | 需 vision 模型 |
 
-**只有 08_smart 完整模式必须用视觉模型**。其他所有步骤用纯文本模型即可，成本大幅降低。
+`10_smart` 是**两段式**：① 视觉 pass 用视觉模型（claude-cli 带 Read 逐帧看图、限 10 张防上下文膨胀）产「逐帧视觉描述」清单；② 文本 pass 把机械稿 + 视觉描述走纯文本单轮（`--tools "" --max-turns 1`）生成笔记。只有视觉 pass 必须 vision 模型，其余步骤用纯文本模型即可，成本大幅降低。
 
-### 步骤路由配置（pipelines.yaml 扩展）
+### 步骤路由配置（pipelines.yaml）
+
+pipeline 为 GitLab-CI 风格（`variables`/`extends`/`needs`/`rules`，见 [docs/03-contracts.md §4.1](../03-contracts.md)），每个 AI job 的 `ai` 段路由 provider/model（`variables` 为单一事实源，job 用 `$VAR` 引用）：
 
 ```yaml
 video:
-  steps:
-    - name: "06_punctuate"
-      pool: ai
-      tags: []                         # 任何 AI Worker
+  jobs:
+    "08_punctuate":
+      extends: .ai-step
       ai:
         primary: {provider: deepseek, model: deepseek-v4-flash}
         fallback: {provider: local, model: qwen3:7b}
 
-    - name: "08_smart"
-      pool: ai
-      tags: ["vision"]                 # 需要视觉能力的 Worker
+    "10_smart":
+      extends: .ai-step
+      tags: ["vision"]                 # 视觉 pass 需要视觉能力的 Worker
       ai:
         primary: {provider: anthropic, model: claude-sonnet-4-6}
         fallback: {provider: openai, model: gpt-4o}
-        # 纯文本降级（无 vision Worker 可用时，调度器降级 tags 为 []）
+        # 文本 pass / 纯文本降级
         text_fallback: {provider: deepseek, model: deepseek-v4-pro}
-        # 可选：多 Provider 对比
-        compare:
-          - {provider: anthropic, model: claude-sonnet-4-6}
-          - {provider: openai, model: gpt-4o}
-          - {provider: gemini, model: gemini-2.5-pro}
 
-    - name: "09_review"
-      pool: ai
-      tags: []                         # 任何 AI Worker
+    "11_review":
+      extends: .review
       ai:
         primary: {provider: anthropic, model: claude-haiku-4-5}
         fallback: {provider: deepseek, model: deepseek-v4-flash}
@@ -257,19 +252,21 @@ video:
 
 ## 5. 多 Provider 对比生成
 
+> 现状：已落地的是**换 provider 重跑**——`POST /api/jobs/{id}/rerun-smart` 用指定 provider 重新生成智能笔记 + 评审，生成新版本、旧版本版本化保留（见 [docs/03-contracts.md §1.1](../03-contracts.md)）。下文的「并行 compare 子任务」为更早的设计方向，未实现。
+
 ### 场景
 
 用户想看 Claude/GPT/DeepSeek 分别生成的笔记，选最好的。
 
-### 实现
+### 设计方向（未实现）
 
 当步骤配置了 `compare` 列表时，调度器为该步骤创建多个子任务：
 
 ```
-08_smart (compare mode)
-  ├── 08_smart@anthropic  → output/notes_smart.anthropic.md
-  ├── 08_smart@openai     → output/notes_smart.openai.md
-  └── 08_smart@deepseek   → output/notes_smart.deepseek.md
+10_smart (compare mode)
+  ├── 10_smart@anthropic  → output/notes_smart.anthropic.md
+  ├── 10_smart@openai     → output/notes_smart.openai.md
+  └── 10_smart@deepseek   → output/notes_smart.deepseek.md
 ```
 
 所有子任务并行执行（不同 Provider 不占同一个资源槽）。
@@ -288,7 +285,7 @@ video:
 ```json
 // compare_meta.json
 {
-  "step": "08_smart",
+  "step": "10_smart",
   "variants": [
     {"provider": "anthropic", "model": "claude-sonnet-4-6", "cost": 0.18, "duration_sec": 45, "file": "notes_smart.anthropic.md"},
     {"provider": "openai", "model": "gpt-4o", "cost": 0.15, "duration_sec": 30, "file": "notes_smart.openai.md"},

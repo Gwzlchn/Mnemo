@@ -249,7 +249,7 @@ class Collection:
     description: str = ""
     tags: list[str] = field(default_factory=list)
     job_count: int = 0
-    # 订阅属性（手动集合为 None；订阅集合填充）—— T1 加列
+    # 订阅属性（手动集合为 None；订阅集合填充）
     source_type: str | None = None     # "bilibili_up"
     source_id: str | None = None       # B站 mid
     sync_enabled: bool = True           # 自动追更开关
@@ -292,7 +292,7 @@ class Concept:                     # 表名仍为 glossary（历史）
     name: str                      # 主键之一（旧字段名 term）
     definition: str                # 跨源综合（原则三）
     definition_locked: bool = False # 钉住后语料增长不自动覆盖定义（§1.10-11）
-    occurrences: list[dict]        # [{job_id, content_type, location}]，T2 由 sources 升级
+    occurrences: list[dict]        # [{job_id, content_type, location}] 类型化出现处（替代旧 sources=[job_id]）
     related: list[str]             # 关联概念（仅同域）→ schema 图（含上下位）
     is_topic: bool = False         # 粗粒度浏览主题（给内容聚合落地页）
     status: str = "accepted"       # suggested / accepted
@@ -337,7 +337,7 @@ stateDiagram-v2
 
 ## 2.3 数据库表结构
 
-SQLite，直接写 SQL，不用 ORM。`(T1)`/`(T2)` 标注尚待迁移的列。
+SQLite，直接写 SQL，不用 ORM。下表反映当前已落库的 schema（订阅并入 collection 列、概念图 typed occurrences、`notes_fts5` trigram 等均已实现）。
 
 ```sql
 CREATE TABLE jobs (
@@ -365,10 +365,10 @@ CREATE TABLE collections (
     description TEXT DEFAULT '',
     tags TEXT DEFAULT '[]',
     job_count INTEGER DEFAULT 0,
-    source_type TEXT,                      -- (T1) NULL=手动；"bilibili_up"=订阅
-    source_id TEXT,                        -- (T1) B站 mid
-    sync_enabled INTEGER DEFAULT 1,        -- (T1) 自动追更开关
-    last_synced_at TEXT,                   -- (T1)
+    source_type TEXT,                      -- NULL=手动；"bilibili_up"=订阅
+    source_id TEXT,                        -- B站 mid
+    sync_enabled INTEGER DEFAULT 1,        -- 自动追更开关
+    last_synced_at TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 
@@ -383,10 +383,9 @@ CREATE TABLE job_steps (
 );
 
 CREATE TABLE workers (
-    id TEXT PRIMARY KEY, type TEXT NOT NULL, pools TEXT NOT NULL,
-    hostname TEXT, gpu_name TEXT, gpu_memory_mb INTEGER,
-    capabilities TEXT DEFAULT '[]',
+    id TEXT PRIMARY KEY, type TEXT NOT NULL, pools TEXT NOT NULL DEFAULT '[]',
     tags TEXT NOT NULL DEFAULT '[]', reject_tags TEXT NOT NULL DEFAULT '[]',
+    hostname TEXT, gpu_name TEXT, gpu_memory_mb INTEGER,
     status TEXT NOT NULL DEFAULT 'offline', current_job TEXT, current_step TEXT,
     tasks_completed INTEGER DEFAULT 0, tasks_failed INTEGER DEFAULT 0,
     total_duration_sec REAL DEFAULT 0,
@@ -398,10 +397,10 @@ CREATE TABLE glossary (
     domain TEXT NOT NULL,                  -- 命名空间（原则二）
     term TEXT NOT NULL,                    -- 概念名
     definition TEXT DEFAULT '',            -- 跨源综合（原则三）
-    definition_locked INTEGER DEFAULT 0,   -- (T2) 钉住后不被自动综合覆盖（§1.10-11）
-    occurrences TEXT DEFAULT '[]',         -- (T2) [{job_id,content_type,location}]；当前为 sources=[job_id]
+    definition_locked INTEGER DEFAULT 0,   -- 钉住后不被自动综合覆盖（§1.10-11）
+    occurrences TEXT DEFAULT '[]',         -- [{job_id,content_type,location}] 类型化出现处（替代旧 sources）
     related TEXT DEFAULT '[]',             -- 关联概念（仅同域，含上下位）
-    is_topic INTEGER DEFAULT 0,            -- (T3) 粗粒度浏览主题
+    is_topic INTEGER DEFAULT 0,            -- 粗粒度浏览主题
     status TEXT DEFAULT 'accepted',        -- suggested/accepted
     created_at TEXT, updated_at TEXT,
     PRIMARY KEY (domain, term)             -- 同名异域是两个节点
@@ -417,18 +416,16 @@ CREATE TABLE ai_usage (
     created_at TEXT NOT NULL
 );
 
-CREATE TABLE annotations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_id TEXT NOT NULL REFERENCES jobs(id),
-    type TEXT NOT NULL, position_sec REAL, end_sec REAL, text TEXT, color TEXT,
-    created_at TEXT NOT NULL
+-- 全文搜索（表名 notes_fts5）：跨领域检索的逃生口（原则二）
+-- trigram tokenizer 对中文做子串匹配，零外部依赖。
+CREATE VIRTUAL TABLE notes_fts5 USING fts5(
+    job_id UNINDEXED, content_type UNINDEXED, note_type UNINDEXED,
+    collection_id UNINDEXED, domain UNINDEXED,
+    title, body,
+    tokenize='trigram'
 );
 
--- 全文搜索（实际表名 notes_fts5）：跨领域检索的逃生口（原则二）
-CREATE VIRTUAL TABLE notes_fts5 USING fts5(
-    job_id, note_type, title, content,
-    collection_id UNINDEXED, domain UNINDEXED, tokenize='simple'
-);
+-- annotations（视频回放标注）尚未建表，属 M3（视频回放 + 标注 + PDF 导出），见 ROADMAP。
 ```
 
 ## 2.4 文件存储布局
@@ -464,19 +461,19 @@ Job           1 ──< N Step / Annotation(M3)
 | Step | 各 pipeline 内 `NN_name` | `03_scene` |
 | Concept | 复合键 `(domain, name)` | `(finance, 国债期货)` |
 
-## 2.6 现状 vs 目标
+## 2.6 落地状态
 
-| 能力 | 现状 | 目标（本模型） |
+本模型已落地（M2 知识库 + T1/T2/T3 迁移完成）。下表记录从早期实现到当前模型的演进，便于读历史代码/数据时对照：
+
+| 能力 | 早期实现 | 当前（已落地） |
 |---|---|---|
-| 三层容器 | domain/collection/job 已在；job→collection 多对一已是 | 维持 |
-| 订阅 | 独立 `subscriptions` 表 + 独立页面 + 自动建同名集合 | 并入 collection 列；删页面/路由；domain 必选（T1） |
-| 集合 id | `c_{date}_{hex}` 随机 | `col_{hex}` / `col_bili_up_{mid}`（T1） |
-| 交叉/主题 | 仅 `job.tags`（无落地页/不策展） | 概念图中 `is_topic` 节点的浏览面（与术语同表统一）；meta 标签才是纯 flag（T3） |
-| 概念喂养 | 仅评审 `missing_concepts` → 候选 | 改为"笔记讲清楚的概念 + 候选定义"为主源（T2-P2） |
-| occurrence | `sources=[job_id]`，无类型/位置 | typed + located 对称索引（T2-P1） |
-| 定义跨源 | 手动录入为主，不随语料增长 | 跨源综合 + 佐证(广度×多样性) + 钉住不被覆盖（T2，原则三） |
+| 三层容器 | domain/collection/job；job→collection 多对一 | 维持 |
+| 订阅 | 独立 `subscriptions` 表 + 独立页面 + 自动建同名集合 | ✅ 并入 collection 列；删页面/路由；domain 必选 |
+| 集合 id | `c_{date}_{hex}` 随机 | ✅ `col_{hex}` / `col_bili_up_{mid}` |
+| 交叉/主题 | 仅 `job.tags`（无落地页/不策展） | ✅ 概念图中 `is_topic` 节点的浏览面（与术语同表统一）；meta 标签才是纯 flag |
+| 概念喂养 | 仅评审 `missing_concepts` → 候选 | ✅ 改为评审 `key_terms`（笔记讲清楚的概念 + 候选定义）为主源；`missing_concepts` 仅评审面板、不入库 |
+| occurrence | `sources=[job_id]`，无类型/位置 | ✅ typed + located 对称索引 `[{job_id,content_type,location}]` |
+| 定义跨源 | 手动录入为主，不随语料增长 | ✅ 跨源综合 + 佐证(广度×多样性) + 钉住不被覆盖（原则三） |
 | 多领域 | 概念主键已 `(domain,term)` | 维持分桶；跨域同名不合并（原则二） |
-| 回流 | **无**（Prompt 不读概念库） | 已接受概念注入 Prompt，统一措辞、只标新词（T2-P3） |
-| 笔记内联 | 正文不可点 | 后处理匹配 → 可点（定义/关联/出现处）（T2-P4） |
-
-> 落地项见 `.local/processing/<date>/`（不入 git 的工作区）。
+| 回流 | 无（Prompt 不读概念库） | ✅ 采纳的概念回流 Profile.terminology，注入 Prompt：统一措辞、只标新词 |
+| 笔记内联 | 正文不可点 | 后处理匹配 → 可点（定义/关联/出现处） |

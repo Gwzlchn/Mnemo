@@ -117,7 +117,7 @@ class SmartStep(StepBase):
 
 ```json
 {
-  "step": "04_ocr",
+  "step": "06_ocr",
   "input_hashes": {
     "dedup": "sha256:abc123...",
     "config": "{\"confidence_threshold\": 0.6}"
@@ -143,14 +143,14 @@ def should_run(self) -> bool:
 上游步骤重跑 → 输出文件内容变了 → 下游步骤的 `input_hashes()` 返回不同值 → 自动重跑。
 
 ```
-场景：修改 04_ocr 的 confidence_threshold 0.6 → 0.5
+场景：修改 06_ocr 的 confidence_threshold 0.6 → 0.5
 
-04_ocr  → config hash 变了 → 重跑 → ocr.json 内容变了
-07_mech → input_hashes() 中 ocr.json hash 变了 → 重跑 → mechanical.md 变了
-08_smart → input_hashes() 中 mechanical.md hash 变了 → 重跑
-09_review → input_hashes() 中 smart.md hash 变了 → 重跑
+06_ocr  → config hash 变了 → 重跑 → ocr.json 内容变了
+09_mechanical → input_hashes() 中 ocr.json hash 变了 → 重跑 → mechanical.md 变了
+10_smart → input_hashes() 中 mechanical.md hash 变了 → 重跑
+11_review → input_hashes() 中 smart.md hash 变了 → 重跑
 
-01-03, 05, 06 → 输入没变 → 跳过 ✓
+01-05, 07, 08 → 输入没变 → 跳过 ✓
 ```
 
 **不需要手动标记哪些步骤需要重跑**——级联是基于实际文件内容的。
@@ -179,9 +179,9 @@ def force_rerun(job_dir: Path, from_step: str, pipeline_steps: list):
         done_file.unlink(missing_ok=True)
 ```
 
-API: `POST /api/jobs/{id}/rerun  Body: {"from_step": "08_smart"}`
+API: `POST /api/jobs/{id}/rerun  Body: {"from_step": "10_smart"}`
 
-效果：清除 08_smart 和 09_review 的 `.done` → 调度器重新提交 → Worker 执行时 `should_run()` 返回 True。
+效果：清除 10_smart 和 11_review 的 `.done` → 调度器重新提交 → Worker 执行时 `should_run()` 返回 True。
 
 ## 3. 进度上报（两层）
 
@@ -211,7 +211,7 @@ async def execute_with_heartbeat(self, job_id, step, job_dir, cmd, timeout):
     return proc.returncode, stdout, stderr
 ```
 
-效果：即使 08_smart 跑 5 分钟没有内部进度，心跳进度文件也每 10 秒更新一次。卡住检测能看到 `updated_at` 停止更新。
+效果：即使 10_smart 跑 5 分钟没有内部进度，心跳进度文件也每 10 秒更新一次。卡住检测能看到 `updated_at` 停止更新。
 
 ### 第二层：步骤内细粒度进度（步骤自己报）
 
@@ -236,16 +236,17 @@ def report_progress(self, current: int, total: int, message: str = ""):
 
 | 步骤 | 进度来源 | 前端显示 |
 |------|---------|---------|
-| 00_download | Worker 心跳 | `running 15s` |
-| 01_scene | step: 帧/总帧 | `15000/40080 (37%)` |
-| 02_frames | step: 帧/场景数 | `50/76 (66%)` |
-| 03_dedup | step: 帧/总帧 | `30/76 (39%)` |
-| 04_ocr | step: 帧/待识别 | `85/162 (52%)` |
-| 05_danmaku | Worker 心跳 | `running 1s` |
-| 06_punctuate | step: 块/总块 | `2/3 (67%)` |
-| 07_mechanical | Worker 心跳 | `running 2s` |
-| 08_smart | Worker 心跳 | `running 180s` |
-| 09_review | Worker 心跳 | `running 45s` |
+| 01_download | Worker 心跳 | `running 15s` |
+| 02_whisper | Worker 心跳 | `running 60s` |
+| 03_scene | step: 帧/总帧 | `15000/40080 (37%)` |
+| 04_frames | step: 帧/场景数 | `50/76 (66%)` |
+| 05_dedup | step: 帧/总帧 | `30/76 (39%)` |
+| 06_ocr | step: 帧/待识别 | `85/162 (52%)` |
+| 07_danmaku | Worker 心跳 | `running 1s` |
+| 08_punctuate | step: 块/总块 | `2/3 (67%)` |
+| 09_mechanical | Worker 心跳 | `running 2s` |
+| 10_smart | Worker 心跳 | `running 180s` |
+| 11_review | Worker 心跳 | `running 45s` |
 
 前端根据 `source` 字段决定显示方式：
 - `source: "step"` → 显示 `████████░░ 52%  85/162 帧`
@@ -353,7 +354,7 @@ class AIRateLimitError(AIProviderError):
 ## 7. 步骤脚本入口模板
 
 ```python
-# steps/04_ocr.py
+# steps/video/step_06_ocr.py
 from shared.step_base import StepBase
 
 class OcrStep(StepBase):
@@ -382,7 +383,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     config = json.loads(Path(args.step_config).read_text())
-    step = OcrStep("04_ocr", Path(args.job_dir), config)
+    step = OcrStep("06_ocr", Path(args.job_dir), config)
     step.run()
 ```
 
@@ -390,13 +391,14 @@ if __name__ == "__main__":
 
 | 步骤 | 必须存在 | 校验 |
 |------|---------|------|
-| 00_download | job.json (url 或 upload) | URL 格式合法 |
-| 01_scene | input/*.mp4 | 文件 >1MB |
-| 02_frames | intermediate/scenes.json + input/*.mp4 | scenes 非空 |
-| 03_dedup | intermediate/candidates.json + assets/*.jpg | 至少 1 张 jpg |
-| 04_ocr | intermediate/dedup.json | 至少 1 个 keep=true |
-| 05_danmaku | input/*.ass | 无则跳过（条件步骤） |
-| 06_punctuate | input/*.srt | 无则跳过（条件步骤） |
-| 07_mechanical | intermediate/{ocr,dedup,danmaku}.json + output/transcript.md | 全部可读 |
-| 08_smart | output/notes_mechanical.md | 大小 >100 字节 |
-| 09_review | output/notes_smart.md + notes_mechanical.md | 两个都存在 |
+| 01_download | job.json (url 或 upload) | URL 格式合法 |
+| 02_whisper | input/*.mp4 或音频 | 有音轨；存在 input/*.srt 则跳过 |
+| 03_scene | input/*.mp4 | 文件 >1MB |
+| 04_frames | intermediate/scenes.json + input/*.mp4 | scenes 非空 |
+| 05_dedup | intermediate/frames.json + assets/*.jpg | 至少 1 张 jpg |
+| 06_ocr | intermediate/dedup.json | 至少 1 个 keep=true |
+| 07_danmaku | input/*.ass | 无则跳过（条件步骤） |
+| 08_punctuate | input/*.srt | 无则跳过（条件步骤） |
+| 09_mechanical | intermediate/{ocr,dedup,danmaku}.json + output/transcript.md | 全部可读 |
+| 10_smart | output/notes_mechanical.md | 大小 >100 字节 |
+| 11_review | output/notes_smart.md + notes_mechanical.md | 两个都存在 |

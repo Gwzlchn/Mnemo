@@ -27,10 +27,10 @@ cp /path/to/existing/output/scenes.json /tmp/test-job/intermediate/
 cp /path/to/existing/output/assets/*.jpg /tmp/test-job/assets/
 
 # 跑单步
-docker compose run --rm worker-cpu python3 steps/03_dedup.py --job-dir /tmp/test-job
+docker compose run --rm worker-cpu python3 -m steps.video.step_05_dedup --job-dir /tmp/test-job
 
 # 自动验证
-python3 verify_step.py --step 03_dedup --job-dir /tmp/test-job
+python3 verify_step.py --step 05_dedup --job-dir /tmp/test-job
 ```
 
 如有原型项目的已有产物，可直接用作测试输入——复制对应步骤的输出文件到测试目录即可。
@@ -41,12 +41,12 @@ python3 verify_step.py --step 03_dedup --job-dir /tmp/test-job
 
 | 步骤 | 检查项 |
 |------|--------|
-| 01_scene | scenes.json 可解析、scenes 非空、首 start_sec==0 |
-| 02_frames | jpg 数量 ≥ scenes 数、每张 >10KB |
-| 03_dedup | 每项有 keep/phash、保留率 25%-100% |
-| 04_ocr | 长度 == keep=true 数、nonempty >30% |
-| 08_smart | >500 字符、有 ## 标题、无拒绝话术 |
-| 09_review | overall 1-5、有 6 维度评分 |
+| 03_scene | scenes.json 可解析、scenes 非空、首 start_sec==0 |
+| 04_frames | jpg 数量 ≥ scenes 数、每张 >10KB |
+| 05_dedup | 每项有 keep/phash、保留率 25%-100% |
+| 06_ocr | 长度 == keep=true 数、nonempty >30% |
+| 10_smart | >500 字符、有 ## 标题、无拒绝话术 |
+| 11_review | 扁平 6 维整数分（completeness/accuracy/structure/terminology/visual_integration/readability）各 1-5、overall 1-5、key_terms 为 `[{term,definition}]`、parse_failed 非 true |
 
 ## 3. 集成测试
 
@@ -130,8 +130,8 @@ def mock_ai_gateway():
 async def test_optimistic_lock(redis, mock_step):
     """两个 Worker 同时拿到同一个任务，只有一个能执行"""
     # 准备：一个 ready 步骤
-    await redis.hset("job:j1:steps", "08_smart", "ready")
-    await redis.zadd("queue:ai", {'{"job_id":"j1","step":"08_smart","tags":[]}': 0})
+    await redis.hset("job:j1:steps", "10_smart", "ready")
+    await redis.zadd("queue:ai", {'{"job_id":"j1","step":"10_smart","tags":[]}': 0})
 
     worker_a = Worker(redis, "ai", ["ai"], tags=set())
     worker_b = Worker(redis, "ai", ["ai"], tags=set())
@@ -148,7 +148,7 @@ async def test_optimistic_lock(redis, mock_step):
     await asyncio.gather(run_worker(worker_a), run_worker(worker_b))
 
     assert len(executed) == 1  # 只有一个成功执行
-    assert await redis.hget("job:j1:steps", "08_smart") == "running"
+    assert await redis.hget("job:j1:steps", "10_smart") == "running"
 ```
 
 #### 用例 2：exec_id 防重复计费
@@ -160,12 +160,12 @@ async def test_exec_id_dedup(db):
 
     db.execute("INSERT OR IGNORE INTO ai_usage (exec_id, job_id, step, provider, model, cost_usd, created_at) "
                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-               (exec_id, "j1", "08_smart", "anthropic", "sonnet", 0.18, "2026-05-17"))
+               (exec_id, "j1", "10_smart", "anthropic", "sonnet", 0.18, "2026-05-17"))
 
     # 重复写入
     db.execute("INSERT OR IGNORE INTO ai_usage (exec_id, job_id, step, provider, model, cost_usd, created_at) "
                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-               (exec_id, "j1", "08_smart", "anthropic", "sonnet", 0.18, "2026-05-17"))
+               (exec_id, "j1", "10_smart", "anthropic", "sonnet", 0.18, "2026-05-17"))
 
     count = db.execute("SELECT COUNT(*) FROM ai_usage WHERE exec_id=?", (exec_id,)).fetchone()[0]
     assert count == 1  # 只有一条记录
@@ -179,14 +179,14 @@ async def test_exec_id_dedup(db):
 async def test_scheduler_idempotent(redis, scheduler):
     """on_step_done 重复触发，下游步骤只入队一次"""
     # 准备：step A done → 应该推 step B
-    await redis.hset("job:j1:steps", "07_mechanical", "running")
-    await redis.hset("job:j1:steps", "08_smart", "waiting")
+    await redis.hset("job:j1:steps", "09_mechanical", "running")
+    await redis.hset("job:j1:steps", "10_smart", "waiting")
 
     # 触发两次
-    await scheduler.on_step_done("j1", "07_mechanical", exec_id="e1")
-    await scheduler.on_step_done("j1", "07_mechanical", exec_id="e2")
+    await scheduler.on_step_done("j1", "09_mechanical", exec_id="e1")
+    await scheduler.on_step_done("j1", "09_mechanical", exec_id="e2")
 
-    # 08_smart 只被推入队列一次（ZSET member 相同 → 天然去重）
+    # 10_smart 只被推入队列一次（ZSET member 相同 → 天然去重）
     queue_len = await redis.zcard("queue:ai")
     assert queue_len == 1
 ```
@@ -197,7 +197,7 @@ async def test_scheduler_idempotent(redis, scheduler):
 async def test_tag_reject(redis):
     """Worker 的 reject_tags 生效，任务被放回队列"""
     await redis.zadd("queue:ai",
-        {'{"job_id":"j1","step":"08_smart","tags":["vision","private"]}': 0})
+        {'{"job_id":"j1","step":"10_smart","tags":["vision","private"]}': 0})
 
     worker = Worker(redis, "ai", ["ai"],
                    tags={"vision"}, reject_tags={"private"})
@@ -218,9 +218,9 @@ async def test_concurrent_10_workers_5_tasks(redis, mock_step, mock_ai_gateway):
     # 准备 5 个任务
     for i in range(5):
         job_id = f"j_{i}"
-        await redis.hset(f"job:{job_id}:steps", "08_smart", "ready")
+        await redis.hset(f"job:{job_id}:steps", "10_smart", "ready")
         await redis.zadd("queue:ai",
-            {json.dumps({"job_id": job_id, "step": "08_smart", "tags": []},
+            {json.dumps({"job_id": job_id, "step": "10_smart", "tags": []},
                        sort_keys=True): -i})
 
     # 10 个 Worker 并发
@@ -259,10 +259,10 @@ DRY_RUN=1 docker compose up
 
 | 步骤 | 8 分钟视频 | 22 分钟视频 |
 |------|-----------|------------|
-| 01_scene | ~2min | ~5min |
-| 02_frames | ~15s | ~30s |
-| 03_dedup | ~10s | ~20s |
-| 04_ocr | ~45s | ~2min |
-| 06_punctuate | ~30s | ~1min |
-| 08_smart | ~3min | ~5min |
+| 03_scene | ~2min | ~5min |
+| 04_frames | ~15s | ~30s |
+| 05_dedup | ~10s | ~20s |
+| 06_ocr | ~45s | ~2min |
+| 08_punctuate | ~30s | ~1min |
+| 10_smart | ~3min | ~5min |
 | **总计** | **~8min** | **~15min** |

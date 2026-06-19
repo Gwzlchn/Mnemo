@@ -37,11 +37,11 @@ logger = structlog.get_logger()
 
 # 所有日志带 component/job_id/step/worker 字段
 logger.info("step_started",
-    component="worker", job_id="j_abc", step="01_scene", worker="cpu-01")
+    component="worker", job_id="j_abc", step="03_scene", worker="cpu-01")
 
 # 输出 JSON
 # {"event": "step_started", "component": "worker",
-#  "job_id": "j_abc", "step": "01_scene", "worker": "cpu-01",
+#  "job_id": "j_abc", "step": "03_scene", "worker": "cpu-01",
 #  "timestamp": "2026-05-16T20:00:00"}
 ```
 
@@ -56,8 +56,8 @@ logger.info("step_started",
     └── ai-c3d4.log
 
 /data/jobs/{id}/logs/       # 每步的执行日志
-├── 01_scene.log
-└── 08_smart.log
+├── 03_scene.log
+└── 10_smart.log
 ```
 
 ## 3. 健康检查

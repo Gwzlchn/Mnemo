@@ -64,10 +64,11 @@ service/
 │   ├── storage.py
 │   └── events.py
 │
-├── steps/                  # 从原型迁移
-│   ├── common.py
-│   ├── 00_download.py
-│   └── ...09_review.py
+├── steps/                  # 从原型迁移（按 pipeline 分子目录）
+│   ├── common/step_01_download.py
+│   ├── video/step_02_whisper.py ... step_11_review.py
+│   ├── paper/  article/  audio/
+│   └── utils/
 │
 ├── configs/
 │   ├── pools.yaml
@@ -182,7 +183,7 @@ fix(worker): 修复 scene 池未冻结 cpu 的问题
 
 ```bash
 # 1. 写步骤脚本
-cat > steps/10_translate.py << 'EOF'
+cat > steps/video/step_12_translate.py << 'EOF'
 from shared.step_base import StepBase
 
 class TranslateStep(StepBase):
@@ -204,26 +205,27 @@ class TranslateStep(StepBase):
         return {"chars": len(translated)}
 EOF
 
-# 2. 在 pipelines.yaml 加入步骤（指定依赖和池）
+# 2. 在 pipelines.yaml 加入步骤（GitLab-CI 风格：jobs + needs）
 # video:
-#   steps:
+#   jobs:
 #     ...
-#     - name: "10_translate"
+#     "12_translate":
+#       run: steps.video.step_12_translate
 #       pool: ai
-#       depends_on: ["06_punctuate"]
+#       needs: ["08_punctuate"]
 #       tags: []
-#       timeout_sec: 300
-#       retries: 2
+#       timeout: 300
+#       retry: 2
 ```
 
 调度器自动识别新步骤的依赖关系，Worker 自动执行。已有 Job 通过 resubmit 即可补跑新步骤。
 
 ### 7.3 新增内容来源
 
-只改 `00_download.py`，其他步骤不动：
+只改 `steps/common/step_01_download.py`，其他步骤不动：
 
 ```python
-# steps/00_download.py 里加一个分支
+# steps/common/step_01_download.py 里加一个分支
 def detect_source(url):
     if "douyin.com" in url:
         return "douyin"
@@ -242,22 +244,23 @@ def download_douyin(url, output_dir):
 三步完成：
 
 ```bash
-# 1. 写内容特有步骤
-steps/30_audio_transcribe.py    # 音频转文字
-steps/31_smart_podcast.py       # AI 生成播客笔记
+# 1. 写内容特有步骤（按 pipeline 子目录，键各自从 01 递增）
+steps/audio/step_03_transcript_parse.py   # 转写解析
+steps/audio/step_04_smart_podcast.py      # AI 生成播客笔记
 
-# 2. 在 pipelines.yaml 新增 pipeline
-# podcast:
-#   steps:
-#     - name: "00_download"
+# 2. 在 pipelines.yaml 新增 pipeline（GitLab-CI 风格：jobs + needs）
+# audio:
+#   jobs:
+#     "01_download":
+#       run: steps.common.step_01_download
 #       pool: io
-#       depends_on: []
-#     - name: "30_audio_transcribe"
-#       pool: gpu
-#       depends_on: ["00_download"]
-#     - name: "31_smart_podcast"
-#       pool: ai
-#       depends_on: ["30_audio_transcribe"]
+#     "02_whisper":              # 复用 video 的 whisper 步
+#       run: steps.video.step_02_whisper
+#       needs: ["01_download"]
+#       tags: ["gpu"]
+#     "04_smart_podcast":
+#       run: steps.audio.step_04_smart_podcast
+#       needs: ["03_transcript_parse"]
 #       tags: []
 
 # 3. 在 05-content-adapters 里加来源检测
