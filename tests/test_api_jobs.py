@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 from shared.config import AppConfig, load_config
 from shared.db import Database
+from shared.models import Collection, Job
 from api.main import create_app
 from api.routes.jobs import _detect_content_type, _pipeline_for
 
@@ -217,6 +218,60 @@ class TestPathTraversal:
     async def test_job_id_with_slash_rejected(self, client):
         resp = await client.delete("/api/jobs/j_test/../secrets")
         assert resp.status_code in (400, 404, 422)
+
+
+class TestJobFiltersAndFacets:
+    @pytest.mark.asyncio
+    async def test_filter_domain_source(self, client, app):
+        db = app.state.db
+        db.create_job(Job(id="j1", content_type="video", pipeline="video", domain="finance", source="bilibili"))
+        db.create_job(Job(id="j2", content_type="paper", pipeline="paper", domain="ml", source="arxiv"))
+        db.create_job(Job(id="j3", content_type="video", pipeline="video", domain="finance", source="bilibili"))
+        assert (await client.get("/api/jobs?domain=finance")).json()["total"] == 2
+        assert (await client.get("/api/jobs?source=arxiv")).json()["total"] == 1
+        assert (await client.get("/api/jobs?domain=finance&source=bilibili")).json()["total"] == 2
+
+    @pytest.mark.asyncio
+    async def test_facets(self, client, app):
+        db = app.state.db
+        db.create_job(Job(id="j1", content_type="video", pipeline="video", domain="finance", source="bilibili"))
+        db.create_job(Job(id="j2", content_type="paper", pipeline="paper", domain="ml", source="arxiv"))
+        db.create_job(Job(id="j3", content_type="video", pipeline="video", domain="finance", source="bilibili"))
+        f = (await client.get("/api/jobs/facets")).json()       # 须未被 /{job_id} 捕获
+        assert f["source"]["bilibili"] == 2 and f["source"]["arxiv"] == 1
+        assert f["domain"]["finance"] == 2 and f["domain"]["ml"] == 1
+
+
+class TestJobConcepts:
+    @pytest.mark.asyncio
+    async def test_reverse_lookup(self, client, app):
+        db = app.state.db
+        db.create_job(Job(id="jx", content_type="video", pipeline="video", domain="finance"))
+        db.add_glossary_suggestion("finance", "坐庄", "jx", "video", "scene-3")
+        db.add_glossary_suggestion("finance", "无关概念", "jother", "video")
+        body = (await client.get("/api/jobs/jx/concepts")).json()
+        terms = {c["term"] for c in body}
+        assert "坐庄" in terms and "无关概念" not in terms       # 只返命中本 job 的概念
+        c = next(c for c in body if c["term"] == "坐庄")
+        assert c["job_occurrences"][0]["job_id"] == "jx" and c["job_occurrences"][0]["location"] == "scene-3"
+
+    @pytest.mark.asyncio
+    async def test_concepts_404(self, client):
+        assert (await client.get("/api/jobs/nope/concepts")).status_code == 404
+
+
+class TestCollectionName:
+    @pytest.mark.asyncio
+    async def test_collection_name_in_detail(self, client, app):
+        db = app.state.db
+        db.create_collection(Collection(id="c1", name="我的合集", domain="finance"))
+        db.create_job(Job(id="jc", content_type="video", pipeline="video", domain="finance", collection_id="c1"))
+        assert (await client.get("/api/jobs/jc")).json()["collection_name"] == "我的合集"
+
+    @pytest.mark.asyncio
+    async def test_collection_name_null_when_unassigned(self, client, app):
+        app.state.db.create_job(Job(id="ju", content_type="video", pipeline="video", domain="finance"))
+        assert (await client.get("/api/jobs/ju")).json()["collection_name"] is None
 
     @pytest.mark.asyncio
     async def test_retry_nonexistent_job(self, client):

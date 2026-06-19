@@ -304,6 +304,7 @@ class Database:
         limit: int = 20,
         offset: int = 0,
         domain: str | None = None,
+        source: str | None = None,
     ) -> tuple[int, list[Job]]:
         where_parts: list[str] = []
         params: list = []
@@ -316,6 +317,9 @@ class Database:
         if domain:
             where_parts.append("domain=?")
             params.append(domain)
+        if source:
+            where_parts.append("source=?")
+            params.append(source)
 
         where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
@@ -336,6 +340,35 @@ class Database:
             "SELECT status, COUNT(*) AS n FROM jobs GROUP BY status"
         ).fetchall()
         return {r["status"]: r["n"] for r in rows}
+
+    def job_facets(self) -> dict[str, dict]:
+        """全量 jobs 按 source / domain / status 的计数,供前端过滤 chip 显示(后端聚合,非客户端基于已加载)。"""
+        def grp(col: str) -> dict:
+            return {
+                r[0]: r[1]
+                for r in self._conn.execute(
+                    f"SELECT {col}, COUNT(*) FROM jobs GROUP BY {col}"
+                )
+                if r[0] is not None
+            }
+        return {"source": grp("source"), "domain": grp("domain"), "status": grp("status")}
+
+    def glossary_for_job(self, job_id: str, domain: str | None = None) -> list[dict]:
+        """反查:occurrences 含该 job_id 的概念(LIKE 粗筛 + 精确过滤防子串误命中),供内容详情·概念 tab。"""
+        sql = "SELECT * FROM glossary WHERE occurrences LIKE ?"
+        params: list = [f'%"{job_id}"%']
+        if domain:
+            sql += " AND domain=?"
+            params.append(domain)
+        out: list[dict] = []
+        for r in self._conn.execute(sql, params):
+            g = self._row_to_glossary(r)
+            occs = g.get("occurrences") or []
+            hit = [o for o in occs if isinstance(o, dict) and o.get("job_id") == job_id]
+            if hit:
+                g["job_occurrences"] = hit       # 该 job 命中的位置(首次出现等)
+                out.append(g)
+        return out
 
     def update_job(self, job_id: str, **fields) -> None:
         if not fields:

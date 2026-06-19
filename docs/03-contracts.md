@@ -63,10 +63,10 @@ Response `201`:
 #### GET /api/jobs — 任务列表
 
 ```
-GET /api/jobs?status=processing&limit=20&offset=0
+GET /api/jobs?status=processing&domain=deep-learning&source=bilibili&limit=20&offset=0
 ```
 
-Response `200`:
+查询参数：`status`、`collection_id`、`domain`、`source`（均可选，AND 组合）、`limit`（默认 20）、`offset`（默认 0）。Response `200`（每项含 `domain` / `collection_id`）：
 ```json
 {
   "total": 44,
@@ -78,15 +78,28 @@ Response `200`:
       "status": "processing",
       "progress_pct": 60,
       "source": "bilibili",
+      "domain": "deep-learning",
+      "collection_id": "c_xxx",
       "created_at": "2026-05-16T20:00:00+08:00"
     }
   ]
 }
 ```
 
+#### GET /api/jobs/facets — 任务分面计数
+
+全量 jobs 按 `source` / `domain` / `status` 分组计数，供前端过滤 chip 显示（后端聚合，非客户端基于已加载列表）。Response `200`：
+```json
+{
+  "source": {"bilibili": 30, "arxiv": 8, "youtube": 6},
+  "domain": {"deep-learning": 42, "finance": 30},
+  "status": {"done": 60, "processing": 2, "failed": 1}
+}
+```
+
 #### GET /api/jobs/{id} — 任务详情
 
-Response `200`:
+Response `200`（`collection_name` 由 `collection_id` join 出，无归属/集合已删则 `null`）：
 ```json
 {
   "job_id": "j_20260516_abc123",
@@ -96,6 +109,8 @@ Response `200`:
   "progress_pct": 60,
   "domain": "deep-learning",
   "source": "bilibili",
+  "collection_id": "c_xxx",
+  "collection_name": "我的合集",
   "meta": {"duration_sec": 485},
   "created_at": "2026-05-16T20:00:00+08:00",
   "steps": [
@@ -111,6 +126,27 @@ Response `200`:
     {"name": "09_review",     "status": "waiting", "duration_sec": null, "meta": {}}
   ]
 }
+```
+
+#### GET /api/jobs/{id}/concepts — 该内容命中的概念（反查）
+
+返回 `occurrences` 含本 job 的概念（按本 job 的 `domain` 过滤；LIKE 粗筛 + 精确过滤防子串误命中）。每项为 `GlossaryTermResponse`（见 1.10）外加 `job_occurrences` = 本 job 命中的出现位置数组。未找到 job 返回 `404`。
+
+```json
+[
+  {
+    "domain": "deep-learning",
+    "term": "注意力机制",
+    "definition": "...",
+    "occurrences": [{"job_id": "j_xxx", "content_type": "video", "location": "scene-3"}],
+    "related": ["Transformer"],
+    "status": "accepted",
+    "is_topic": false,
+    "definition_locked": false,
+    "created_at": "...",
+    "job_occurrences": [{"job_id": "j_xxx", "content_type": "video", "location": "scene-3"}]
+  }
+]
 ```
 
 #### POST /api/jobs/{id}/retry — 重试失败任务

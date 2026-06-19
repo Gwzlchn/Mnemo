@@ -227,13 +227,15 @@ async def upload_job(
 async def list_jobs(
     status: str | None = None,
     collection_id: str | None = None,
+    domain: str | None = None,
+    source: str | None = None,
     limit: int = 20,
     offset: int = 0,
     db: Database = Depends(get_db),
 ):
     total, jobs = await asyncio.to_thread(
         db.list_jobs, status=status, collection_id=collection_id,
-        limit=limit, offset=offset,
+        limit=limit, offset=offset, domain=domain, source=source,
     )
     return JobListResponse(
         total=total,
@@ -249,6 +251,13 @@ async def list_jobs(
     )
 
 
+@router.get("/facets")
+async def job_facets(db: Database = Depends(get_db)):
+    """全量 jobs 按 source / domain / status 的计数,供前端过滤 chip。
+    注:须在 /{job_id} 之前注册,否则被路径参数捕获为 job_id='facets'。"""
+    return await asyncio.to_thread(db.job_facets)
+
+
 @router.get("/{job_id}")
 async def get_job(
     job_id: str,
@@ -262,6 +271,11 @@ async def get_job(
         raise HTTPException(404, "job not found")
 
     steps = await asyncio.to_thread(db.get_steps, job_id)
+    # collection_id → 集合名(供元信息显示);无归属或集合已删则 None。
+    collection_name = None
+    if job.collection_id:
+        coll = await asyncio.to_thread(db.get_collection, job.collection_id)
+        collection_name = coll.name if coll else None
     # 步骤中文名取自 pipelines.yaml(单一事实源),按本 job 的 pipeline 查表。
     labels = {
         s["name"]: s.get("label")
@@ -282,7 +296,7 @@ async def get_job(
         published_at=published_at,
         title=job.title, url=job.url,
         progress_pct=job.progress_pct, source=job.source, domain=job.domain,
-        collection_id=job.collection_id,
+        collection_id=job.collection_id, collection_name=collection_name,
         meta=job.meta,
         steps=[
             StepResponse(
@@ -294,6 +308,19 @@ async def get_job(
             for s in steps
         ],
     )
+
+
+@router.get("/{job_id}/concepts")
+async def job_concepts(
+    job_id: str,
+    db: Database = Depends(get_db),
+):
+    """该内容命中的概念(occurrences 含本 job),含本 job 命中的出现位置 job_occurrences。"""
+    _validate_job_id(job_id)
+    job = await asyncio.to_thread(db.get_job, job_id)
+    if not job:
+        raise HTTPException(404, "job not found")
+    return await asyncio.to_thread(db.glossary_for_job, job_id, job.domain)
 
 
 @router.get("/{job_id}/steps/{step}/log")

@@ -29,6 +29,7 @@ class JobResponse(BaseModel):
 
 
 class JobDetailResponse(JobResponse):
+    collection_name: str | None = None   # 由 collection_id join 出的集合名(无则 null)
     meta: dict = Field(default_factory=dict)
     steps: list[StepResponse] = Field(default_factory=list)
 
