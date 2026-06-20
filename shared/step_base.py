@@ -19,6 +19,11 @@ from .errors import ProcessingError, StepError
 from .models import AIUsage, LLMRequest
 
 
+# 送评上限:绝大多数笔记可整篇覆盖;超长则在 review 里标 coverage,避免"只评前段却报整篇分"。
+REVIEW_NOTE_LIMIT = 20000   # 智能笔记(被评对象)
+REVIEW_REF_LIMIT = 8000     # 机械稿/转写参照(对照用,不必全量)
+
+
 def file_hash(path: Path) -> str:
     """计算文件 SHA-256，返回 'sha256:{hex}' 格式。"""
     h = hashlib.sha256()
@@ -221,6 +226,17 @@ class StepBase:
         header = f"> 生成于 {now.strftime('%Y/%m/%d %H:%M:%S')} · 方式 {prov} · 模型 {model}\n\n"
         self.write_output(rel, header + content)
         return rel
+
+    @staticmethod
+    def clip_note_for_review(smart: str) -> tuple[str, dict]:
+        """送评智能笔记按 REVIEW_NOTE_LIMIT 截断,并返回覆盖率标注(评分只对覆盖范围负责)。
+        返回 (截断后文本, coverage)。coverage 由评审步写进 review.json。"""
+        cov = {
+            "note_chars": len(smart),
+            "reviewed_chars": min(len(smart), REVIEW_NOTE_LIMIT),
+            "truncated": len(smart) > REVIEW_NOTE_LIMIT,
+        }
+        return smart[:REVIEW_NOTE_LIMIT], cov
 
     def write_review(self, review: dict, note_file: str | None) -> None:
         """评审结果落盘:补记 生成时间 / 方式 / 模型 + 评的是哪一版智能笔记(note_file)。

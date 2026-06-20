@@ -50,7 +50,13 @@ def select_whisper_model() -> tuple[str, str]:
 
 
 def select_ocr_backend() -> str:
-    """选择 OCR 后端：rapidocr（CPU）或 paddleocr（GPU）。"""
+    """选择 OCR 后端。当前仅实现 rapidocr(CPU/ONNX);paddleocr-GPU 属 M5 尚未接入,
+    故即便 GPU 机误设 USE_PADDLE_OCR=1 也回退 rapidocr + 告警,绝不返回会让 OCR 步崩溃的后端
+    (step_06_ocr 对未实现后端 raise NotImplementedError,此处在源头挡掉)。"""
     if has_nvidia_gpu() and os.environ.get("USE_PADDLE_OCR") == "1":
-        return "paddleocr"
+        import structlog
+        structlog.get_logger().warning(
+            "paddleocr_not_implemented",
+            msg="USE_PADDLE_OCR=1 但 paddleocr-GPU 尚未接入(M5),本次回退 rapidocr",
+        )
     return "rapidocr"

@@ -27,6 +27,7 @@ class PaperReviewStep(StepBase):
         smart_path = self.latest_smart_note()
         smart = smart_path.read_text(encoding="utf-8") if smart_path else ""
         note_file = str(smart_path.relative_to(self.job_dir)) if smart_path else None
+        smart_clip, coverage = self.clip_note_for_review(smart)
         sections = self.load_json("intermediate/sections.json")
 
         original_titles = [
@@ -56,7 +57,7 @@ class PaperReviewStep(StepBase):
             '  "top3_improvements": ["改进建议1", "改进建议2", "改进建议3"]\n'
             "}\n\n"
             f"原文章节：{json.dumps(original_titles, ensure_ascii=False)}\n\n"
-            f"--- 笔记 ---\n{smart[:5000]}"
+            f"--- 笔记 ---\n{smart_clip}"
         )
 
         review, parse_failed = self.call_ai_json(
@@ -75,8 +76,10 @@ class PaperReviewStep(StepBase):
             ],
         )
 
+        review["review_coverage"] = coverage
         self.write_review(review, note_file)
-        return {"overall": review.get("overall", 0), "parse_failed": parse_failed, "note_file": note_file}
+        return {"overall": review.get("overall", 0), "parse_failed": parse_failed,
+                "note_file": note_file, "coverage_truncated": coverage["truncated"]}
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from shared.step_base import StepBase, file_hash
+from shared.step_base import REVIEW_REF_LIMIT, StepBase, file_hash
 
 
 class PodcastReviewStep(StepBase):
@@ -26,6 +26,7 @@ class PodcastReviewStep(StepBase):
         smart_path = self.latest_smart_note()
         smart = smart_path.read_text(encoding="utf-8") if smart_path else ""
         note_file = str(smart_path.relative_to(self.job_dir)) if smart_path else None
+        smart_clip, coverage = self.clip_note_for_review(smart)
         transcript = self.load_json("intermediate/transcript.json")
         full_text = transcript.get("full_text", "")
 
@@ -51,8 +52,8 @@ class PodcastReviewStep(StepBase):
             '  "missing_concepts": ["遗漏的重要概念"],\n'
             '  "top3_improvements": ["改进建议1", "改进建议2", "改进建议3"]\n'
             "}\n\n"
-            f"--- 转写正文（节选）---\n{full_text[:3000]}\n\n"
-            f"--- 笔记 ---\n{smart[:5000]}"
+            f"--- 转写正文（节选）---\n{full_text[:REVIEW_REF_LIMIT]}\n\n"
+            f"--- 笔记 ---\n{smart_clip}"
         )
 
         review, parse_failed = self.call_ai_json(
@@ -71,8 +72,10 @@ class PodcastReviewStep(StepBase):
             ],
         )
 
+        review["review_coverage"] = coverage
         self.write_review(review, note_file)
-        return {"overall": review.get("overall", 0), "parse_failed": parse_failed, "note_file": note_file}
+        return {"overall": review.get("overall", 0), "parse_failed": parse_failed,
+                "note_file": note_file, "coverage_truncated": coverage["truncated"]}
 
 
 if __name__ == "__main__":
