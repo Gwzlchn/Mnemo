@@ -90,7 +90,7 @@ video:
       image: mnemo/step-heavy
       needs: ["03_scene"]
       timeout: 1800   # cv2 逐场景 SSIM 代表帧:长视频(数百场景)耗时,远超 .cpu-step 的 120s
-      outputs: ["intermediate/frames.json", "assets/*"]
+      outputs: ["intermediate/candidates.json", "assets/*"]
 
     "05_dedup":
       label: "画面去重"
