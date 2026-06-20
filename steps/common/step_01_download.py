@@ -91,9 +91,10 @@ class DownloadStep(StepBase):
             "-q", "80",   # 1080P 上限:平衡主视觉清晰度与 NAS↔ECS 隧道/MinIO 带宽
         ]
 
-        # 优先用 job.json 注入的 SESSDATA(扫码登录入库,随任务下发到远程 worker);
-        # 否则回退到本地 cookie 文件(现状);两者皆无则匿名下载,降级 480P。
-        sessdata = self.load_json("job.json").get("sessdata")
+        # 优先用本机侧载凭证文件 input/.credentials.json 里的 SESSDATA(扫码登录入库;
+        # 该文件只存在于同机 LocalStorage,绝不下发远端 worker——见 shared/storage.is_credential_file);
+        # 否则回退本地 cookie 文件;两者皆无则匿名下载,降级 480P。
+        sessdata = self._read_sessdata()
         cookies = Path("/data/cookies/bilibili.txt")
         if sessdata:
             cmd.extend(["-c", sessdata])
@@ -111,6 +112,18 @@ class DownloadStep(StepBase):
             self.log.warn("yutto_failed_ytdlp_fallback", error=str(e)[:200])
             self._download_bili_ytdlp(target_url, input_dir, sessdata)
         self._verify_download(input_dir / "source.mp4")
+
+    def _read_sessdata(self) -> str | None:
+        """从本机侧载凭证文件读 SESSDATA(只在同机 LocalStorage 存在;远端 worker 取不到)。
+        文件缺失/损坏/无字段均返回 None,由调用方回退本地 cookie 文件。"""
+        import json as _json
+        cred = self.job_dir / "input" / ".credentials.json"
+        if not cred.is_file():
+            return None
+        try:
+            return _json.loads(cred.read_text(encoding="utf-8")).get("sessdata") or None
+        except (OSError, ValueError):
+            return None
 
     def _download_bili_ytdlp(self, url: str, input_dir: Path, sessdata: str | None) -> None:
         """yutto 失败时的兜底引擎。"""

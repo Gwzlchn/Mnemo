@@ -196,7 +196,7 @@ class TestStatusLogout:
 class TestCreateJobSessdataInjection:
     @pytest.mark.asyncio
     async def test_bilibili_job_injects_sessdata(self, client, db, test_config):
-        """已登录时，B站任务的 job.json 应写入 sessdata，供下载步注入 yutto。"""
+        """已登录时,SESSDATA 写入本机侧载凭证文件(不进 job.json),供下载步本地读取。"""
         db.set_credential(
             "bili_cookies", json.dumps({"sessdata": "INJECTED_SD", "uname": "u"})
         )
@@ -207,11 +207,13 @@ class TestCreateJobSessdataInjection:
         job_id = r.json()["job_id"]
         job_doc = json.loads((test_config.jobs_dir / job_id / "job.json").read_text())
         assert job_doc["source"] == "bilibili"
-        assert job_doc["sessdata"] == "INJECTED_SD"
+        assert "sessdata" not in job_doc          # 不再进通用 job.json(会下发远端)
+        cred = test_config.jobs_dir / job_id / "input" / ".credentials.json"
+        assert json.loads(cred.read_text())["sessdata"] == "INJECTED_SD"
 
     @pytest.mark.asyncio
     async def test_bilibili_job_no_cookie_no_sessdata(self, client, db, test_config):
-        """未登录时不写 sessdata，保持匿名下载现状。"""
+        """未登录时不写凭证文件,保持匿名下载现状。"""
         r = await client.post(
             "/api/jobs", json={"url": "https://www.bilibili.com/video/BV1xx411c7mD"}
         )
@@ -219,6 +221,7 @@ class TestCreateJobSessdataInjection:
         job_id = r.json()["job_id"]
         job_doc = json.loads((test_config.jobs_dir / job_id / "job.json").read_text())
         assert "sessdata" not in job_doc
+        assert not (test_config.jobs_dir / job_id / "input" / ".credentials.json").exists()
 
     @pytest.mark.asyncio
     async def test_non_bilibili_job_no_sessdata(self, client, db, test_config):
@@ -231,3 +234,4 @@ class TestCreateJobSessdataInjection:
         job_id = r.json()["job_id"]
         job_doc = json.loads((test_config.jobs_dir / job_id / "job.json").read_text())
         assert "sessdata" not in job_doc
+        assert not (test_config.jobs_dir / job_id / "input" / ".credentials.json").exists()

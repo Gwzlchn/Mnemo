@@ -17,6 +17,16 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 
+# B站 SESSDATA 等敏感凭证的本地侧载文件:只供同机(LocalStorage)下载步本地读取,
+# 绝不入中心对象存储、绝不经 runner 网关下发给远端 worker(见 RemoteStorage / api/routes/runner.py)。
+CREDENTIAL_REL = "input/.credentials.json"
+
+
+def is_credential_file(rel: str) -> bool:
+    """是否为敏感凭证侧载文件(按 basename 判,跨平台)。"""
+    return rel.replace("\\", "/").rsplit("/", 1)[-1] == ".credentials.json"
+
+
 class StorageBackend(Protocol):
     async def pull(self, job_id: str, step: str) -> Path: ...
     async def push(self, job_id: str, step: str, work_dir: Path) -> None: ...
@@ -175,6 +185,8 @@ class RemoteStorage:
             if not path.is_file():
                 continue
             rel = str(path.relative_to(work_dir))
+            if is_credential_file(rel):
+                continue  # 敏感凭证永不上行中心存储
             st = path.stat()
             prev = snapshot.get(rel)
             if prev is not None and prev == (st.st_size, st.st_mtime):
@@ -189,6 +201,8 @@ class RemoteStorage:
         shutil.rmtree(work_dir, ignore_errors=True)
 
     async def write_file(self, job_id: str, rel_path: str, data: bytes) -> None:
+        if is_credential_file(rel_path):
+            return  # 敏感凭证不入中心对象存储(防下发到远端 worker);仅 LocalStorage 本机持有
         await asyncio.to_thread(self._write_file_sync, job_id, rel_path, data)
 
     def _write_file_sync(self, job_id: str, rel_path: str, data: bytes) -> None:
@@ -355,8 +369,8 @@ class GatewayStorage:
             if not path.is_file():
                 continue
             rel = path.relative_to(work_dir).as_posix()
-            if self._is_no_push(rel):
-                continue  # 大源文件等:不回传,只留本机(配 NO_PUSH glob)
+            if is_credential_file(rel) or self._is_no_push(rel):
+                continue  # 敏感凭证 / 大源文件等:不回传中心(凭证绝不上行;源文件配 NO_PUSH glob)
             st = path.stat()
             prev = snapshot.get(rel)
             if prev is not None and prev == (st.st_size, st.st_mtime):

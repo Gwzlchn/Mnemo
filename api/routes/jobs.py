@@ -16,7 +16,7 @@ from shared.db import Database
 from shared.models import Job, JobStatus, Step, StepStatus, derive_job_id
 from shared.redis_client import RedisClient
 from shared.source_detect import detect_source
-from shared.storage import StorageBackend
+from shared.storage import CREDENTIAL_REL, StorageBackend
 
 from api.deps import get_config, get_db, get_redis, get_storage, verify_token
 from api.schemas import (
@@ -124,14 +124,19 @@ async def create_job_core(
         "id": job_id, "url": url, "source": source, "content_type": ctype,
         "domain": domain, "style_tags": style_tags, "created_at": _now_iso(),
     }
-    if source == "bilibili":
-        sessdata = await asyncio.to_thread(_bili_sessdata, db)
-        if sessdata:
-            job_doc["sessdata"] = sessdata
     await storage.write_file(
         job_id, "job.json",
         json.dumps(job_doc, ensure_ascii=False, indent=2).encode("utf-8"),
     )
+    # SESSDATA 不进 job.json(那是会下发到远端 worker 的通用文档);写入本机侧载凭证文件,
+    # 由 storage/runner 保证绝不入中心存储、绝不下发远端(见 shared/storage.is_credential_file)。
+    if source == "bilibili":
+        sessdata = await asyncio.to_thread(_bili_sessdata, db)
+        if sessdata:
+            await storage.write_file(
+                job_id, CREDENTIAL_REL,
+                json.dumps({"sessdata": sessdata}, ensure_ascii=False).encode("utf-8"),
+            )
     job = Job(
         id=job_id, content_type=ctype, pipeline=pipeline, url=url, title=title,
         domain=domain, source=source, style_tags=style_tags, collection_id=collection_id,

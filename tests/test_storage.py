@@ -10,7 +10,20 @@ from shared.storage import (
     LocalStorage,
     RemoteStorage,
     create_storage,
+    is_credential_file,
 )
+
+
+class TestIsCredentialFile:
+    def test_matches_sidecar(self):
+        assert is_credential_file("input/.credentials.json")
+        assert is_credential_file(".credentials.json")
+        assert is_credential_file("input\\.credentials.json")  # windows 分隔符
+
+    def test_rejects_others(self):
+        assert not is_credential_file("job.json")
+        assert not is_credential_file("output/notes.md")
+        assert not is_credential_file("input/source.mp4")
 
 
 class TestLocalStorage:

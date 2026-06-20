@@ -583,6 +583,27 @@ class TestArtifacts:
         assert got.headers["content-type"] == "application/octet-stream"
 
     @pytest.mark.asyncio
+    async def test_credential_sidecar_not_listed_or_served(self, jobs_client, test_config):
+        """敏感凭证侧载文件:远端 worker 既列不到、也取不到(404),只供同机本地读。"""
+        _, token = await _register_real(jobs_client)
+        h = {"Authorization": f"Bearer {token}"}
+        # 直接在 API 端 LocalStorage 放一个凭证文件 + 一个普通产物
+        jd = test_config.jobs_dir / "j1"
+        (jd / "input").mkdir(parents=True, exist_ok=True)
+        (jd / "input" / ".credentials.json").write_text('{"sessdata": "SECRET"}')
+        (jd / "output").mkdir(parents=True, exist_ok=True)
+        (jd / "output" / "notes.md").write_text("hi")
+
+        listed = (await jobs_client.get("/api/runner/jobs/j1/artifacts", headers=h)).json()
+        assert "input/.credentials.json" not in listed["files"]
+        assert "output/notes.md" in listed["files"]
+
+        got = await jobs_client.get(
+            "/api/runner/jobs/j1/artifacts/input/.credentials.json", headers=h,
+        )
+        assert got.status_code == 404
+
+    @pytest.mark.asyncio
     async def test_get_missing_returns_404(self, jobs_client):
         _, token = await _register_real(jobs_client)
         resp = await jobs_client.get(

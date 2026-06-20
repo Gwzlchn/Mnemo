@@ -128,8 +128,22 @@ Worker 执行前校验 job_id + step + url，不合法直接丢弃。
 | Cloudflare Tunnel Token | 主机 .env | cloudflared |
 | Claude OAuth | 主机 ~/.claude/ | Claude Worker |
 | 平台 cookies | 主机 /data/cookies/ | Download Worker |
+| B站 SESSDATA(扫码登录) | 主机 SQLite app_credentials + job 本机侧载文件 | 同机 Download Worker |
 
 **原则**：Claude 凭证和平台 cookies 只在主机，不传到中转/GPU。
+
+### B站 SESSDATA 的传播边界
+
+扫码登录得到的 SESSDATA **不写进 `job.json`**（job.json 是会经对象存储/网关下发到远端 worker
+的通用文档），而是写入该 job 的本机侧载文件 `input/.credentials.json`：
+- `shared/storage.is_credential_file` 识别此文件，`RemoteStorage`/`GatewayStorage` **绝不上行/回传**它；
+- `api/routes/runner.py` 的产物清单/读取端点对它一律**不列、404**，故远端 worker 取不到；
+- 仅同机 `LocalStorage`（核心机的 Download Worker，本地直读 `/data/jobs/...`）能读到它；
+- 公共/runner 产物 API 也隐藏它（`.` 前缀 + 专门过滤）。
+
+**残留 / 待办**：(a) 凭证在 SQLite `app_credentials` 仍为**明文**存储（at-rest 加密待做）；
+(b) 纯 MinIO 直连的多机部署不分发该凭证——此类部署的远端 Download Worker 请改用本机
+`/data/cookies/bilibili.txt`（或仅在单机/网关模式使用扫码登录）。
 
 ## 7. 应急预案
 

@@ -16,7 +16,7 @@ from shared import runner_ops
 from shared.db import Database
 from shared.models import AIUsage, Worker, generate_worker_id
 from shared.redis_client import RedisClient
-from shared.storage import StorageBackend
+from shared.storage import StorageBackend, is_credential_file
 from api.deps import (
     get_db,
     get_redis,
@@ -323,9 +323,10 @@ async def list_artifacts(
     worker_id: str = Depends(verify_worker_token),
     storage: StorageBackend = Depends(get_storage),
 ):
-    """产物清单:GatewayStorage.pull 据此逐个拉取。"""
+    """产物清单:GatewayStorage.pull 据此逐个拉取。敏感凭证侧载文件不下发给远端 worker。"""
     _validate_job_id(job_id)
-    return {"files": await storage.list_files(job_id)}
+    files = await storage.list_files(job_id)
+    return {"files": [f for f in files if not is_credential_file(f)]}
 
 
 @router.get("/jobs/{job_id}/artifacts/{rel:path}")
@@ -335,9 +336,12 @@ async def get_artifact(
     worker_id: str = Depends(verify_worker_token),
     storage: StorageBackend = Depends(get_storage),
 ):
-    """取单个产物字节;不存在返回 404(GatewayStorage.read_file 据此返回 None)。"""
+    """取单个产物字节;不存在返回 404(GatewayStorage.read_file 据此返回 None)。
+    敏感凭证侧载文件对远端 worker 一律 404(只供同机 LocalStorage 本地读)。"""
     _validate_job_id(job_id)
     _validate_rel(rel)
+    if is_credential_file(rel):
+        raise HTTPException(404, "artifact not found")
     data = await storage.read_file(job_id, rel)
     if data is None:
         raise HTTPException(404, "artifact not found")
