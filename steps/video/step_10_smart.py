@@ -1,4 +1,4 @@
-"""Step 08: 智能版笔记。AI 将机械版素材重组为结构化笔记。"""
+"""Step 10: 智能版笔记。AI 将机械版素材重组为结构化笔记。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Step 14: 论文智能笔记。AI 将论文内容重组为中文结构化笔记。"""
+"""Step 05: 论文智能笔记。AI 将论文内容重组为中文结构化笔记。"""
 
 from __future__ import annotations
 

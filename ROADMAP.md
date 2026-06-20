@@ -6,8 +6,8 @@
 
 **进度**：M1 核心 MVP · Worker 层 GitLab-runner 化 · M2 知识库 · M6 文章+播客 全部完成
 **能力**：视频 / 论文 / 文章 / 播客四类入库；远程 worker 单出站 HTTPS 接入、真零隧道；笔记按集合组织、FTS5 全文搜索；领域中心式知识库 + 概念图（术语 + 主题，多源类型化 occurrence）；术语库 CRUD/采纳并回流 Profile；订阅集合（B 站 UP 追更）
-**测试**：单元测试 903 pass / 18 skip（容器内 docker compose test 实跑，CI 绿）
-**下一步**：M5 GPU 加速（whisper 已就绪待 GPU 机验证 + PaddleOCR-GPU）/ M2.5 AI-native（RAG + 知识对话，先证伪 FTS5 不足再上向量）
+**测试**：单元测试 938 pass / 18 skip（容器内 docker compose test 实跑，CI 绿）
+**下一步**：M5 GPU 加速（whisper 仅在 CPU 上跑过，GPU 路径尚未在真机验证 + PaddleOCR-GPU）/ M2.5 AI-native（RAG + 知识对话，先证伪 FTS5 不足再上向量）
 
 ## 里程碑
 
@@ -55,8 +55,8 @@
 - [x] Bug fixes：tag 调度 + 场景检测 callback + yutto 参数 + 文件搜索范围（6 个）
 - [x] 集成测试：AI 步骤（TC-AI-1 视频 + TC-AI-2 论文，Kimi provider）
 - [x] 并发安全测试（乐观锁 CAS 冲突 + exec_id 去重 + on_step_done 幂等 + skip 死锁守卫 + 延迟任务取消）
-- [ ] Cloudflare Tunnel 公网暴露
-- [ ] B站扫码登录
+- [ ] ~~Cloudflare Tunnel 公网暴露~~（未采用：实际边缘为 Caddy + 反向 SSH，无 cloudflared；见 ADR-0006 已废弃 / ADR-0009 网关）
+- [x] B站扫码登录（passport QR：`/api/bili/login/start` 生成二维码 + `/login/poll` 轮询 + `/status` + `/logout`）
 - [x] CI/CD（GitHub Actions + ghcr.io 镜像发布 + Watchtower 自动部署；Actions 已升 Node 24）
 
 ### M-W · Worker 层 GitLab-runner 化 ✅（2026-06-07 完成）
@@ -131,7 +131,7 @@
 
 目标：处理速度大幅提升。
 
-- [ ] GPU Worker + Whisper
+- [ ] GPU Worker + Whisper（代码就绪，目前仅在 CPU 上验证过；GPU 路径尚未在真机跑通）
 - [ ] PaddleOCR GPU
 - [ ] 场景检测 GPU 解码
 - [x] GitLab Runner 化接入（见 M-W：gateway + token + 每步镜像；GPU worker 单出站接入就绪）

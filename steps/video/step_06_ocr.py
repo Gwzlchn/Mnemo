@@ -1,4 +1,4 @@
-"""Step 04: OCR。RapidOCR (CPU) 或 PaddleOCR (GPU)。"""
+"""Step 06: OCR。RapidOCR (CPU) 或 PaddleOCR (GPU)。"""
 
 from __future__ import annotations
 

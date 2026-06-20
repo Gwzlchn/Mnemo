@@ -1,4 +1,4 @@
-"""Step 03: 截图去重。pHash 快速筛 → SSIM 精确确认。"""
+"""Step 05: 截图去重。pHash 快速筛 → SSIM 精确确认。"""
 
 from __future__ import annotations
 

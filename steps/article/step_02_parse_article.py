@@ -1,4 +1,4 @@
-"""Step 16: 文章解析。trafilatura 从原始 HTML 抽取正文纯文本 + 元数据。"""
+"""Step 02: 文章解析。trafilatura 从原始 HTML 抽取正文纯文本 + 元数据。"""
 
 from __future__ import annotations
 

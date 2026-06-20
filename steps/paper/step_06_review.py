@@ -1,4 +1,4 @@
-"""Step 15: 论文质量评审。复用 11_review 逻辑 + 额外检查公式/图表引用。"""
+"""Step 06: 论文质量评审。复用 video 11_review 逻辑 + 额外检查公式/图表引用。"""
 
 from __future__ import annotations
 

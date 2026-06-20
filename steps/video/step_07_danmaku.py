@@ -1,4 +1,4 @@
-"""Step 05: 弹幕提取。ASS 解析 → 过滤特效 → 按时间排序。"""
+"""Step 07: 弹幕提取。ASS 解析 → 过滤特效 → 按时间排序。"""
 
 from __future__ import annotations
 

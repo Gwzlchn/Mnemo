@@ -1,4 +1,4 @@
-"""Step 20: 播客转写解析。02_whisper 的 SRT → 按时间间隔聚合段落。"""
+"""Step 03: 播客转写解析。02_whisper 的 SRT → 按时间间隔聚合段落。"""
 
 from __future__ import annotations
 

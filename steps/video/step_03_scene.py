@@ -1,4 +1,4 @@
-"""Step 01: 场景检测。PySceneDetect AdaptiveDetector。"""
+"""Step 03: 场景检测。PySceneDetect AdaptiveDetector。"""
 
 from __future__ import annotations
 

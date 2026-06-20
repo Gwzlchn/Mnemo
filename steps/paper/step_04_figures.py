@@ -1,4 +1,4 @@
-"""Step 12: 图表提取。从 PDF 裁切图片 + OCR 文字标注。"""
+"""Step 04: 图表提取。从 PDF 裁切图片 + OCR 文字标注。"""
 
 from __future__ import annotations
 

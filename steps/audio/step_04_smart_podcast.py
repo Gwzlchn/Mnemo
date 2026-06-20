@@ -1,4 +1,4 @@
-"""Step 21: 播客智能笔记。AI 把口语转写重组为中文结构化笔记。"""
+"""Step 04: 播客智能笔记。AI 把口语转写重组为中文结构化笔记。"""
 
 from __future__ import annotations
 

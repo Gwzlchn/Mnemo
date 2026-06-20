@@ -4,7 +4,7 @@
 
 ## 1. 一句话
 
-主机跑全部核心服务，Cloudflare Tunnel 做用户公网入口，远程 worker 经单条出站 HTTPS 接入 API 网关（不开入站端口、不连中心 Redis/MinIO）。
+主机跑全部核心服务，边缘用 Caddy + 反向 SSH 暴露公网入口（早期设计的 Cloudflare Tunnel 未采用，见 [ADR-0006](adr/0006-gateway-cloudflare-tunnel.md) 已废弃），远程 worker 经单条出站 HTTPS 接入 API 网关（不开入站端口、不连中心 Redis/MinIO）。
 
 ## 2. 组件分层
 
@@ -12,7 +12,7 @@
 graph TD
     subgraph presentation["展示层 Presentation"]
         vue["Vue 3 SPA<br/>(手机/电脑浏览器)"]
-        tunnel_p["Cloudflare Tunnel"]
+        tunnel_p["边缘反代<br/>(Caddy + 反向 SSH)"]
         vue --- tunnel_p --- api_entry["API 入口"]
     end
 
@@ -63,7 +63,7 @@ graph TD
     client -->|"HTTPS（公网）或 HTTP（局域网）"| host
 
     subgraph host["主机 (Docker Compose)"]
-        cloudflared["cloudflared — 可选，公网入口"]
+        edge["边缘反代 — 可选，公网入口(Caddy + 反向 SSH)"]
         redis_s["redis — 任务队列"]
         api_s["api — FastAPI"]
         scheduler_s["scheduler — 调度器"]
@@ -77,7 +77,7 @@ graph TD
     style host fill:#f0fdf4,stroke:#16a34a
 ```
 
-局域网直接访问 `http://主机IP:3000`，公网加 Cloudflare Tunnel。
+局域网直接访问 `http://主机IP:3000`，公网经边缘反代（Caddy + 反向 SSH；早期设计的 Cloudflare Tunnel 未采用，见 [ADR-0006](adr/0006-gateway-cloudflare-tunnel.md) 已废弃）。
 
 **开发和测试全部在此模式完成**。所有 Worker 用 `LocalStorage`（直接读写 /data/jobs/），无 MinIO。
 
@@ -88,13 +88,13 @@ graph TD
 ```mermaid
 graph TD
     client2["📱 手机/电脑"]
-    cf["Cloudflare Tunnel"]
+    cf["边缘反代<br/>(Caddy + 反向 SSH)"]
 
     client2 -->|HTTPS| cf
     cf --> host2
 
     subgraph host2["主机（核心）"]
-        h_cf["cloudflared"]
+        h_cf["边缘反代回连"]
         h_api["API（含 /api/runner 网关）+ 调度器"]
         h_redis["Redis（仅核心内部）"]
         h_ai["Worker-ai ×2"]
@@ -123,7 +123,7 @@ graph TD
 
 | 线路 | 路径 | 用途 | worker 被攻破影响 |
 |------|------|------|------------------|
-| 用户访问 | 用户 → Cloudflare → 核心 | Web UI + API | 与 worker 接入正交 |
+| 用户访问 | 用户 → 边缘反代（Caddy + 反向 SSH）→ 核心 | Web UI + API | 与 worker 接入正交 |
 | Worker 接入 | 远程 worker → HTTPS → API `/api/runner/*` | 注册 + 认领 + 上报 + 产物代理 | per-worker token 可吊销；产物经网关，中心 Redis/MinIO 不暴露 |
 
 ### 从 All-in-One 到分层：worker 端只改环境变量
@@ -276,7 +276,7 @@ graph LR
 
 **数据与部署**：
 1. **主机是唯一持久节点**：所有数据在主机。远程 worker 机器丢了不丢数据（产物经网关回传主机持久化）。
-2. **零公网端口**：主机用户入口走 Cloudflare Tunnel 出站；远程 worker 只出站 HTTPS 到 API 网关，自身不开入站端口。
+2. **零公网端口**：主机用户入口经边缘反代（Caddy + 反向 SSH，主机侧仅出站回连）；远程 worker 只出站 HTTPS 到 API 网关，自身不开入站端口。
 3. **容器隔离**：宿主机不装任何依赖，全部在 Docker 内运行。
 
 **步骤与执行**：  
@@ -303,7 +303,7 @@ graph LR
 | 存储 | 本地文件系统（远程 worker 经网关代理产物，见 ADR-0009） | [ADR-0003](adr/0003-storage-local-first.md) |
 | LLM | 多 Provider AI 网关 | [ADR-0004](adr/0004-llm-multi-provider.md) |
 | 前端 | Vue 3 + Vite + Tailwind | [ADR-0005](adr/0005-frontend-vue3.md) |
-| 用户入口 | Cloudflare Tunnel | [ADR-0006](adr/0006-gateway-cloudflare-tunnel.md) |
+| 用户入口 | Caddy + 反向 SSH（边缘反代）；早期设计的 Cloudflare Tunnel 未采用 | [ADR-0006](adr/0006-gateway-cloudflare-tunnel.md)（已废弃） |
 | 远程 Worker 接入 | 出站 HTTPS 网关（`/api/runner/*`） | [ADR-0009](adr/0009-worker-gateway-outbound-https.md)（取代 [ADR-0007](adr/0007-remote-worker-polling.md)） |
 | 搜索 | SQLite FTS5 | [ADR-0008](adr/0008-search-sqlite-fts5.md) |
 
@@ -311,7 +311,7 @@ graph LR
 
 | 阶段 | 状态 | 部署 | 新增组件 | 测试 |
 |------|------|------|---------|------|
-| **M1** | ✅ 完成 | All-in-One | 调度器 + Worker + StorageBackend + AI Gateway + Profile + 风格标签 + 视频 pipeline + 论文 pipeline + API + Worker 管理 + 前端 + Tunnel | 单步验证 + 并发安全 + DRY_RUN |
+| **M1** | ✅ 完成 | All-in-One | 调度器 + Worker + StorageBackend + AI Gateway + Profile + 风格标签 + 视频 pipeline + 论文 pipeline + API + Worker 管理 + 前端 | 单步验证 + 并发安全 + DRY_RUN |
 | **M2** | ✅ 完成 | All-in-One | 领域知识库（概念图：术语/主题/typed occurrences/回流）+ 集合与订阅 + FTS5 搜索 + 术语库 CRUD + 前端全站重建 | 搜索质量 |
 | **M6** | ✅ 完成 | All-in-One | 文章 pipeline + 音频/播客 pipeline | 适配器产物 |
 | **M-W** | ✅ 完成 | 分层部署 | `/api/runner/*` 网关 + GatewayStorage + 远程 GPU Worker | 网关认领回路 + 产物代理 |

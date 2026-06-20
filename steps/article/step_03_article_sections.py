@@ -1,4 +1,4 @@
-"""Step 17: 文章章节结构。纯正文切分为章节 → 树形结构。"""
+"""Step 03: 文章章节结构。纯正文切分为章节 → 树形结构。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Step 18: 文章智能笔记。AI 将文章正文重组为中文结构化笔记。"""
+"""Step 04: 文章智能笔记。AI 将文章正文重组为中文结构化笔记。"""
 
 from __future__ import annotations
 

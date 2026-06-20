@@ -1,4 +1,4 @@
-"""Step 07: 机械版笔记。按时间线拼接截图+OCR+弹幕+逐字稿。"""
+"""Step 09: 机械版笔记。按时间线拼接截图+OCR+弹幕+逐字稿。"""
 
 from __future__ import annotations
 

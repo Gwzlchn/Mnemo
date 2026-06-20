@@ -1,5 +1,7 @@
 # ADR-0006: Cloudflare Tunnel 做公网入口
 
+> **Status: Superseded** — 未采用本方案。实际边缘为 Caddy + 反向 SSH 反代（compose 中无 `cloudflared` 容器），远程 worker 接入改走出站 HTTPS 网关（见 [ADR-0009](0009-worker-gateway-outbound-https.md)）。即不依赖 Cloudflare：主机仍是纯出站，但公网入口由一台前置机的 Caddy 经反向 SSH 隧道回连核心承担。下文保留作历史记录。
+
 ## 背景
 
 主机在内网（如运营商 NAT），无公网 IP。需要方案让手机/外网访问。

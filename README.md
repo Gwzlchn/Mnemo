@@ -64,7 +64,7 @@ Python 3.11 · FastAPI · Redis · SQLite · Vue 3 · Docker
 
 ## 状态
 
-**M1（视频 + 论文 MVP）/ M2（知识库：领域概念图 + 集合订阅 + FTS5 搜索 + 术语库）/ M6（文章 + 播客）/ M-W（远程 worker 网关接入）均已完成**，全量 903 个单元测试在容器内通过（前端已按 Notion 设计全站重建并入 main）。后续里程碑（RAG 对话、学习/复习回路、原生客户端）见 [ROADMAP.md](ROADMAP.md)。
+**M1（视频 + 论文 MVP）/ M2（知识库：领域概念图 + 集合订阅 + FTS5 搜索 + 术语库）/ M6（文章 + 播客）/ M-W（远程 worker 网关接入）均已完成**，全量 938 个单元测试在容器内通过（前端已按 Notion 设计全站重建并入 main）。后续里程碑（RAG 对话、学习/复习回路、原生客户端）见 [ROADMAP.md](ROADMAP.md)。
 
 ## 文档
 
@@ -72,4 +72,8 @@ Python 3.11 · FastAPI · Redis · SQLite · Vue 3 · Docker
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — 覆盖 Mnemo 自身源码。
+
+### Third-party licenses / 运行期依赖许可
+
+Mnemo 自身代码以 MIT 发布，但运行期会调用若干强 copyleft 依赖：**PyMuPDF / `fitz`（AGPL-3.0，用于 `steps/paper/step_02_pdf_parse.py`）**、**yutto / pysrt / bilibili-api（GPL-3.0）** 等。这些组件作为独立库 / 子进程依赖被调用，Mnemo 以自托管方式运行、**不作为打包二进制对外分发**，因此 MIT 仅覆盖 Mnemo 自有源码；如需再分发包含这些依赖的产物，请遵守其各自的 AGPL/GPL 条款。逐工具许可与传染边界分析见 [docs/13-dependencies.md](docs/13-dependencies.md)。

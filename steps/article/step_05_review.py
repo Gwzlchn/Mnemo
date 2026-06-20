@@ -1,4 +1,4 @@
-"""Step 19: 文章笔记质量评审。AI 按维度评分 + 改进建议。"""
+"""Step 05: 文章笔记质量评审。AI 按维度评分 + 改进建议。"""
 
 from __future__ import annotations
 

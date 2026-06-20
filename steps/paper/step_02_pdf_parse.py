@@ -1,4 +1,4 @@
-"""Step 10: PDF 解析。PyMuPDF 提取文本/章节/图表/公式/元数据。"""
+"""Step 02: PDF 解析。PyMuPDF 提取文本/章节/图表/公式/元数据。"""
 
 from __future__ import annotations
 

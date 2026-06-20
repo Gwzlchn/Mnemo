@@ -1,4 +1,4 @@
-"""Step 22: 播客笔记质量评审。AI 对智能笔记打分并给改进建议。"""
+"""Step 05: 播客笔记质量评审。AI 对智能笔记打分并给改进建议。"""
 
 from __future__ import annotations
 

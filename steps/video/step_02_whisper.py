@@ -1,4 +1,4 @@
-"""Step 00b: Whisper 语音转写。GPU 可用时 faster-whisper large-v3，CPU 用 base。"""
+"""Step 02: Whisper 语音转写。GPU 可用时 faster-whisper large-v3，CPU 用 base。"""
 
 from __future__ import annotations
 
