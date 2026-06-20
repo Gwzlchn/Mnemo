@@ -332,12 +332,15 @@ class GatewayStorage:
             # 复用模式:本机已有同名文件就不重拉(留住的 source.mp4 不再走慢链路下行)。
             if self._reuse and dest.is_file():
                 continue
-            resp = await self._client().get(
-                f"/api/runner/jobs/{job_id}/artifacts/{rel}", headers=self._auth(),
-            )
-            resp.raise_for_status()
             dest.parent.mkdir(parents=True, exist_ok=True)
-            await asyncio.to_thread(dest.write_bytes, resp.content)
+            # 流式下载到磁盘:大产物(未配 NO_PUSH 的源文件)不再整体载入内存(审计 #23)。
+            async with self._client().stream(
+                "GET", f"/api/runner/jobs/{job_id}/artifacts/{rel}", headers=self._auth(),
+            ) as resp:
+                resp.raise_for_status()
+                with open(dest, "wb") as f:
+                    async for chunk in resp.aiter_bytes(65536):
+                        f.write(chunk)
         # 快照覆盖 work_dir 全部本机文件(含复用留下的),push 才能据此跳过未改动的文件。
         snapshot: dict[str, tuple[int, float]] = {}
         for path in work_dir.rglob("*"):

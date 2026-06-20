@@ -136,6 +136,7 @@ class TestGatewayStorage:
         client = MagicMock()
         client.get = AsyncMock()
         client.put = AsyncMock()
+        client.stream = MagicMock()   # 流式下载:同步返回 async-CM,再 await __aenter__
         gw._client_obj = client
         return gw, client
 
@@ -147,25 +148,39 @@ class TestGatewayStorage:
         r.raise_for_status = MagicMock()
         return r
 
+    def _stream_cm(self, content=b""):
+        """模拟 httpx client.stream(...) 返回的 async context manager(resp 有 aiter_bytes)。"""
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+
+        async def _aiter(chunk_size=65536):
+            yield content
+
+        resp.aiter_bytes = _aiter
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=resp)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        return cm
+
     @pytest.mark.asyncio
     async def test_pull_downloads_manifest_and_objects_and_snapshots(self, tmp_path):
         gw, client = self._gw(tmp_path)
+        # 清单走 .get(返回 json),逐个产物走流式 .stream 下载到磁盘
+        client.get.return_value = self._resp(json_data={"files": ["job.json", "out/n.md"]})
 
-        def _get(url, headers=None):
-            if url.endswith("/artifacts"):
-                return self._resp(json_data={"files": ["job.json", "out/n.md"]})
-            if url.endswith("job.json"):
-                return self._resp(content=b"J")
-            return self._resp(content=b"NOTE")
+        def _stream(method, url, headers=None):
+            return self._stream_cm(b"J" if url.endswith("job.json") else b"NOTE")
 
-        client.get.side_effect = _get
+        client.stream.side_effect = _stream
 
         work_dir = await gw.pull("j1", "01")
         assert work_dir == tmp_path / "work" / "j1"
         assert (work_dir / "job.json").read_bytes() == b"J"
         assert (work_dir / "out" / "n.md").read_bytes() == b"NOTE"
-        # 认证头带 token_getter 的 token
+        # 清单调用带 token_getter 的认证头
         assert client.get.call_args_list[0].kwargs["headers"]["Authorization"] == "Bearer wt"
+        # 流式下载也带认证头
+        assert client.stream.call_args.kwargs["headers"]["Authorization"] == "Bearer wt"
         # 快照记下,供 push 算增量
         snap = gw._snapshots[str(work_dir)]
         assert set(snap) == {"job.json", "out/n.md"}
@@ -233,6 +248,7 @@ class TestGatewayStorageReuse:
         client = MagicMock()
         client.get = AsyncMock()
         client.put = AsyncMock()
+        client.stream = MagicMock()   # 流式下载:同步返回 async-CM,再 await __aenter__
         gw._client_obj = client
         return gw, client
 
@@ -243,6 +259,19 @@ class TestGatewayStorageReuse:
         r.json.return_value = json_data if json_data is not None else {}
         r.raise_for_status = MagicMock()
         return r
+
+    def _stream_cm(self, content=b""):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+
+        async def _aiter(chunk_size=65536):
+            yield content
+
+        resp.aiter_bytes = _aiter
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=resp)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        return cm
 
     @pytest.mark.asyncio
     async def test_no_push_skips_matching_glob(self, tmp_path, monkeypatch):
@@ -272,18 +301,19 @@ class TestGatewayStorageReuse:
         (work_dir / "input").mkdir(parents=True)
         (work_dir / "input" / "source.mp4").write_bytes(b"LOCAL")
 
-        def _get(url, headers=None):
-            if url.endswith("/artifacts"):
-                return self._resp(json_data={"files": ["input/source.mp4", "job.json"]})
-            if url.endswith("job.json"):
-                return self._resp(content=b"J")
-            raise AssertionError(f"unexpected GET {url}")  # 不该重拉 source.mp4
+        client.get.return_value = self._resp(
+            json_data={"files": ["input/source.mp4", "job.json"]})
 
-        client.get.side_effect = _get
+        def _stream(method, url, headers=None):
+            if url.endswith("job.json"):
+                return self._stream_cm(b"J")
+            raise AssertionError(f"unexpected stream {url}")  # 不该重拉 source.mp4
+
+        client.stream.side_effect = _stream
 
         out = await gw.pull("j1", "02")
-        got = [c.args[0] for c in client.get.call_args_list]
-        assert "/api/runner/jobs/j1/artifacts/input/source.mp4" not in got
+        streamed = [c.args[1] for c in client.stream.call_args_list]
+        assert "/api/runner/jobs/j1/artifacts/input/source.mp4" not in streamed
         assert (out / "input" / "source.mp4").read_bytes() == b"LOCAL"  # 本机原样保留
         # 快照覆盖全部本机文件(含留下的 mp4),push 才不会误传
         assert set(gw._snapshots[str(out)]) == {"input/source.mp4", "job.json"}
