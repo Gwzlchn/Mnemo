@@ -10,8 +10,6 @@ import fakeredis.aioredis
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from shared.config import load_config
-from shared.db import Database
 from shared.redis_client import RedisClient
 from api.main import create_app
 
@@ -20,24 +18,6 @@ REG_TOKEN = "mnw-registration-secret"
 
 def _utcnow():
     return datetime.now(timezone.utc)
-
-
-@pytest.fixture
-def test_config(tmp_path, configs_dir):
-    cfg = load_config(config_dir=configs_dir, data_dir=tmp_path)
-    cfg.jobs_dir = tmp_path / "jobs"
-    cfg.jobs_dir.mkdir()
-    cfg.prompts_dir = tmp_path / "prompts"
-    cfg.prompts_dir.mkdir()
-    return cfg
-
-
-@pytest.fixture
-def db(test_config):
-    d = Database(test_config.db_path)
-    d.init_schema()
-    yield d
-    d.close()
 
 
 @pytest.fixture
@@ -58,13 +38,6 @@ def _clear_env(monkeypatch):
 @pytest.fixture
 def app(db, test_config, redis_mock):
     return create_app(db=db, redis=redis_mock, config=test_config)
-
-
-@pytest.fixture
-async def client(app):
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
 
 
 def _reg_headers(token=REG_TOKEN):

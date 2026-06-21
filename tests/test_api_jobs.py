@@ -7,10 +7,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 
 from shared.config import AppConfig, load_config
-from shared.db import Database
 from shared.models import Collection, Job
 from api.main import create_app
 from api.routes.jobs import _detect_content_type, _pipeline_for
@@ -59,24 +57,6 @@ class TestPipelineFor:
 
 
 @pytest.fixture
-def test_config(tmp_path, configs_dir):
-    cfg = load_config(config_dir=configs_dir, data_dir=tmp_path)
-    cfg.jobs_dir = tmp_path / "jobs"
-    cfg.jobs_dir.mkdir()
-    cfg.prompts_dir = tmp_path / "prompts"
-    cfg.prompts_dir.mkdir()
-    return cfg
-
-
-@pytest.fixture
-def db(test_config):
-    d = Database(test_config.db_path)
-    d.init_schema()
-    yield d
-    d.close()
-
-
-@pytest.fixture
 def mock_redis():
     r = AsyncMock()
     r.publish = AsyncMock()
@@ -86,13 +66,6 @@ def mock_redis():
 @pytest.fixture
 def app(db, mock_redis, test_config):
     return create_app(db=db, redis=mock_redis, config=test_config)
-
-
-@pytest.fixture
-async def client(app):
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
 
 
 class TestCreateJob:
