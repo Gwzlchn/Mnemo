@@ -212,14 +212,36 @@ class StepBase:
                 f"智能笔记疑似 agentic 退化(len={len(s)}, 首标题={first_head[:40]!r}):"
                 "claude 可能只回了过程汇报而非笔记正文,触发重试。"
             )
+        # 4) 归一图片路径:smart 的 prompt 让 AI 写「文件名」,它有时给裸名(无 assets/ 前缀);
+        #    前端按 assets/ 解析本地资源,缺前缀就图裂。给缺前缀的本地图片补 assets/
+        #    (放过 http(s)/绝对路径/已带 assets/ 的)。
+        s = re.sub(
+            r"(!\[[^\]]*\]\()(?!https?:|/|assets/)([^)\s]+\.(?:jpg|jpeg|png|webp|gif))(\))",
+            r"\1assets/\2\3", s,
+        )
         return s
 
-    def write_smart_note(self, content: str) -> str:
+    @staticmethod
+    def _backfill_image_refs(content: str, image_map: dict) -> str:
+        """把 AI 写的 ![描述](img:N) 占位符按资产清单回填成 ![描述](assets/<filename>)。
+        N=资产清单序号(index)。AI 全程不碰路径/文件名 → 不会再漏 assets/ 前缀图裂;
+        未命中的 N(AI 编的/越界/无内嵌位图)整条图片删掉,避免前端渲染出裸占位符文本。"""
+        import re as _re
+        def _sub(m):
+            fn = image_map.get(int(m.group(2)))
+            return f"{m.group(1)}assets/{fn}{m.group(3)}" if fn else ""
+        return _re.sub(r"(!\[[^\]]*\]\()\s*img:(\d+)\s*(\))", _sub, content or "")
+
+    def write_smart_note(self, content: str, image_assets: list | None = None) -> str:
         """智能笔记按版本落盘:output/versions/notes_smart_{provider}_{model}_{时间}.md,
         开头加一行说明(生成时间 / 方式 / 模型)。不再写规范 notes_smart.md——前端取最新版本。
-        落盘前净化 claude agentic 口水(_sanitize_smart_note)。
+        落盘前:① 按清单把 ![..](img:N) 占位符回填成真实 assets/ 路径(image_assets 给 N→filename);
+        ② 净化 agentic 口水 + 兜底补 assets/ 前缀(_sanitize_smart_note)。
         返回相对路径,供评审步在 review.json 里标明评的是哪一版。"""
         prov, model = self.ai_provider_model()
+        if image_assets:
+            image_map = {int(a["n"]): a["filename"] for a in image_assets if a.get("filename")}
+            content = self._backfill_image_refs(content, image_map)
         content = self._sanitize_smart_note(content, prov)
         # 字段内只允许字母数字与 . - (把 _ 也归一为 -),保证文件名按 "_" 切分无歧义。
         safe = lambda s: __import__("re").sub(r"[^0-9A-Za-z.-]+", "-", s).strip("-") or "x"

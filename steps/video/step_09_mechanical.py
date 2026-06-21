@@ -57,7 +57,7 @@ class MechanicalStep(StepBase):
         return missing
 
     # 渲染版本:渲染逻辑变了但输入文件没变时,bump 这个值让幂等失效、强制重渲染。
-    RENDER_VERSION = "v4-timeline-clean"
+    RENDER_VERSION = "v5-asset-frame-naming"
 
     # 时间节粒度:口播按节成段,该节的截图/OCR 并置在同一节内,三者按时间往下读。
     BEAT_SEC = 30

@@ -31,11 +31,16 @@ class SmartPaperStep(StepBase):
         sections = self.load_json("intermediate/sections.json")
         figures = self.load_json("intermediate/figures.json")
 
+        # 有内嵌位图的图(filename 非空、index 有值)给 AI 用 ![中文图注](img:N) 占位符引用,落盘回填。
+        image_assets = [{"n": f["index"], "filename": f["filename"]}
+                        for f in figures
+                        if f.get("filename") and f.get("index") is not None]
+
         prompt = self._build_prompt(sections, figures)
         # 结构化中文笔记常超默认 4096 output tokens,显式抬高上限防被静默截断(claude-cli 无视无害)。
         result = self.call_ai(prompt, max_tokens=8192)
 
-        rel = self.write_smart_note(result)   # 版本化落盘(含生成时间/方式/模型),不再写 notes_smart.md
+        rel = self.write_smart_note(result, image_assets=image_assets)  # 回填占位符 + 版本化落盘
         return {"chars": len(result), "provider": self.last_ai_provider,
                 "model": self.last_ai_model, "note_file": rel}
 
@@ -47,7 +52,7 @@ class SmartPaperStep(StepBase):
             "要求：\n",
             "- 用中文重述论文核心贡献\n",
             "- 保留关键公式（LaTeX 格式）\n",
-            "- 引用重要图表\n",
+            "- 在合适处用 ![中文图注](img:N) 占位符内嵌重要图表(N 见下方图表列表;不要写文件名/路径)\n",
             "- 按逻辑结构组织，不必按原文章节顺序\n",
         ]
 
@@ -72,11 +77,14 @@ class SmartPaperStep(StepBase):
             self._render_section(sec, parts, level=2)
 
         if figures:
-            parts.append("\n--- 图表 ---\n")
+            parts.append("\n--- 图表(有 img:N 的可内嵌:写 ![中文图注](img:N),不要写文件名;无 img:N 的仅文字图注)---\n")
             for fig in figures:
                 caption = fig.get("caption", "")
                 ocr = fig.get("ocr_text", "")
-                parts.append(f"- {fig['id']}: {caption}")
+                if fig.get("filename") and fig.get("index") is not None:
+                    parts.append(f"- img:{fig['index']} | {caption}")
+                else:
+                    parts.append(f"- {fig.get('id', '')}: {caption}")
                 if ocr:
                     parts.append(f" (OCR: {ocr[:200]})")
                 parts.append("\n")

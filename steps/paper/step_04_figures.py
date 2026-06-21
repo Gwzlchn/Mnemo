@@ -45,9 +45,11 @@ class FiguresStep(StepBase):
             caption = fig.get("caption", "")
 
             img_filename = None
+            img_idx = None
             for ext_img in extracted:
                 if ext_img["page"] == page:
                     img_filename = ext_img["filename"]
+                    img_idx = ext_img["index"]
                     break
 
             entry = {
@@ -55,6 +57,7 @@ class FiguresStep(StepBase):
                 "page": page,
                 "caption": caption,
                 "filename": img_filename,
+                "index": img_idx,   # 占位符 [img:N] 的 N;无内嵌位图时为 None
                 "ocr_text": "",
             }
 
@@ -82,17 +85,18 @@ class FiguresStep(StepBase):
                 try:
                     pix = fitz.Pixmap(doc, xref)
                     if pix.n < 5:
-                        filename = f"fig_{img_index:03d}_p{page_num + 1}.png"
+                        filename = f"figure-{img_index:04d}.png"
                         pix.save(str(assets_dir / filename))
                     else:
                         pix2 = fitz.Pixmap(fitz.csRGB, pix)
-                        filename = f"fig_{img_index:03d}_p{page_num + 1}.png"
+                        filename = f"figure-{img_index:04d}.png"
                         pix2.save(str(assets_dir / filename))
 
                     if (assets_dir / filename).stat().st_size > 1024:
                         extracted.append({
                             "page": page_num + 1,
                             "filename": filename,
+                            "index": img_index,   # 稳定资产序号 = 占位符 [img:N] 的 N
                         })
                         img_index += 1
                 except Exception as e:

@@ -28,35 +28,57 @@ class SmartStep(StepBase):
     def execute(self) -> dict | None:
         mechanical = (self.job_dir / "output" / "notes_mechanical.md").read_text(encoding="utf-8")
 
-        assets_dir = self.job_dir / "assets"
-        # 限 10 张:多图时 claude Read-per-轮的上下文超线性膨胀会拖垮(实测 20 张 >18min)。
-        images = (sorted(assets_dir.glob("*.jpg")) if assets_dir.exists() else [])[:10]
+        # 从清单(dedup 保留帧 + ocr)取候选帧,N=清单 index(稳定),而非 glob 顺序——保证视觉 pass
+        # 给 AI 看的序号与落盘回填的序号一致。限 10 张:多图时 claude Read-per-轮的上下文超线性膨胀
+        # 会拖垮(实测 20 张 >18min)。
+        frames = self._select_frames()[:10]
 
-        # 两段式生成:① 视觉 pass——claude 带 Read 多轮看帧,只产"逐帧视觉描述"(产物当输入,
-        # 其 agentic 口水无害);② 文本 pass——用 机械稿 + 视觉描述 走纯文本单轮(--tools "")干净
-        # 生成笔记。把"看图"(必须 agentic)与"成稿"(必须单轮纯输出)解耦,正文不再被 agentic 跑偏/
-        # 丢正文污染;落盘净化(_sanitize_smart_note)退居兜底而非主力。
+        # 两段式生成:① 视觉 pass——claude 带 Read 多轮看帧,只产"逐帧视觉描述"(按序号 N);
+        # ② 文本 pass——用 机械稿 + 视觉描述 走纯文本单轮(--tools "")干净生成笔记,图片用
+        # ![描述](img:N) 占位符,落盘时 write_smart_note 按清单回填成真实 assets/ 路径(AI 不碰路径)。
         frame_desc = ""
-        if images:
-            frame_desc = self.call_ai(self._build_vision_prompt(images), images=images)
+        if frames:
+            imgs = [self.job_dir / "assets" / f["filename"] for f in frames]
+            frame_desc = self.call_ai(self._build_vision_prompt(frames), images=imgs)
 
         result = self.call_ai(self._build_user_prompt(mechanical, frame_desc))
 
-        rel = self.write_smart_note(result)   # 版本化落盘(含生成时间/方式/模型)
-        return {"chars": len(result), "images_sent": len(images),
+        rel = self.write_smart_note(result, image_assets=frames)  # 回填占位符 + 版本化落盘
+        return {"chars": len(result), "images_sent": len(frames),
                 "provider": self.last_ai_provider, "model": self.last_ai_model, "note_file": rel}
 
-    def _build_vision_prompt(self, images: list[Path]) -> str:
-        """视觉 pass:让 claude 逐张看帧,只产结构化"逐帧视觉描述"清单,不写笔记正文。"""
+    def _select_frames(self) -> list[dict]:
+        """从 dedup.json(保留帧)取候选并 join ocr.json 文本。返回 [{n,filename,ts,ocr}],n=清单 index。"""
+        dd = self.job_dir / "intermediate" / "dedup.json"
+        if not dd.exists():
+            return []
+        dedup = json.loads(dd.read_text(encoding="utf-8"))
+        ocr_map: dict = {}
+        oc = self.job_dir / "intermediate" / "ocr.json"
+        if oc.exists():
+            for o in json.loads(oc.read_text(encoding="utf-8")):
+                ocr_map[o["index"]] = (o.get("text") or "").strip()
+        out = []
+        for d in dedup:
+            if not d.get("keep"):
+                continue
+            if not (self.job_dir / "assets" / d["filename"]).exists():
+                continue
+            out.append({"n": d["index"], "filename": d["filename"],
+                        "ts": d.get("timestamp_sec"), "ocr": ocr_map.get(d["index"], "")})
+        return out
+
+    def _build_vision_prompt(self, frames: list[dict]) -> str:
+        """视觉 pass:让 claude 逐张看帧,只产结构化"逐帧视觉描述"清单(按序号 N),不写笔记正文。"""
         parts = [
-            "请用 Read 工具逐张查看下列截图,为**有信息量**的截图各输出一行,格式:\n"
-            "`文件名 | 这张图 OCR 文本给不出的视觉信息(箭头指向、红框位置、K线/分时形态、"
+            "请用 Read 工具逐张查看下列截图(每张前的 [N] 是它的序号)。为**有信息量**的截图各输出一行,"
+            "格式:\n`N | 这张图 OCR 文本给不出的视觉信息(箭头指向、红框位置、K线/分时形态、"
             "放量特征、配色、版式等)`\n"
-            "纯氛围/装饰帧(空镜、背景板、片头片尾)直接跳过、不输出。\n"
+            "N 原样照抄方括号里的序号。纯氛围/装饰帧(空镜、背景板、片头片尾)直接跳过、不输出。\n"
             "只输出这个清单,**不要写任何笔记正文、不要总结、不要保存文件**。\n\n",
         ]
-        for p in images:
-            parts.append(str(Path(p).resolve()) + "\n")
+        for f in frames:
+            parts.append(f"[{f['n']}] {(self.job_dir / 'assets' / f['filename']).resolve()}\n")
         return "".join(parts)
 
     def _build_user_prompt(self, mechanical: str, frame_desc: str = "") -> str:
@@ -97,10 +119,12 @@ class SmartStep(StepBase):
                     parts.append(f"- 截图重点：{hint['screenshot_focus']}\n")
 
         if frame_desc.strip():
-            # 视觉描述已由视觉 pass 文本化喂入,本步纯文本生成、不读图:按文件名内嵌即可。
+            # 视觉描述已由视觉 pass 文本化喂入(N | 视觉要点),本步纯文本生成、不读图。图片一律用
+            # ![中文描述](img:N) 占位符引用(N=下表序号),**不要写文件名/路径**,落盘时按清单回填。
             parts.append(
-                "\n以下是各截图的视觉信息(文件名 | 视觉要点)。请在笔记关键处用 "
-                "![中文描述](文件名) 内嵌其中最有信息量的几张,描述要写出 OCR 给不出的视觉信息:\n"
+                "\n以下是各截图的视觉信息(序号 N | 视觉要点)。请在笔记关键处用 "
+                "![中文描述](img:N) 内嵌其中最有信息量的几张——括号里写 img:对应序号 这个占位符,"
+                "**不要写文件名或路径**,描述要写出 OCR 给不出的视觉信息:\n"
                 f"{frame_desc}\n"
             )
         parts.append(f"\n---\n\n{mechanical}")

@@ -80,7 +80,9 @@ class FramesStep(StepBase):
 
     def _save(self, cv2, assets_dir: Path, source: str, idx: int, scene_i: int,
               ts: float, frame, candidates: list) -> int:
-        fn = f"{source}_{idx:04d}_{ts:.1f}s.jpg"
+        # 统一命名 frame-{NNNN}.jpg(扁平、前端按 assets/<flat> 解析)。source/时间戳不进文件名,
+        # 留在清单(下方 candidates 条目)与图注;idx 是跨场景全局自增序号,即占位符 [img:N] 的 N。
+        fn = f"frame-{idx:04d}.jpg"
         out = assets_dir / fn
         cv2.imwrite(str(out), frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
         if out.exists() and out.stat().st_size > 1024:
