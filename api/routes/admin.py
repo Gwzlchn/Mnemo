@@ -21,6 +21,8 @@ router = APIRouter(prefix="/api", tags=["admin"])
 
 @router.get("/health")
 async def health(request: Request, db: Database = Depends(get_db), redis: RedisClient = Depends(get_redis)):
+    # 刻意免鉴权(同 /metrics):供存活探针/编排健康检查;仅暴露 up/disk/worker 计数,无敏感信息。
+    # 与 WS/REST 的 verify_token 是有意区分——若需收紧,在反代/网络层限制本路由可达性。
     checks = {}
     try:
         await redis.ping()
@@ -93,12 +95,9 @@ async def metrics(request: Request, db: Database = Depends(get_db), redis: Redis
     return "\n".join(lines) + "\n"
 
 
-@router.get("/status", dependencies=[Depends(verify_token)])
-async def system_status(
-    db: Database = Depends(get_db),
-    redis: RedisClient = Depends(get_redis),
-    config: AppConfig = Depends(get_config),
-):
+async def build_system_status(db, redis, config) -> dict:
+    """聚合系统状态(workers/pools/jobs/disk)。供 GET /api/status 与 WS /api/ws/global 共用,
+    避免两处各自拼装导致漂移(WS 此前只回 jobs 计数,与契约「格式同 GET /api/status」不符)。"""
     workers = await asyncio.to_thread(db.list_workers)
     worker_summary = {}
     for w in workers:
@@ -144,6 +143,15 @@ async def system_status(
     }
 
 
+@router.get("/status", dependencies=[Depends(verify_token)])
+async def system_status(
+    db: Database = Depends(get_db),
+    redis: RedisClient = Depends(get_redis),
+    config: AppConfig = Depends(get_config),
+):
+    return await build_system_status(db, redis, config)
+
+
 @router.get("/config/styles", dependencies=[Depends(verify_token)])
 async def get_styles_config(config: AppConfig = Depends(get_config)):
     """返回可用风格标签列表（从 prompts/styles/*.yaml 的文件名读取）。"""
@@ -174,8 +182,18 @@ async def update_pools_config(
     redis: RedisClient = Depends(get_redis),
 ):
     import yaml
+    # 结构校验:必须含 pools 映射,每池含整数 limit——挡畸形 PUT 损坏 pools.yaml + 在跑调度器池配置。
+    if not isinstance(new_config, dict) or not isinstance(new_config.get("pools"), dict):
+        raise HTTPException(400, "config must contain a 'pools' mapping")
+    for name, pc in new_config["pools"].items():
+        if not isinstance(pc, dict) or not isinstance(pc.get("limit"), int):
+            raise HTTPException(400, f"pool '{name}' must have an integer 'limit'")
     path = config.config_dir / "pools.yaml"
-    path.write_text(yaml.dump(new_config, allow_unicode=True))
+    # 先落盘成功再改内存配置:写失败则回 500 且不污染在跑配置(无半改)。
+    try:
+        path.write_text(yaml.dump(new_config, allow_unicode=True))
+    except OSError as e:
+        raise HTTPException(500, f"failed to write pools.yaml: {e}")
     config.pools = new_config
     await redis.publish("config_reload", {"type": "pools"})
     return {"status": "updated"}

@@ -24,6 +24,13 @@ def _truthy(v: str | None) -> bool:
     return (v or "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def validate_path_segment(value: str, label: str = "value") -> None:
+    """单段路径校验:含 '..' / '/' / '\\\\' / NUL 即 400。供 job_id / step 等单段路径复用,
+    集中安全逻辑(此前多处各写一份穿越校验,易漏挡 NUL/反斜杠)。"""
+    if ".." in value or "/" in value or "\\" in value or "\x00" in value:
+        raise HTTPException(400, f"invalid {label}")
+
+
 def get_db(request: Request) -> Database:
     return request.app.state.db
 

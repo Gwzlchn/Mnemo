@@ -14,7 +14,7 @@ from shared.config import AppConfig
 from shared.db import Database
 from shared.notes_versions import latest_smart, parse_smart_version, review_path_for_note
 from shared.storage import StorageBackend
-from api.deps import get_config, get_db, get_storage, verify_token
+from api.deps import get_config, get_db, get_storage, validate_path_segment, verify_token
 
 router = APIRouter(prefix="/api/jobs", tags=["notes"], dependencies=[Depends(verify_token)])
 
@@ -41,8 +41,7 @@ def _artifact_hidden(f: str) -> bool:
 
 
 def _validate_job_id(job_id: str) -> None:
-    if ".." in job_id or "/" in job_id or "\x00" in job_id:
-        raise HTTPException(400, "invalid job_id")
+    validate_path_segment(job_id, "job_id")
 
 
 async def _serve(
@@ -66,7 +65,7 @@ async def get_smart_notes(job_id: str, file: str | None = None,
     """默认取最新版本智能笔记;file= 指定某版本(output/versions/notes_smart_*.md)。"""
     _validate_job_id(job_id)
     if file:
-        if ".." in file or not file.startswith("output/versions/notes_smart_") or not file.endswith(".md"):
+        if ".." in file or "\x00" in file or not file.startswith("output/versions/notes_smart_") or not file.endswith(".md"):
             raise HTTPException(400, "invalid version file")
         rel = file
     else:
@@ -113,6 +112,8 @@ async def get_mechanical_notes(job_id: str, storage: StorageBackend = Depends(ge
 
 @router.get("/{job_id}/notes/transcript")
 async def get_transcript(job_id: str, storage: StorageBackend = Depends(get_storage)):
+    """音频/视频逐字稿(output/transcript.md)。注:前端当前无入口调用(仅笔记类型标签映射「逐字稿」),
+    保留供直接拉取/将来接入。"""
     return await _serve(storage, job_id, "output/transcript.md",
                         "text/markdown; charset=utf-8", "transcript not ready")
 
@@ -123,7 +124,7 @@ async def get_review(job_id: str, file: str | None = None,
     """默认取最新评审(review.json);file= 取与某版笔记配对的版本化评审。"""
     _validate_job_id(job_id)
     if file:
-        if ".." in file or not file.startswith("output/versions/review_") or not file.endswith(".json"):
+        if ".." in file or "\x00" in file or not file.startswith("output/versions/review_") or not file.endswith(".json"):
             raise HTTPException(400, "invalid review file")
         rel = file
     else:

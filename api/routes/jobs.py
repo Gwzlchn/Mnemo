@@ -18,7 +18,7 @@ from shared.redis_client import RedisClient
 from shared.source_detect import detect_source
 from shared.storage import CREDENTIAL_REL, StorageBackend
 
-from api.deps import get_config, get_db, get_redis, get_storage, verify_token
+from api.deps import get_config, get_db, get_redis, get_storage, validate_path_segment, verify_token
 from api.schemas import (
     JobCreateRequest,
     JobDetailResponse,
@@ -53,8 +53,7 @@ async def list_providers(config: AppConfig = Depends(get_config)):
 
 
 def _validate_job_id(job_id: str) -> None:
-    if ".." in job_id or "/" in job_id or "\x00" in job_id:
-        raise HTTPException(400, "invalid job_id")
+    validate_path_segment(job_id, "job_id")
 
 
 def _detect_content_type(url: str | None, filename: str | None = None) -> str:
@@ -109,14 +108,16 @@ async def create_job_core(
     url: str | None, content_type: str | None = None,
     domain: str = "general", style_tags: list[str] | None = None,
     collection_id: str | None = None, title: str | None = None,
+    upload: tuple[str, bytes] | None = None,
 ) -> Job:
-    """建 job 的核心流程(create_job 路由 + 订阅同步共用)。返回 Job。"""
+    """建 job 的核心流程(create_job 路由 + upload + 订阅同步共用)。返回 Job。
+    upload=(ext, data):上传路径,把源文件经 storage 写入 input/source{ext}(兼容本地/MinIO)。"""
     style_tags = style_tags or []
     ctype = content_type or _detect_content_type(url)
     pipeline = _pipeline_for(ctype)
     source = detect_source(url) if url else "upload"
 
-    # 有意义的 id: jobs_{类别}_{inner}(bili=BV);撞已存在(同 BV 重投)加随机后缀。
+    # 有意义的 id: jobs_{类别}_{inner}(bili=BV);撞已存在(同 BV 重投/上传随机撞库)加随机后缀。
     job_id = derive_job_id(url, ctype, source)
     if await asyncio.to_thread(db.get_job, job_id):
         job_id = f"{job_id}_{secrets.token_hex(3)}"
@@ -128,6 +129,11 @@ async def create_job_core(
         job_id, "job.json",
         json.dumps(job_doc, ensure_ascii=False, indent=2).encode("utf-8"),
     )
+    # 上传源文件经 storage 落库(本地/MinIO 一致),远端 worker 才能 pull 到 input/source.*
+    # (此前 upload_job 直写 API 容器本地盘,MinIO 部署下 worker 拉不到源文件)。
+    if upload is not None:
+        ext, data = upload
+        await storage.write_file(job_id, f"input/source{ext}", data)
     # SESSDATA 不进 job.json(那是会下发到远端 worker 的通用文档);写入本机侧载凭证文件,
     # 由 storage/runner 保证绝不入中心存储、绝不下发远端(见 shared/storage.is_credential_file)。
     if source == "bilibili":
@@ -155,9 +161,10 @@ async def create_job(
     req: JobCreateRequest,
     db: Database = Depends(get_db),
     redis: RedisClient = Depends(get_redis),
-    config: AppConfig = Depends(get_config),
     storage: StorageBackend = Depends(get_storage),
 ):
+    # 注:url 接受 http(s) 链接或裸 BV 号(detect_source 解析),故不强校验 http(s) 前缀;
+    # 契约的 invalid_url 语义改由 docs/03-contracts.md 对齐(见 C12 处置)。
     # 校验 collection_id 存在,避免孤儿绑定 + job_count 漂移。
     if req.collection_id:
         if not await asyncio.to_thread(db.get_collection, req.collection_id):
@@ -175,57 +182,39 @@ async def upload_job(
     file: UploadFile = File(...),
     domain: str = Form("general"),
     style_tags: str = Form("[]"),
+    collection_id: str | None = Form(None),
+    title: str | None = Form(None),
     db: Database = Depends(get_db),
     redis: RedisClient = Depends(get_redis),
-    config: AppConfig = Depends(get_config),
+    storage: StorageBackend = Depends(get_storage),
 ):
     content_type = _detect_content_type(None, file.filename)
-    pipeline = _pipeline_for(content_type)
     try:
         tags = json.loads(style_tags)
     except json.JSONDecodeError:
         raise HTTPException(400, "invalid style_tags JSON")
+    # 与 URL 投递路径一致:校验 collection_id 存在,支持归集合 + title。
+    if collection_id:
+        if not await asyncio.to_thread(db.get_collection, collection_id):
+            raise HTTPException(400, "collection_id not found")
 
     MAX_UPLOAD_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
-    job_id = derive_job_id(None, content_type, "upload")
-    job_dir = config.jobs_dir / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
-    input_dir = job_dir / "input"
-    input_dir.mkdir(exist_ok=True)
+    # 流式累加并超限早退;做完大小校验后统一经 create_job_core → storage 落库(兼容 MinIO)。
+    # NOTE:storage.write_file 入参为 bytes,大文件整体驻留内存(上界 2GB);流式 put 为后续优化。
+    buf = bytearray()
+    while chunk := await file.read(1024 * 1024):
+        buf.extend(chunk)
+        if len(buf) > MAX_UPLOAD_SIZE:
+            raise HTTPException(413, f"file too large (max {MAX_UPLOAD_SIZE})")
 
     ext = Path(file.filename).suffix if file.filename else ".mp4"
-    dest = input_dir / f"source{ext}"
-    total_size = 0
-    with open(dest, "wb") as f:
-        while chunk := await file.read(8192):
-            total_size += len(chunk)
-            if total_size > MAX_UPLOAD_SIZE:
-                f.close()
-                await asyncio.to_thread(shutil.rmtree, job_dir)
-                raise HTTPException(413, f"file too large (max {MAX_UPLOAD_SIZE})")
-            f.write(chunk)
-
-    (job_dir / "job.json").write_text(json.dumps({
-        "id": job_id,
-        "url": None,
-        "source": "upload",
-        "content_type": content_type,
-        "domain": domain,
-        "style_tags": tags,
-        "created_at": _now_iso(),
-    }, ensure_ascii=False, indent=2))
-
-    job = Job(
-        id=job_id, content_type=content_type, pipeline=pipeline,
-        domain=domain, source="upload", style_tags=tags,
+    job = await create_job_core(
+        db, redis, storage, url=None, content_type=content_type,
+        domain=domain, style_tags=tags, collection_id=collection_id, title=title,
+        upload=(ext, bytes(buf)),
     )
-    await asyncio.to_thread(db.create_job, job)
-
-    await redis.publish("job_command", {
-        "action": "new_job", "job_id": job_id, "pipeline": pipeline,
-    })
-
-    return {"job_id": job_id, "content_type": content_type, "status": "pending", "created_at": job.created_at.isoformat()}
+    return {"job_id": job.id, "content_type": job.content_type,
+            "status": "pending", "created_at": job.created_at.isoformat()}
 
 
 @router.get("")
@@ -338,8 +327,7 @@ async def get_step_log(
     """返回某步骤的运行日志,供前端展开排错。经存储读,兼容本地/MinIO。
     默认尾部截断 256KB;raw=1 返回完整日志(供下载)。"""
     _validate_job_id(job_id)
-    if "/" in step or ".." in step or "\x00" in step:
-        raise HTTPException(400, "invalid step")
+    validate_path_segment(step, "step")
     data = await storage.read_file(job_id, f"logs/{step}.log")
     if data is None:
         raise HTTPException(404, "log not found")
@@ -448,6 +436,7 @@ async def resubmit_job(
     db: Database = Depends(get_db),
     redis: RedisClient = Depends(get_redis),
 ):
+    """从头重提交整个 job。注:前端当前无入口调用(前端用 retry/rerun),保留供后台/CLI 重提。"""
     _validate_job_id(job_id)
     job = await asyncio.to_thread(db.get_job, job_id)
     if not job:

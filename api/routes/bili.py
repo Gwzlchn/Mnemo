@@ -128,6 +128,7 @@ async def login_poll(qrcode_key: str, db: Database = Depends(get_db)):
     sessdata = cookies.get("SESSDATA")
     bili_jct = cookies.get("bili_jct")
     dedeuserid = cookies.get("DedeUserID")
+    buvid3 = cookies.get("buvid3")  # 若 passport 响应带 buvid3 则一并入库(bili_space 用其降风控)
     if not sessdata:
         raise HTTPException(502, "bilibili passport confirmed but no SESSDATA")
 
@@ -136,6 +137,7 @@ async def login_poll(qrcode_key: str, db: Database = Depends(get_db)):
         "sessdata": sessdata,
         "bili_jct": bili_jct,
         "dedeuserid": dedeuserid,
+        "buvid3": buvid3,
         "uname": uname,
     }
     await asyncio.to_thread(

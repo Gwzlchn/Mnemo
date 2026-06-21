@@ -1,8 +1,11 @@
 """领域路由（领域是派生视图，非实体）。
-- GET /api/domains            领域总览(卡片网格)
-- GET /api/domains/{d}        领域工作台聚合(集合/最近内容/术语/主题)
-- GET /api/domains/{d}/terms/{term}    术语详情
-- GET /api/domains/{d}/topics/{topic}  主题页(域内带该标签的内容)
+- GET  /api/domains            领域总览(卡片网格)
+- POST /api/domains            新建领域
+- GET  /api/domains/{d}        领域工作台聚合(集合/最近内容/术语/主题)
+- GET  /api/domains/{d}/topic-concepts   领域主题概念
+- GET  /api/domains/{d}/concept-timeline 领域概念时间线
+- GET  /api/domains/{d}/terms/{term}     术语详情
+- GET  /api/domains/{d}/topics/{topic}   主题页(域内带该标签的内容)
 """
 
 from __future__ import annotations

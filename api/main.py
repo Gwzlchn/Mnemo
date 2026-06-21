@@ -78,6 +78,33 @@ def create_app(
 
     app = FastAPI(title="AI Knowledge Base", lifespan=lifespan)
 
+    # 契约 §5:错误体统一 {error, message}(此前是 FastAPI 默认 {detail})。error 用状态码派生机器码。
+    from fastapi import Request as _Request
+    from fastapi.exceptions import RequestValidationError as _RequestValidationError
+    from fastapi.responses import JSONResponse as _JSONResponse
+    from starlette.exceptions import HTTPException as _StarletteHTTPException
+
+    _STATUS_ERROR_CODE = {
+        400: "bad_request", 401: "unauthorized", 403: "forbidden", 404: "not_found",
+        409: "conflict", 413: "payload_too_large", 422: "invalid_request",
+        429: "rate_limited", 503: "unavailable",
+    }
+
+    @app.exception_handler(_StarletteHTTPException)
+    async def _http_exc_handler(request: _Request, exc: _StarletteHTTPException):
+        return _JSONResponse(
+            status_code=exc.status_code,
+            content={"error": _STATUS_ERROR_CODE.get(exc.status_code, "error"),
+                     "message": exc.detail},
+        )
+
+    @app.exception_handler(_RequestValidationError)
+    async def _validation_exc_handler(request: _Request, exc: _RequestValidationError):
+        return _JSONResponse(
+            status_code=422,
+            content={"error": "invalid_request", "message": str(exc.errors())},
+        )
+
     if db is not None:
         app.state.db = db
         app.state.redis = redis

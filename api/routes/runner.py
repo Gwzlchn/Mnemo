@@ -21,6 +21,7 @@ from api.deps import (
     get_db,
     get_redis,
     get_storage,
+    validate_path_segment,
     verify_registration_token,
     verify_worker_token,
 )
@@ -307,8 +308,7 @@ async def record_usage(
 
 def _validate_job_id(job_id: str) -> None:
     # job_id 是路径段,禁 ".."、分隔符、空字节,挡持 token 者经 job_id 穿越读写中心数据。
-    if ".." in job_id or "/" in job_id or "\x00" in job_id:
-        raise HTTPException(400, "invalid job_id")
+    validate_path_segment(job_id, "job_id")
 
 
 def _validate_rel(rel: str) -> None:
@@ -359,6 +359,10 @@ async def put_artifact(
     """回传单个产物:原始 body 直接写入 storage(worker push 的中转出口)。"""
     _validate_job_id(job_id)
     _validate_rel(rel)
+    if is_credential_file(rel):
+        # 与 get_artifact 对称:禁止经网关回传写入凭证侧载文件(.credentials.json),
+        # 防任意已注册 worker plant 一个「同机下载步随后会读」的凭证文件。
+        raise HTTPException(403, "writing credential files is not allowed")
     data = await request.body()
     await storage.write_file(job_id, rel, data)
     return {"ok": True}

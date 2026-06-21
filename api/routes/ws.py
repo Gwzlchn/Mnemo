@@ -14,7 +14,9 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
+import os
 
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -28,6 +30,25 @@ from shared.redis_client import RedisClient
 logger = structlog.get_logger(component="ws")
 
 router = APIRouter(tags=["websocket"])
+
+
+def _ws_authorized(websocket: WebSocket) -> bool:
+    """WS 鉴权:与 deps.verify_token 同款 fail-closed 策略,但 token 取自 query 参数
+    (``?token=...``),因为浏览器无法为 WebSocket 握手设置 Authorization 头。
+    - 设了 API_TOKEN:query token 必须常量时间匹配,否则拒。
+    - 未设 API_TOKEN:必须显式 API_ALLOW_NO_AUTH=1(仅可信内网)才放行,否则拒。
+    放行返回 True,否则 False(调用方 close(1008) 后返回)。"""
+    api_token = os.environ.get("API_TOKEN", "")
+    if not api_token:
+        allow = (os.environ.get("API_ALLOW_NO_AUTH") or "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        return allow
+    presented = websocket.query_params.get("token", "")
+    return hmac.compare_digest(presented.encode(), api_token.encode())
 
 
 async def _watch_disconnect(websocket: WebSocket) -> None:
@@ -50,6 +71,9 @@ async def _watch_disconnect(websocket: WebSocket) -> None:
 
 @router.websocket("/api/ws/jobs/{job_id}")
 async def ws_job(websocket: WebSocket, job_id: str):
+    if not _ws_authorized(websocket):
+        await websocket.close(code=1008)  # policy violation:未授权
+        return
     await websocket.accept()
     redis: RedisClient = websocket.app.state.redis
     channel = f"events:{job_id}"
@@ -160,6 +184,9 @@ async def _sleep_or_disconnect(disconnect_task: asyncio.Task, delay: float) -> b
 
 @router.websocket("/api/ws/global")
 async def ws_global(websocket: WebSocket):
+    if not _ws_authorized(websocket):
+        await websocket.close(code=1008)  # policy violation:未授权
+        return
     await websocket.accept()
     try:
         while True:
@@ -180,15 +207,7 @@ async def ws_global(websocket: WebSocket):
 
 
 async def _build_global_status(app) -> dict:
-    db = app.state.db
-
-    counts = await asyncio.to_thread(db.count_jobs_by_status)
-
-    return {
-        "jobs": {
-            "total": sum(counts.values()),
-            "done": counts.get("done", 0),
-            "processing": counts.get("processing", 0),
-            "failed": counts.get("failed", 0),
-        },
-    }
+    # 复用 admin 的聚合,推送完整四段(workers/pools/jobs/disk),与契约「格式同 GET /api/status」一致
+    # (此前只回 jobs 计数、且缺 pending)。
+    from api.routes.admin import build_system_status
+    return await build_system_status(app.state.db, app.state.redis, app.state.config)

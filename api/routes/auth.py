@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 
 from api.deps import verify_token
 
 router = APIRouter(prefix="/api/auth", tags=["auth"], dependencies=[Depends(verify_token)])
 
-COOKIES_DIR = Path("/data/cookies")
+# 跟随 DATA_DIR(与 shared/config.data_dir 同源):改 DATA_DIR 时 cookies 目录一并跟随,
+# 不再写死 /data;test 仍可 monkeypatch 本模块属性覆盖。
+COOKIES_DIR = Path(os.environ.get("DATA_DIR", "/data")) / "cookies"
 
 
 @router.get("/status")
@@ -26,9 +29,18 @@ async def auth_status():
     }
 
 
-@router.post("/youtube/cookies")
-async def youtube_cookies(file: UploadFile = File(...)):
+# 平台 → cookie 文件名白名单。前端 CookieUpload 用动态 platform 拼 /api/auth/{platform}/cookies,
+# 此处白名单与之匹配并挡任意路径写入。目前仅 youtube(B站走扫码登录,见 /api/bili,非 cookie 上传)。
+_COOKIE_PLATFORMS = {"youtube": "youtube.txt"}
+
+
+@router.post("/{platform}/cookies")
+async def upload_platform_cookies(platform: str, file: UploadFile = File(...)):
+    """上传指定平台的 cookie 文件(Netscape 格式)。platform 走白名单。"""
+    fname = _COOKIE_PLATFORMS.get(platform)
+    if fname is None:
+        raise HTTPException(400, f"unsupported platform: {platform}")
     COOKIES_DIR.mkdir(parents=True, exist_ok=True)
     content = await file.read()
-    (COOKIES_DIR / "youtube.txt").write_bytes(content)
-    return {"status": "ok", "message": "YouTube cookies 已保存"}
+    (COOKIES_DIR / fname).write_bytes(content)
+    return {"status": "ok", "message": f"{platform} cookies 已保存"}
