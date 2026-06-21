@@ -8,7 +8,7 @@ import secrets
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import PlainTextResponse
 
 from shared.config import AppConfig
@@ -223,8 +223,8 @@ async def list_jobs(
     collection_id: str | None = None,
     domain: str | None = None,
     source: str | None = None,
-    limit: int = 20,
-    offset: int = 0,
+    limit: int = Query(20, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=2_147_483_647),  # int32 max,远低于 SQLite int64 溢出点;挡住超大 offset → 500
     db: Database = Depends(get_db),
 ):
     total, jobs = await asyncio.to_thread(

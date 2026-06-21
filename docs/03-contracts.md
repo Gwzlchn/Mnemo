@@ -66,7 +66,7 @@ Response `201`:
 GET /api/jobs?status=processing&domain=deep-learning&source=bilibili&limit=20&offset=0
 ```
 
-查询参数：`status`、`collection_id`、`domain`、`source`（均可选，AND 组合）、`limit`（默认 20）、`offset`（默认 0）。Response `200`（每项含 `domain` / `collection_id`）：
+查询参数：`status`、`collection_id`、`domain`、`source`（均可选，AND 组合）、`limit`（默认 20，1–200）、`offset`（默认 0，0–2147483647；int32 max,远低于 SQLite int64 溢出点,越界 422）。Response `200`（每项含 `domain` / `collection_id`）：
 ```json
 {
   "total": 44,
@@ -574,7 +574,7 @@ Response `200`：
 GET /api/collections/c_xxx/jobs?limit=20&offset=0
 ```
 
-`limit`（默认 20，1–200）、`offset`（默认 0）。Response `200`：`JobListResponse`（`{total, items}`，items 为 `JobResponse`）：
+`limit`（默认 20，1–200）、`offset`（默认 0，0–2147483647；int32 max,远低于 SQLite int64 溢出点,越界 422）。Response `200`：`JobListResponse`（`{total, items}`，items 为 `JobResponse`）：
 
 ```json
 {
@@ -881,7 +881,7 @@ curl "http://localhost:8000/api/search?q=注意力机制&domain=deep-learning&li
 | `domain` | — | 限定领域 |
 | `content_type` | — | 限定内容类型（video/paper/article/audio） |
 | `limit` | 20 | 1–100 |
-| `offset` | 0 | ≥0 |
+| `offset` | 0 | 0–2147483647（int32 max,远低于 SQLite int64 溢出点;越界 422 `invalid_request`） |
 
 Response `200`（`note_type` 区分命中的是哪类笔记，如 `smart`/`mechanical`/`transcript`；`snippet` 带 `<mark>` 高亮标签、`…` 省略号）：
 ```json

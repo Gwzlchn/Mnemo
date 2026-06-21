@@ -194,7 +194,7 @@ async def delete_collection(
 async def list_collection_jobs(
     collection_id: str,
     limit: int = Query(20, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=2_147_483_647),  # int32 max,远低于 SQLite int64 溢出点;挡住超大 offset → 500
     db: Database = Depends(get_db),
 ):
     """集合名下的 job 列表（分页，复用 db.list_jobs 的 collection_id 过滤）。"""
