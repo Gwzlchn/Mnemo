@@ -735,6 +735,81 @@ class TestAppCredentials:
         db.delete_credential("never-existed")
         assert db.get_credential("never-existed") is None
 
+    def test_plaintext_when_no_key(self, db, monkeypatch):
+        # 无 MNEMO_SECRET_KEY 时保持明文行为：底层存的就是原文。
+        monkeypatch.delenv("MNEMO_SECRET_KEY", raising=False)
+        import shared.db as dbmod
+        dbmod._fernet.cache_clear()
+        db.set_credential("k_plain", "sessdata-plain")
+        raw = db._conn.execute(
+            "SELECT value FROM app_credentials WHERE key=?", ("k_plain",)
+        ).fetchone()["value"]
+        assert raw == "sessdata-plain"
+        assert db.get_credential("k_plain") == "sessdata-plain"
+
+
+class TestAppCredentialsEncryption:
+    """at-rest 加密：设了 MNEMO_SECRET_KEY → Fernet 加密落库 + round-trip；
+    历史明文行透传；无 key 退回明文。容器当前未装 cryptography,故整类 importorskip。"""
+
+    @pytest.fixture
+    def fernet_key(self, monkeypatch):
+        crypto = pytest.importorskip("cryptography")  # 缺库则跳过整个用例
+        from cryptography.fernet import Fernet
+        key = Fernet.generate_key().decode()
+        monkeypatch.setenv("MNEMO_SECRET_KEY", key)
+        import shared.db as dbmod
+        dbmod._fernet.cache_clear()           # 清掉按旧 env 缓存的实例
+        yield key
+        dbmod._fernet.cache_clear()           # 复位,避免污染其它测试
+
+    def test_set_encrypts_and_get_roundtrips(self, db, fernet_key):
+        secret = '{"sessdata": "TOP-SECRET-COOKIE"}'
+        db.set_credential("bili_cookies", secret)
+        raw = db._conn.execute(
+            "SELECT value FROM app_credentials WHERE key=?", ("bili_cookies",)
+        ).fetchone()["value"]
+        # 落库的不是明文,且不含敏感子串。
+        assert raw != secret
+        assert "TOP-SECRET-COOKIE" not in raw
+        assert "sessdata" not in raw
+        # 读出来还原成原文(round-trip)。
+        assert db.get_credential("bili_cookies") == secret
+
+    def test_legacy_plaintext_row_passthrough(self, db, fernet_key):
+        # 旧库里的明文行(非 Fernet token):有 key 时解密失败 → 原样透传,不崩。
+        db._conn.execute(
+            "INSERT INTO app_credentials (key, value, updated_at) VALUES (?,?,?)",
+            ("legacy", "raw-plaintext-value", "2026-01-01T00:00:00+00:00"),
+        )
+        db._conn.commit()
+        assert db.get_credential("legacy") == "raw-plaintext-value"
+
+    def test_reencrypt_on_next_write(self, db, fernet_key):
+        # 明文遗留行被重新写入后即变密文。
+        db._conn.execute(
+            "INSERT INTO app_credentials (key, value, updated_at) VALUES (?,?,?)",
+            ("k", "plain", "2026-01-01T00:00:00+00:00"),
+        )
+        db._conn.commit()
+        db.set_credential("k", "plain")  # 重写(模拟 reencrypt / 下次写)
+        raw = db._conn.execute(
+            "SELECT value FROM app_credentials WHERE key=?", ("k",)
+        ).fetchone()["value"]
+        assert raw != "plain"
+        assert db.get_credential("k") == "plain"
+
+    def test_get_with_no_key_returns_raw(self, db, fernet_key, monkeypatch):
+        # 先用 key 加密存,再清掉 key:无 fernet 时返回原始(密文)串而非崩。
+        db.set_credential("k", "value-x")
+        monkeypatch.delenv("MNEMO_SECRET_KEY", raising=False)
+        import shared.db as dbmod
+        dbmod._fernet.cache_clear()
+        raw = db._conn.execute(
+            "SELECT value FROM app_credentials WHERE key=?", ("k",)
+        ).fetchone()["value"]
+        assert db.get_credential("k") == raw  # 原样返回,不抛
+
 
 class TestUpdateValidation:
     def test_update_job_invalid_column(self, db, sample_job):

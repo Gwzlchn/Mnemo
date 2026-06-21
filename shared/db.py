@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
+
+import structlog
 
 from .models import AIUsage, Collection, Job, JobStatus, Step, StepStatus, Worker
 from .status import (
@@ -178,6 +182,42 @@ _STEP_UPDATABLE = {
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+_log = structlog.get_logger(component="db")
+
+
+@lru_cache(maxsize=1)
+def _fernet():
+    """凭证 at-rest 加密的 Fernet 实例（按 MNEMO_SECRET_KEY 缓存）。
+
+    key 取自环境变量 MNEMO_SECRET_KEY（urlsafe-base64 的 32 字节 Fernet key）。
+    未设/为空 → 返回 None（凭证退回明文存储，向后兼容）。cryptography 在此惰性
+    导入，缺库或 key 非法时返回 None，使本模块在无该依赖/未配 key 时仍可正常 import
+    与运行（其它 DB 用法与测试不受影响）。"""
+    key = (os.environ.get("MNEMO_SECRET_KEY") or "").strip()
+    if not key:
+        return None
+    try:
+        from cryptography.fernet import Fernet  # 惰性导入：缺库也不影响模块 import
+        return Fernet(key.encode())
+    except Exception as e:  # 库缺失 / key 非法 → 退回明文(不阻断启动)
+        _log.warning("credential_fernet_init_failed", error=str(e)[:200])
+        return None
+
+
+_PLAINTEXT_CRED_WARNED = False
+
+
+def _warn_plaintext_credentials_once() -> None:
+    """无 Fernet key 时存凭证仅警告一次，提示设 MNEMO_SECRET_KEY 以加密 at-rest。"""
+    global _PLAINTEXT_CRED_WARNED
+    if not _PLAINTEXT_CRED_WARNED:
+        _PLAINTEXT_CRED_WARNED = True
+        _log.warning(
+            "credentials_stored_plaintext",
+            hint="set MNEMO_SECRET_KEY (a Fernet key) to encrypt app_credentials at rest",
+        )
 
 
 def _fts_match_query(q: str) -> str:
@@ -741,21 +781,47 @@ class Database:
     # ── App Credentials ──
 
     def set_credential(self, key: str, value: str) -> None:
-        """存/覆盖一条应用级凭证（如 B站 cookie JSON），按 key 幂等 upsert。"""
+        """存/覆盖一条应用级凭证（如 B站 cookie JSON），按 key 幂等 upsert。
+
+        设了 MNEMO_SECRET_KEY 时以 Fernet token 加密落库；未设则存明文(向后兼容)
+        并一次性告警(建议设 key 以 at-rest 加密)。"""
+        f = _fernet()
+        if f is not None:
+            stored = f.encrypt(value.encode()).decode()
+        else:
+            _warn_plaintext_credentials_once()
+            stored = value
         with self._lock:
             self._conn.execute(
                 """INSERT OR REPLACE INTO app_credentials (key, value, updated_at)
                    VALUES (?,?,?)""",
-                (key, value, _now_iso()),
+                (key, stored, _now_iso()),
             )
             self._conn.commit()
 
     def get_credential(self, key: str) -> str | None:
-        """读一条凭证值，未命中返回 None。"""
+        """读一条凭证值，未命中返回 None。
+
+        有 Fernet key 时尝试解密；遇 InvalidToken(历史明文行，或换了 key 的旧 token)
+        透传原始串(legacy passthrough)。无 key 则直接返回原始串。任何情况都不因坏值崩。"""
         row = self._conn.execute(
             "SELECT value FROM app_credentials WHERE key=?", (key,)
         ).fetchone()
-        return row["value"] if row is not None else None
+        if row is None:
+            return None
+        raw = row["value"]
+        if raw is None:
+            return None
+        f = _fernet()
+        if f is None:
+            return raw
+        try:
+            from cryptography.fernet import InvalidToken
+            return f.decrypt(raw.encode()).decode()
+        except InvalidToken:
+            return raw  # 明文遗留行 / 异 key 的 token：原样透传
+        except Exception:
+            return raw  # 任何意外都不让读凭证崩
 
     def delete_credential(self, key: str) -> None:
         """删一条凭证（如登出清除 B站 cookie）。"""
