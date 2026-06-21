@@ -255,6 +255,31 @@ class StepBase:
             if vrel:
                 self.write_output(vrel, review)
 
+    # ── 评审步共用骨架(四个 ReviewStep 的输入准备 + 调 AI + 落盘逐字相同,集中于此) ──
+    # 各评审步 prompt 里逐字相同的「另外输出」三段(各步维度/JSON 示例/参照块仍各自声明)。
+    _REVIEW_OUTPUT_EXTRAS = (
+        "另外输出：\n"
+        "- key_terms: 这篇笔记**讲清楚**的关键概念 + 一句话候选定义（用于沉淀进概念库）\n"
+        "- missing_concepts: 笔记**遗漏**的重要概念（知识缺口，仅供选题/查漏）\n"
+        "- top3_improvements: 最重要的 3 条改进建议\n\n"
+    )
+
+    def prepare_smart_for_review(self) -> tuple[str, dict, str | None]:
+        """读最新智能笔记并按 REVIEW_NOTE_LIMIT 截断送评,返回 (smart_clip, coverage, note_file)。"""
+        smart_path = self.latest_smart_note()
+        smart = smart_path.read_text(encoding="utf-8") if smart_path else ""
+        note_file = str(smart_path.relative_to(self.job_dir)) if smart_path else None
+        smart_clip, coverage = self.clip_note_for_review(smart)
+        return smart_clip, coverage, note_file
+
+    def run_dimension_review(self, prompt, fallback, score_keys, note_file, coverage):
+        """评审步通用骨架:call_ai_json(评分 + 解析兜底)→ 标 review_coverage → write_review。
+        返回 (review, parse_failed)。各步只声明 prompt/fallback/score_keys(维度差异),骨架共用。"""
+        review, parse_failed = self.call_ai_json(prompt, fallback=fallback, score_keys=score_keys)
+        review["review_coverage"] = coverage
+        self.write_review(review, note_file)
+        return review, parse_failed
+
     def latest_smart_note(self) -> Path | None:
         """工作目录里最新的智能笔记版本文件(供评审步读取并标注评的是哪一版)。"""
         from .notes_versions import latest_smart

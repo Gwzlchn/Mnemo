@@ -23,10 +23,7 @@ class ArticleReviewStep(StepBase):
         }
 
     def execute(self) -> dict | None:
-        smart_path = self.latest_smart_note()
-        smart = smart_path.read_text(encoding="utf-8") if smart_path else ""
-        note_file = str(smart_path.relative_to(self.job_dir)) if smart_path else None
-        smart_clip, coverage = self.clip_note_for_review(smart)
+        smart_clip, coverage, note_file = self.prepare_smart_for_review()
         sections = self.load_json("intermediate/sections.json")
 
         original_titles = [s["title"] for s in sections.get("sections", [])]
@@ -39,10 +36,7 @@ class ArticleReviewStep(StepBase):
             "3. structure: 结构清晰度\n"
             "4. readability: 可读性\n"
             "5. insight: 观点提炼深度\n\n"
-            "另外输出：\n"
-            "- key_terms: 这篇笔记**讲清楚**的关键概念 + 一句话候选定义（用于沉淀进概念库）\n"
-            "- missing_concepts: 笔记**遗漏**的重要概念（知识缺口，仅供选题/查漏）\n"
-            "- top3_improvements: 最重要的 3 条改进建议\n\n"
+            + self._REVIEW_OUTPUT_EXTRAS +
             "只输出如下扁平 JSON：五个维度为顶层整数键，不要嵌套进 scores 子对象、"
             "不要加 rationale 字段、不要代码围栏、不要任何额外说明文字。\n"
             "{\n"
@@ -56,7 +50,7 @@ class ArticleReviewStep(StepBase):
             f"--- 笔记 ---\n{smart_clip}"
         )
 
-        review, parse_failed = self.call_ai_json(
+        review, parse_failed = self.run_dimension_review(
             prompt,
             fallback={
                 "completeness": 3, "accuracy": 3, "structure": 3,
@@ -70,10 +64,8 @@ class ArticleReviewStep(StepBase):
                 "completeness", "accuracy", "structure",
                 "readability", "insight",
             ],
+            note_file=note_file, coverage=coverage,
         )
-
-        review["review_coverage"] = coverage
-        self.write_review(review, note_file)
         return {"overall": review.get("overall", 0), "parse_failed": parse_failed,
                 "note_file": note_file, "coverage_truncated": coverage["truncated"]}
 

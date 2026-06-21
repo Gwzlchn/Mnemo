@@ -25,10 +25,7 @@ class ReviewStep(StepBase):
 
     def execute(self) -> dict | None:
         mechanical = (self.job_dir / "output" / "notes_mechanical.md").read_text(encoding="utf-8")
-        smart_path = self.latest_smart_note()
-        smart = smart_path.read_text(encoding="utf-8") if smart_path else ""
-        note_file = str(smart_path.relative_to(self.job_dir)) if smart_path else None
-        smart_clip, coverage = self.clip_note_for_review(smart)
+        smart_clip, coverage, note_file = self.prepare_smart_for_review()
 
         prompt = (
             "请对比以下两份笔记，对 AI 生成的智能版笔记进行质量评审。\n\n"
@@ -39,10 +36,7 @@ class ReviewStep(StepBase):
             "4. terminology: 术语使用准确性\n"
             "5. visual_integration: 截图引用恰当性\n"
             "6. readability: 可读性\n\n"
-            "另外输出：\n"
-            "- key_terms: 这篇笔记**讲清楚**的关键概念 + 一句话候选定义（用于沉淀进概念库）\n"
-            "- missing_concepts: 笔记**遗漏**的重要概念（知识缺口，仅供选题/查漏）\n"
-            "- top3_improvements: 最重要的 3 条改进建议\n\n"
+            + self._REVIEW_OUTPUT_EXTRAS +
             "只输出如下扁平 JSON：六个维度为顶层整数键，不要嵌套进 scores 子对象、"
             "不要加 rationale 字段、不要代码围栏、不要任何额外说明文字。\n"
             "{\n"
@@ -56,7 +50,7 @@ class ReviewStep(StepBase):
             f"--- 智能版笔记 ---\n{smart_clip}"
         )
 
-        review, parse_failed = self.call_ai_json(
+        review, parse_failed = self.run_dimension_review(
             prompt,
             fallback={
                 "completeness": 3, "accuracy": 3, "structure": 3,
@@ -70,10 +64,8 @@ class ReviewStep(StepBase):
                 "completeness", "accuracy", "structure",
                 "terminology", "visual_integration", "readability",
             ],
+            note_file=note_file, coverage=coverage,
         )
-
-        review["review_coverage"] = coverage   # 评分覆盖范围(超长笔记标 truncated,分数只对覆盖段负责)
-        self.write_review(review, note_file)   # 补记 生成时间/方式/模型 + 评的是哪一版
         return {"overall": review.get("overall", 0), "parse_failed": parse_failed,
                 "provider": review["provider"], "note_file": note_file,
                 "coverage_truncated": coverage["truncated"]}
