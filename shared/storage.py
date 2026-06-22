@@ -31,6 +31,9 @@ class StorageBackend(Protocol):
     async def pull(self, job_id: str, step: str) -> Path: ...
     async def push(self, job_id: str, step: str, work_dir: Path) -> None: ...
     async def cleanup(self, job_id: str, step: str, work_dir: Path) -> None: ...
+    # 删 job 时清掉该 job 的全部产物:LocalStorage 删 job 目录、RemoteStorage 删 {job_id}/ 前缀对象。
+    # 幂等(无产物即 no-op),避免 MinIO/分布式部署删 job 后中心存储留孤儿产物。
+    async def delete(self, job_id: str) -> None: ...
     # 供 api 按需取单个产物(笔记/日志等);找不到返回 None。
     async def read_file(self, job_id: str, rel_path: str) -> bytes | None: ...
     # 供 api 写入 job 初始文件(job.json、上传源文件等),worker 才能 pull 到。
@@ -71,6 +74,11 @@ class LocalStorage:
 
     async def cleanup(self, job_id: str, step: str, work_dir: Path) -> None:
         pass
+
+    async def delete(self, job_id: str) -> None:
+        # _safe_path 兜底防穿越(job_id 不得逃出 jobs_dir);ignore_errors 保证幂等(目录不存在即 no-op)。
+        root = self._safe_path(job_id)
+        await asyncio.to_thread(shutil.rmtree, root, ignore_errors=True)
 
     async def read_file(self, job_id: str, rel_path: str) -> bytes | None:
         path = self._safe_path(job_id, rel_path)
@@ -200,6 +208,32 @@ class RemoteStorage:
         await asyncio.to_thread(self._cleanup_sync, work_dir)
 
     def _cleanup_sync(self, work_dir: Path) -> None:
+        self._snapshots.pop(str(work_dir), None)
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+    async def delete(self, job_id: str) -> None:
+        await asyncio.to_thread(self._delete_sync, job_id)
+
+    def _delete_sync(self, job_id: str) -> None:
+        from minio.deleteobjects import DeleteObject
+
+        client = self._client()
+        prefix = f"{job_id}/"
+        objs = [
+            DeleteObject(o.object_name)
+            for o in client.list_objects(self._bucket, prefix=prefix, recursive=True)
+        ]
+        if objs:
+            # remove_objects 惰性返回错误迭代器,必须消费(list)才真正发起删除。
+            errors = list(client.remove_objects(self._bucket, objs))
+            if errors:
+                import structlog
+                structlog.get_logger().warning(
+                    "storage_delete_partial", job_id=job_id,
+                    errors=[str(e) for e in errors],
+                )
+        # 顺带清掉本机为该 job 留存的临时工作目录与快照(幂等)。
+        work_dir = self._tmp_root / job_id
         self._snapshots.pop(str(work_dir), None)
         shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -396,6 +430,13 @@ class GatewayStorage:
         # 复用模式留住 job 目录(同 job 后续步直接读本地),由 pull 时 TTL GC 回收。
         if self._reuse:
             return
+        await asyncio.to_thread(shutil.rmtree, work_dir, ignore_errors=True)
+
+    async def delete(self, job_id: str) -> None:
+        # worker 侧 gateway 不负责删中心产物(那是 API/中心存储的职责,删 job 在 API 端走 Local/Remote);
+        # 这里仅清掉本机为该 job 留存的(复用)工作目录与快照,保证幂等。
+        work_dir = self._work_root / job_id
+        self._snapshots.pop(str(work_dir), None)
         await asyncio.to_thread(shutil.rmtree, work_dir, ignore_errors=True)
 
     async def read_file(self, job_id: str, rel_path: str) -> bytes | None:

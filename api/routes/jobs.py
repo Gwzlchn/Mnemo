@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import secrets
-import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
@@ -51,10 +50,6 @@ async def list_providers(config: AppConfig = Depends(get_config)):
             "label": "订阅" if pc.get("type") == "cli" else "API",
         })
     return {"providers": out}
-
-
-def _validate_job_id(job_id: str) -> None:
-    validate_path_segment(job_id, "job_id")
 
 
 def _detect_content_type(url: str | None, filename: str | None = None) -> str:
@@ -262,7 +257,7 @@ async def get_job(
     config: AppConfig = Depends(get_config),
     storage: StorageBackend = Depends(get_storage),
 ):
-    _validate_job_id(job_id)
+    validate_path_segment(job_id, "job_id")
     job = await asyncio.to_thread(db.get_job, job_id)
     if not job:
         raise HTTPException(404, "job not found")
@@ -354,7 +349,7 @@ async def job_concepts(
     db: Database = Depends(get_db),
 ):
     """该内容命中的概念(occurrences 含本 job),含本 job 命中的出现位置 job_occurrences。"""
-    _validate_job_id(job_id)
+    validate_path_segment(job_id, "job_id")
     job = await asyncio.to_thread(db.get_job, job_id)
     if not job:
         raise HTTPException(404, "job not found")
@@ -370,7 +365,7 @@ async def get_step_log(
 ):
     """返回某步骤的运行日志,供前端展开排错。经存储读,兼容本地/MinIO。
     默认尾部截断 256KB;raw=1 返回完整日志(供下载)。"""
-    _validate_job_id(job_id)
+    validate_path_segment(job_id, "job_id")
     validate_path_segment(step, "step")
     data = await storage.read_file(job_id, f"logs/{step}.log")
     if data is None:
@@ -387,17 +382,17 @@ async def delete_job(
     job_id: str,
     db: Database = Depends(get_db),
     redis: RedisClient = Depends(get_redis),
-    config: AppConfig = Depends(get_config),
+    storage: StorageBackend = Depends(get_storage),
 ):
-    _validate_job_id(job_id)
+    validate_path_segment(job_id, "job_id")
     job = await asyncio.to_thread(db.get_job, job_id)
     if not job:
         raise HTTPException(404, "job not found")
     # 单事务删 job：jobs 行 + FTS 索引 + 集合计数 + glossary 悬空 source,避免中途崩溃留孤儿。
     await asyncio.to_thread(db.delete_job_cascade, job_id, job.collection_id)
-    job_dir = config.jobs_dir / job_id
-    if job_dir.exists():
-        await asyncio.to_thread(shutil.rmtree, job_dir)
+    # 删产物经 storage 抽象:LocalStorage 删本地目录、RemoteStorage 删 {job_id}/ 前缀对象,
+    # 否则 MinIO/分布式部署下本地路径不存在、产物在对象存储留孤儿(审计 I-H1)。
+    await storage.delete(job_id)
     await redis.publish("job_command", {"action": "delete", "job_id": job_id})
 
 
@@ -407,7 +402,7 @@ async def retry_job(
     db: Database = Depends(get_db),
     redis: RedisClient = Depends(get_redis),
 ):
-    _validate_job_id(job_id)
+    validate_path_segment(job_id, "job_id")
     job = await asyncio.to_thread(db.get_job, job_id)
     if not job:
         raise HTTPException(404, "job not found")
@@ -424,7 +419,7 @@ async def rerun_job(
     db: Database = Depends(get_db),
     redis: RedisClient = Depends(get_redis),
 ):
-    _validate_job_id(job_id)
+    validate_path_segment(job_id, "job_id")
     job = await asyncio.to_thread(db.get_job, job_id)
     if not job:
         raise HTTPException(404, "job not found")
@@ -454,7 +449,7 @@ async def rerun_smart(
     config: AppConfig = Depends(get_config),
 ):
     """用指定 provider 重跑智能笔记 + 评审,生成新版本(旧版本保留)。"""
-    _validate_job_id(job_id)
+    validate_path_segment(job_id, "job_id")
     job = await asyncio.to_thread(db.get_job, job_id)
     if not job:
         raise HTTPException(404, "job not found")
@@ -481,7 +476,7 @@ async def resubmit_job(
     redis: RedisClient = Depends(get_redis),
 ):
     """从头重提交整个 job。注:前端当前无入口调用(前端用 retry/rerun),保留供后台/CLI 重提。"""
-    _validate_job_id(job_id)
+    validate_path_segment(job_id, "job_id")
     job = await asyncio.to_thread(db.get_job, job_id)
     if not job:
         raise HTTPException(404, "job not found")
