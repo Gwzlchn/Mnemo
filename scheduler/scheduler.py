@@ -24,10 +24,12 @@ from shared.storage import StorageBackend
 
 logger = structlog.get_logger(component="scheduler")
 
+# 来源网络路由的【内置兜底默认】。权威配置在 configs/sources.yaml 的 net_routing 段
+# (经 AppConfig.net_routing 注入);无该配置时回落到这两个默认,保证向后兼容。
+# 新增需代理的境外源(vimeo / 外网 RSS)改 sources.yaml 即可,不必动这里。
 # 命中来源站点、需按来源路由网络的步骤(其余步骤本地/AI,不分代理)。
 _NET_STEPS = {"01_download", "07_danmaku"}
 # 需走出站代理的来源(本环境 YouTube 在代理后)。其余(bilibili 等)直连——代理会断 B站。
-# 可扩展:arxiv / 外网 RSS 文章如需代理在此加。
 _PROXY_SOURCES = {"youtube"}
 
 # 步骤静态优先级加权(分数 -= boost;zpopmin 越小越先)。02_whisper 防饿死(出稿硬依赖它)。
@@ -631,11 +633,16 @@ class Scheduler:
         # 让需代理的源(YouTube)落到带代理的 worker、B站等直连源落到无代理 worker(代理会断 B站)。
         # net-proxy 同时进 require_tags(只有声明该 tag 的 worker 能认领);net-direct 仅进 tags
         # (无代理 worker 不 reject 它故能认领,带代理 worker reject 它故不抢)。
+        # 来源路由表来自 config(configs/sources.yaml),缺省回落内置默认。每次 enqueue 读 config,
+        # 故 reload_config / resubmit 改了 sources.yaml 即时生效,无需额外缓存。
+        nr = self.config.net_routing or {}
+        net_steps = set(nr.get("net_steps") or _NET_STEPS)
+        proxy_sources = set(nr.get("proxy_sources") or _PROXY_SOURCES)
         require_tags = list(static_tags)
-        if step_name in _NET_STEPS:
+        if step_name in net_steps:
             info = job_info if pool == "ai" else await self.redis.get_job_info(job_id)
             src = (info.get("source") or "").strip() or detect_source(info.get("url", ""))
-            netclass = "net-proxy" if src in _PROXY_SOURCES else "net-direct"
+            netclass = "net-proxy" if src in proxy_sources else "net-direct"
             merged_tags = sorted(set(merged_tags + [netclass]))
             if netclass == "net-proxy":
                 require_tags = sorted(set(require_tags + [netclass]))

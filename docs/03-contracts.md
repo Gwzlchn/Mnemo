@@ -1309,6 +1309,18 @@ exclusive_groups:
     scene_acquires_all_cpu: true
 ```
 
+### 4.2.1 sources.yaml — 来源网络路由（可选）
+
+把"哪些步骤按来源分网络出口 / 哪些来源需走出站代理"从 `scheduler` 代码外置到配置。缺此文件时 scheduler 回落内置默认（`_NET_STEPS` / `_PROXY_SOURCES`），向后兼容。
+
+```yaml
+net_routing:
+  net_steps: ["01_download", "07_danmaku"]   # 受来源网络路由影响的步骤
+  proxy_sources: ["youtube"]                  # 需走出站代理的来源(其余直连)
+```
+
+`enqueue_step` 对 `net_steps` 命中的步骤，按来源站点判 `net-proxy` / `net-direct`：`net-proxy` 同时进 `require_tags`（硬门控，只有声明该 tag 的 worker 能认领），`net-direct` 仅进软 `tags`。新增需代理的境外源改此 YAML 即可，不必动 Python。经 `AppConfig.net_routing` 注入；`reload_config` / `resubmit` 后即时生效。
+
 ### 4.3 scenes.json — 场景检测输出
 
 ```json

@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -256,6 +256,9 @@ class AppConfig:
     pipelines: dict
     pools: dict
     providers: dict
+    # 来源网络路由(configs/sources.yaml 的 net_routing 段):net_steps / proxy_sources。
+    # 缺省空 dict → scheduler 回落到内置默认,向后兼容(无 sources.yaml 也能跑)。
+    net_routing: dict = field(default_factory=dict)
 
 
 def load_config(
@@ -274,6 +277,7 @@ def load_config(
         pipelines=load_pipelines(config_dir / "pipelines.yaml"),
         pools=load_yaml(config_dir / "pools.yaml"),
         providers=_load_optional(config_dir / "providers.yaml"),
+        net_routing=(_load_optional(config_dir / "sources.yaml") or {}).get("net_routing") or {},
     )
 
 

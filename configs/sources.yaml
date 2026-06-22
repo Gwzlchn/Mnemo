@@ -1,0 +1,15 @@
+# 来源网络路由:把"哪些步骤按来源分网络出口 / 哪些来源需走出站代理"从 scheduler 代码
+# 外置到配置(配置与代码分离)。与 scheduler.enqueue_step 配合:
+#   · net_steps 命中的步骤,按来源站点判 net-proxy / net-direct;
+#   · net-proxy 同时进 require_tags(硬门控:只有声明该 tag 的 worker 能认领该步);
+#   · net-direct 仅进软 tags(无代理 worker 不 reject 故能认领;带代理 worker reject 故不抢)。
+# 缺此文件时 scheduler 回落到内置默认(scheduler.py 的 _NET_STEPS / _PROXY_SOURCES),向后兼容。
+net_routing:
+  # 受来源网络路由影响的步骤(其余步骤本地/AI,不分代理)。
+  net_steps:
+    - "01_download"
+    - "07_danmaku"
+  # 需走出站代理的来源(本环境 YouTube 在代理后);其余(bilibili 等)直连——代理会断 B站。
+  # 新增需代理的境外源(vimeo / 外网 RSS 文章)在此加一行即可,不必改 Python。
+  proxy_sources:
+    - "youtube"
