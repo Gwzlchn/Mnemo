@@ -90,7 +90,8 @@ describe('SearchView 搜索流程', () => {
     await w.findAll('input.input')[1].setValue('col-9')  // collection_id
     await typeAndSettle(w, 'transformer')
 
-    const url = api.get.mock.calls.at(-1)![0] as string
+    const calls = api.get.mock.calls
+    const url = calls[calls.length - 1][0] as string
     expect(url).toContain('q=transformer')
     expect(url).toContain('content_type=paper')
     expect(url).toContain('domain=ml')      // 已 trim

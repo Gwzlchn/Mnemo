@@ -78,8 +78,8 @@ jobs:
 
   # 仅 main：测试通过后构建镜像（amd64；所有目标机均为 x86）并推送。
   build-push:
-    needs: test
-    if: github.ref == 'refs/heads/main'
+    # PR 也构建镜像(只是不推),把 Dockerfile/构建期问题(如前端 vue-tsc)挡在合并前;推送仅 main。
+    needs: [test, fe-test]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -98,6 +98,7 @@ jobs:
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - name: Log in to ghcr.io
+        if: github.ref == 'refs/heads/main'   # 仅 main 需登录(PR 只构建不推)
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -117,7 +118,7 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
-          push: true
+          push: ${{ github.ref == 'refs/heads/main' }}   # PR 只构建验证,推送仅 main
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             USE_USTC_MIRROR=0
