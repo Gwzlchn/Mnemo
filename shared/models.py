@@ -143,6 +143,10 @@ class LLMRequest:
     # 注:目前仅 OpenAICompatibleProvider 把它转成 {"type":"json_object"};AnthropicProvider 与
     # claude-cli 不读此项(由 step_base._extract_json/_salvage_scores 兜底解析 JSON)。
     response_format: str | None = None
+    # 取证等需联网/工具的步骤:放开指定工具(如 ["WebSearch","Bash"])。仅 claude-cli provider 读,
+    # 转为 --allowedTools <tools> --max-turns;其它 provider 忽略。None=沿用原两档(images→Read / 否则禁工具)。
+    allowed_tools: list[str] | None = None
+    max_turns: int | None = None
 
 
 @dataclass

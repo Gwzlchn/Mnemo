@@ -241,7 +241,12 @@ class ClaudeCLIProvider:
 
         # 命令模板里的 {prompt_file} 占位已弃用——prompt 改走 stdin(无 ARG_MAX 限制、不依赖文件读)。
         cmd = [part for part in self._command_template if "{prompt_file}" not in part]
-        if request.images:
+        if request.allowed_tools:
+            # 取证等联网步骤:放开指定工具(如 WebSearch + Bash),让 claude agentic 搜+抓+抽。
+            # 与 images 分支互斥(取证不喂帧图);max_turns 给足(多轮:搜索→直连curl→抽取)。
+            cmd += ["--allowedTools", *request.allowed_tools]
+            cmd += ["--max-turns", str(request.max_turns or 24)]
+        elif request.images:
             cmd += ["--allowedTools", "Read"]
             # 限轮数:每张图一个 Read 轮,多图时上下文超线性膨胀会拖垮(实测 20 张丢图无界跑 >18min)。
             # 留几轮给思考+生成。配合 step 侧限图数,把视觉笔记控制在分钟级。
@@ -257,7 +262,8 @@ class ClaudeCLIProvider:
             cmd += ["--tools", "", "--max-turns", "1"]
 
         env = {**os.environ, **self._env}
-        timeout = min(600 + 25 * len(request.images or []), 1800)  # 图越多给越久
+        # 取证等放开工具的 agentic 调用(多轮搜索/抓取)给足 30min;否则按图数给。
+        timeout = 1800 if request.allowed_tools else min(600 + 25 * len(request.images or []), 1800)
         start = time.time()
         proc = await asyncio.create_subprocess_exec(
             *cmd,

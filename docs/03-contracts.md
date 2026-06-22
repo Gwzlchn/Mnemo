@@ -1429,6 +1429,43 @@ net_routing:
 
 > 旧 schema 已废弃：分数不再嵌套进 `scores` 子对象（现为顶层扁平整数键），`screenshots` 维度更名为 `visual_integration`，并新增 `visual_integration` 之外的 `key_terms` 输出。
 
+### 4.9 evidence.json — 权威来源（案例取证，ADR-0012）
+
+案例类笔记（`domain=finance` 或 `style_tags` 含 `case-study`）由「取证」步（`12_evidence`，video pipeline）产出 `output/evidence.json`；非案例类不产出（步内自门控 skip）。前端「权威来源」tab 经 `GET /api/jobs/{id}/evidence`（裸字节透传，未取证返回 404）渲染。
+
+```json
+{
+  "schema_version": 1,
+  "fetched_at": "2026-06-23",
+  "ocr_refs": ["〔2018〕88号"],
+  "case_match": {
+    "subject": "案件一句话",
+    "anchors": ["命中锚点"],
+    "confidence": "high | medium | low",
+    "note": "一手命中/缺口说明"
+  },
+  "evidence": [
+    {
+      "id": "E1",
+      "type": "行政处罚决定 | 刑事裁定 | 公司公告 | 报道",
+      "title": "标题",
+      "url": "真实URL",
+      "publisher": "发布方",
+      "ref": "文号/案号",
+      "source_tier": "一手官方 | 上市公司公告 | 媒体逐字转载 | 二手新闻",
+      "match_confidence": "high | medium | low",
+      "excerpt": "原文摘要",
+      "key_facts": [{ "figure": "金额/数字/事实", "quote": "原文片段" }]
+    }
+  ],
+  "notes": "取证说明",
+  "parse_failed": false
+}
+```
+
+- `confidence` / `match_confidence` 由**文号 case-match** 派生：抓回正文含 OCR 文号/当事人 → `high`；只对上当事人 → `medium`；对不上或仅二手 → `low`。
+- `source_tier` 标来源层级；笔记引用角标 **`[E#]`** 对应 `id`（smart 集成为后续）。**一手优先，抓不到如实降级，绝不用二手冒充一手。**
+- 取证失败：`parse_failed: true` + 空 `evidence`。
 
 ## 5. 错误码
 
