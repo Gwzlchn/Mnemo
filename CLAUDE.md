@@ -121,3 +121,42 @@ flori/
 - 步骤代码独立开发+验证，用已有产物做测试输入
 - 每完成一个模块提交 git + 更新 ROADMAP
 
+## 目录与开发/运行规约（2026-06-22 治理后,务必遵守）
+
+### 命名
+- 品牌 **Flori**（README/文档/UI 标题）；技术标识符全小写 `flori`（仓库/包/镜像/容器/卷/CLI）；env 前缀 `FLORI_`。GitHub 仓库 `Gwzlchn/Flori`。
+
+### 目录布局（顶层契约）
+- 入 git：`api/ shared/ scheduler/ worker/ steps/ frontend/ configs/ docker/ deploy/ scripts/ tests/ docs/` + 根级 `*.md / pyproject.toml / docker-compose*.yml / .github/ / .gitignore / .dockerignore / .env.example`。
+- **禁 `_前缀` 顶层目录**。本地专用 → `.local/`（gitignored）；可分享部署配方 → `deploy/`（入 git,密钥用 `${ENV}` 外置 + `.env.example`）。
+- **永不入 git**：运行时数据（`data/ inbox/ output/ backups/` + Docker 命名卷）、密钥（`.env`、`deploy/**/.env`、`deploy/tunnel/ssh/`）。
+- `inbox/` = local_dir 订阅监听目录（丢文件即入库）；`.local/processing/<日期>/` = 每次迭代工作日志（规范见该目录根的 `迭代记录规范.txt`）。
+
+### 运行时数据
+- 容器内统一 `/data`；NAS 生产用 bind：`FLORI_DATA_DIR=/volume1/DATA/flori`、`MINIO_DATA_DIR=…/minio`、MinIO bucket `flori`；临时产物 `/tmp/flori-work`。**数据永不放进仓库目录树**。
+
+### 开发 / 测试（全容器内,宿主不装依赖）
+- 开发热更新：`docker compose -f docker-compose.dev.yml up -d`
+- 容器内测试：`docker compose -f docker-compose.test.yml run --rm test`
+
+### 本地活栈（NAS,override 叠加）
+```
+docker compose -f docker-compose.yml -f .local/docker-compose.uptest.yml --env-file .env \
+  --profile distributed up -d --scale worker-cpu=0 --scale worker-ai=0
+```
+- ★`.env` 必须 `IMAGE_TAG=uptest`（用本地镜像,否则去拉不存在的 `flori:latest` 被代理 reset）；base `worker-cpu/ai` 缩到 0（由 uptest 的专用 worker：claude×2/nas-cpu/foreign-dl/nas-dl 替代）。
+- 容器命名 `flori-*`；改源码/镜像后重建对应容器。
+
+### 部署（边缘 ECS）
+- `deploy/edge`（Caddy 反代 + basic_auth + 前端）+ `deploy/tunnel`（反向 SSH 隧道,外部网络 `flori_default`）。
+- 镜像经 `scripts/push-to-edge.sh`（SSH `save|load`,**不靠 ghcr**）；登录凭证在 `.local/ops/flori-access.txt`（用户名 `flori`）。
+
+### GitHub / 网络（NAS 特例）
+- NAS shell 推 GitHub 须**清代理 env**：`env -u ALL_PROXY -u HTTPS_PROXY -u HTTP_PROXY git push`（SSH 直连可用；HTTP 代理 11081 对 github/ghcr 不稳）。
+- push main 后 CI 自动构建并推 `ghcr.io/<owner>/flori` 镜像；Watchtower 跟随更新。
+
+### 单一来源 / 防漂移
+- 依赖只在 `pyproject.toml`（optional extras）；Dockerfile/CI 按 extras 名装,勿重抄版本。
+- 改任何对外接口 → 同提交更新 `docs/03-contracts.md`（commit 用 `contract:` 前缀）。
+- 每次迭代在 `.local/processing/<日期>/` 留「计划→实际→起止时间」记录；值得长存的决策升格 `docs/adr/`。
+
