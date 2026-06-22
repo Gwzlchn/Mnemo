@@ -11,14 +11,21 @@ jobs:
   # 容器内跑全部单元测试 + 分支覆盖率门(与本地 docker compose test 同路径)。
   test:
     runs-on: ubuntu-latest
+    outputs:
+      cov: ${{ steps.cov.outputs.pct }}
     env:
       USE_USTC_MIRROR: "0"     # 海外 runner 用官方源
     steps:
       - uses: actions/checkout@v6
       - name: Unit tests + 分支覆盖率门(--cov-fail-under=75,见 docker-compose.test.yml)
+        id: cov
         run: |
           docker compose -f docker-compose.test.yml build
-          docker compose -f docker-compose.test.yml run --rm test
+          docker compose -f docker-compose.test.yml run --rm test | tee /tmp/be-cov.log
+          pct=$(grep -oP 'Total coverage: \K[0-9.]+' /tmp/be-cov.log | tail -1 || true)
+          pct=${pct:-unknown}
+          echo "pct=$pct" >> "$GITHUB_OUTPUT"
+          echo "### 🐍 后端分支覆盖率:${pct}%" >> "$GITHUB_STEP_SUMMARY"
       # OpenAPI 模糊/契约(schemathesis):对每个端点喂畸形输入,断言不 5xx 崩溃。
       # 复用上一步已 build 的镜像;fuzz 用例带 `fuzz` marker(默认套件已 -m 'not fuzz' 排除),此处单独 -m fuzz 跑。
       - name: Schemathesis 模糊/契约(无 5xx)
@@ -29,13 +36,45 @@ jobs:
   # 前端单测 + 覆盖率(容器化 vitest;node:20-alpine)。与后端 test job 并行,各自为门。
   fe-test:
     runs-on: ubuntu-latest
+    outputs:
+      cov: ${{ steps.cov.outputs.pct }}
     steps:
       - uses: actions/checkout@v6
       - name: Frontend unit tests + 覆盖率(vitest)
+        id: cov
         run: |
           # 海外 runner 用官方 npm 源覆盖 compose 里默认的 npmmirror(国内直连)
           docker compose -f docker-compose.fe-test.yml run --rm \
-            -e npm_config_registry=https://registry.npmjs.org fe-test
+            -e npm_config_registry=https://registry.npmjs.org fe-test | tee /tmp/fe-cov.log
+          pct=$(grep -oP 'Statements\s*:\s*\K[0-9.]+' /tmp/fe-cov.log | tail -1 || true)
+          pct=${pct:-unknown}
+          echo "pct=$pct" >> "$GITHUB_OUTPUT"
+          echo "### 🟢 前端语句覆盖率:${pct}%" >> "$GITHUB_STEP_SUMMARY"
+
+  # 仅 main：把前后端覆盖率写成 shields endpoint JSON,force-push 到 badges 数据分支(README 徽章读它)。
+  # badges 分支不触发 CI(on 只认 main/PR),零额外 secret(用内置 GITHUB_TOKEN;public 仓库 shields 直接读 raw)。
+  coverage-badge:
+    needs: [test, fe-test]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 生成覆盖率徽章 JSON 并 force-push badges 分支
+        env:
+          BE: ${{ needs.test.outputs.cov }}
+          FE: ${{ needs.fe-test.outputs.cov }}
+        run: |
+          col() { awk -v p="$1" 'BEGIN{n=p+0; print (n>=80)?"brightgreen":(n>=60)?"yellow":"orange"}'; }
+          mkdir badges && cd badges
+          printf '{"schemaVersion":1,"label":"backend cov","message":"%s%%","color":"%s"}\n' "$BE" "$(col "$BE")" > coverage-backend.json
+          printf '{"schemaVersion":1,"label":"frontend cov","message":"%s%%","color":"%s"}\n' "$FE" "$(col "$FE")" > coverage-frontend.json
+          git init -q -b badges
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add coverage-backend.json coverage-frontend.json
+          git commit -q -m "chore(badges): 覆盖率 be=${BE}% fe=${FE}% [skip ci]"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" badges
 
   # 仅 main：测试通过后构建镜像（amd64；所有目标机均为 x86）并推送。
   build-push:
