@@ -76,3 +76,18 @@ class TestExtractArxivId:
 
     def test_no_match(self):
         assert extract_arxiv_id("https://example.com") is None
+
+    def test_version_preserved(self):
+        assert extract_arxiv_id("https://arxiv.org/abs/2301.00001v2") == "2301.00001v2"
+
+    def test_bare_new_style_id(self):
+        assert extract_arxiv_id("2301.00001") == "2301.00001"
+
+    def test_old_style_url(self):
+        assert extract_arxiv_id("https://arxiv.org/abs/hep-th/9901001") == "hep-th/9901001"
+
+    def test_bare_old_style_id(self):
+        assert extract_arxiv_id("hep-th/9901001") == "hep-th/9901001"
+
+    def test_old_style_with_subclass(self):
+        assert extract_arxiv_id("arxiv.org/pdf/math.AG/0601001") == "math.AG/0601001"

@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+from pathlib import Path
 
 # yt-dlp 浅枚举每页/每条投稿可能很多,留足超时;频道页投稿数大时 --flat-playlist 仍较快。
 _YT_DLP_TIMEOUT_SEC = 180
@@ -143,6 +145,13 @@ async def enumerate_youtube_channel(
         "--dump-json",       # 每个 entry 一行 JSON
         "--ignore-errors",   # 个别条目失败不中断整页枚举
         "--no-warnings",
+    ]
+    # 上传的 YouTube cookies(/data/cookies/youtube.txt,Netscape 格式)用于枚举私有/会员/
+    # 年龄限制内容;与下载链路一致(steps/common/step_01_download.py),缺失则匿名枚举。
+    cookies = Path(os.environ.get("DATA_DIR", "/data")) / "cookies" / "youtube.txt"
+    if cookies.exists():
+        args += ["--cookies", str(cookies)]
+    args += [
         "--",                # 分隔:挡以 "-" 开头的 source_id 被当作 yt-dlp 选项注入
         channel_url,
     ]

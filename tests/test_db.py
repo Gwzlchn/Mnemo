@@ -522,6 +522,17 @@ class TestCollectionM2:
         assert got is not None
         assert got.collection_id is None
 
+    def test_delete_collection_purge_strips_occurrences(self, db):
+        # purge=True 删名下 job 时，必须同步摘除其 glossary 出现记录，不留悬空 job_id。
+        db.create_collection(Collection(id="c1", name="c1", domain="ml"))
+        db.create_job(Job(id="j_purge_1", content_type="video", pipeline="video", collection_id="c1"))
+        db.add_glossary_suggestion("ml", "注意力机制", "j_purge_1", "video")
+        db.add_glossary_suggestion("ml", "注意力机制", "j_other", "video")  # 不属该集合，应保留
+        db.delete_collection("c1", purge=True)
+        assert db.get_job("j_purge_1") is None
+        got = db.get_glossary_term("ml", "注意力机制")
+        assert [o["job_id"] for o in got["occurrences"]] == ["j_other"]
+
     def test_increment_collection_count(self, db):
         db.create_collection(Collection(id="c1", name="c1", domain="ml"))
         db.increment_collection_count("c1", 1)
