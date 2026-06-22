@@ -136,6 +136,72 @@ class TestDownloadStep:
         assert (input_dir / "danmaku.ass").exists()
         assert len(list(input_dir.glob("*.ass"))) == 1
 
+    def test_local_file_copies_pdf(self, tmp_path):
+        """file:// url(本地目录订阅)→ 复制宿主文件进 input/source.pdf,跳过网络下载。"""
+        job_dir = tmp_path / "job"
+        job_dir.mkdir()
+        for d in ["input", "intermediate", "output", "assets", "logs"]:
+            (job_dir / d).mkdir()
+        src = tmp_path / "inbox" / "paper.pdf"
+        src.parent.mkdir()
+        src.write_bytes(b"%PDF-1.4 fake pdf content")
+
+        step = self._make(job_dir, tmp_path, url=f"file://{src}", content_type="paper")
+        result = step.execute()
+
+        assert result["source"] == "local"
+        copied = job_dir / "input" / "source.pdf"
+        assert copied.exists()
+        assert copied.read_bytes() == b"%PDF-1.4 fake pdf content"
+        assert (job_dir / "input" / "metadata.json").exists()
+
+    def test_local_file_video_runs_verify(self, tmp_path):
+        """video 类本地文件复制后走 ffprobe 校验:坏文件(无时长)应被挡。"""
+        from shared.errors import InputInvalidError
+
+        job_dir = tmp_path / "job"
+        job_dir.mkdir()
+        for d in ["input", "intermediate", "output", "assets", "logs"]:
+            (job_dir / d).mkdir()
+        src = tmp_path / "inbox" / "clip.mp4"
+        src.parent.mkdir()
+        src.write_bytes(b"\x00" * 16)  # 太小且无时长 → _verify_download 抛错
+
+        step = self._make(job_dir, tmp_path, url=f"file://{src}", content_type="video")
+        with pytest.raises(InputInvalidError):
+            step.execute()
+
+    def test_local_file_missing_raises(self, tmp_path):
+        """file:// 指向不存在的本地文件 → InputInvalidError(不静默成功)。"""
+        from shared.errors import InputInvalidError
+
+        job_dir = tmp_path / "job"
+        job_dir.mkdir()
+        for d in ["input", "intermediate", "output", "assets", "logs"]:
+            (job_dir / d).mkdir()
+        step = self._make(job_dir, tmp_path,
+                          url=f"file://{tmp_path / 'inbox' / 'gone.pdf'}",
+                          content_type="paper")
+        with pytest.raises(InputInvalidError):
+            step.execute()
+
+    def test_local_file_no_network_download_called(self, tmp_path):
+        """file:// 分支绝不触发 generic/yt-dlp 网络下载。"""
+        job_dir = tmp_path / "job"
+        job_dir.mkdir()
+        for d in ["input", "intermediate", "output", "assets", "logs"]:
+            (job_dir / d).mkdir()
+        src = tmp_path / "inbox" / "note.txt"
+        src.parent.mkdir()
+        src.write_text("hello article body")
+
+        step = self._make(job_dir, tmp_path, url=f"file://{src}", content_type="article")
+        with patch.object(step, "_download_generic") as mock_generic:
+            result = step.execute()
+            mock_generic.assert_not_called()
+        assert result["source"] == "local"
+        assert (job_dir / "input" / "source.txt").read_text() == "hello article body"
+
     def test_prune_subtitle_keeps_chinese_only(self, tmp_path):
         """原生中文视频:只留中文字幕,删 B 站 AI 翻译的其它语种。"""
         job_dir = tmp_path / "job"

@@ -29,7 +29,15 @@ class DownloadStep(StepBase):
         source = job.get("source") or detect_source(url)
         content_type = job.get("content_type", "video")
 
-        if source == "upload":
+        # 本地目录订阅(local_dir 适配器)枚举出的 file:// url:不走网络下载,
+        # 把宿主本地文件复制进 job 的 input/(被监听目录已挂进容器),再走正常校验。
+        # 注:create_job_core 用 detect_source 给本地 url 的 source 记 "other",故这里
+        # 直接按 url 前缀判定,优先于 source 分派。
+        if url.startswith("file://"):
+            self.log.info("local_file_mode", content_type=content_type)
+            source = "local"
+            self._copy_local_file(url, content_type)
+        elif source == "upload":
             self.log.info("upload_mode", content_type=content_type)
         elif source == "bilibili":
             self._download_bilibili(url)
@@ -254,6 +262,38 @@ class DownloadStep(StepBase):
                 import shutil
                 shutil.copyfile(src, target)
                 return
+
+    def _copy_local_file(self, url: str, content_type: str) -> None:
+        """把 file:// url 指向的宿主本地文件复制进 input/(按 content_type 命名为 source.*)。
+
+        被监听目录(local_dir 订阅源)已挂进 worker 容器,故路径在容器内可达。
+        不走网络;复制后视频类走 ffprobe 校验,挡空/坏文件污染下游。"""
+        import shutil
+        from urllib.parse import unquote, urlparse
+
+        from shared.errors import InputInvalidError
+
+        src = Path(unquote(urlparse(url).path))
+        if not src.is_file():
+            raise InputInvalidError(f"local file not found: {src}")
+
+        input_dir = self.job_dir / "input"
+        input_dir.mkdir(parents=True, exist_ok=True)
+
+        # 按 content_type 落成下游约定的 source.* 名(沿用原扩展名,音频另由
+        # _link_audio_for_whisper 备一份 source.mp4)。
+        ext = src.suffix.lower()
+        name_by_type = {
+            "paper": "source.pdf",
+            "video": "source.mp4",
+            "article": f"source{ext or '.html'}",
+            "audio": f"source{ext or '.mp3'}",
+        }
+        dest = input_dir / name_by_type.get(content_type, f"source{ext}")
+        shutil.copyfile(src, dest)
+
+        if content_type == "video":
+            self._verify_download(dest)
 
     def _download_generic(self, url: str) -> None:
         from shared.net import assert_public_url

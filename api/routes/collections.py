@@ -14,6 +14,7 @@ from shared.db import Database
 from shared.models import Collection, collection_id_for_subscription, generate_collection_id
 from shared.redis_client import RedisClient
 from shared.storage import StorageBackend
+from shared.subscriptions.base import source_label  # 派生来源短标签(_to_response 用,模块级)
 
 from api.deps import get_db, get_redis, get_storage, verify_token
 from api.schemas import (
@@ -42,6 +43,7 @@ def _to_response(c: Collection) -> CollectionResponse:
     if c.is_subscription:
         sub = CollectionSubscriptionInfo(
             source_type=c.source_type, source_id=c.source_id,
+            source_label=source_label(c.source_type),   # 派生短标签,前端组合显示(name + 徽标)
             enabled=c.sync_enabled,
             last_synced_at=c.last_synced_at.isoformat() if c.last_synced_at else None,
         )
@@ -55,30 +57,52 @@ def _to_response(c: Collection) -> CollectionResponse:
 async def sync_collection(
     coll: Collection, db: Database, redis: RedisClient, storage: StorageBackend,
 ) -> dict:
-    """枚举订阅集合的来源(UP) → 跟已入库去重 → 新内容自动建 job(归入本集合)。
-    返回 {total, new, skipped}。仅订阅集合可调。"""
+    """枚举订阅集合的来源 → 跟已入库去重 → 新内容自动建 job(归入本集合)。
+    经 enumerate_source 按 source_type 分派到注册的 source-adapter(B站 UP/收藏夹/
+    YouTube/RSS/本地目录…),与具体来源解耦。返回 {total, new, skipped}。仅订阅集合可调。"""
     if not coll.is_subscription:
         raise ValueError("not a subscription collection")
-    if coll.source_type != "bilibili_up":
-        raise ValueError(f"unsupported source_type: {coll.source_type}")
-    from shared.bili_space import enumerate_up
+    from shared.subscriptions import (
+        SourceContext, enumerate_source, source_label,
+    )
     from api.routes.jobs import create_job_core
 
     cookies = await asyncio.to_thread(db.get_credential, "bili_cookies")
-    videos = await enumerate_up(coll.source_id, cookies)
-    ingested = await asyncio.to_thread(db.ingested_bvids)
-    new = [v for v in videos if v["bvid"] not in ingested]
-    for v in new:
+    ctx = SourceContext(bili_cookies=cookies, db=db)
+    source_title, items = await enumerate_source(coll.source_type, coll.source_id, ctx)
+
+    # 首次同步拿到 source_title 后回填集合名为 <名>-<来源>:仅当当前名为占位(空/等于
+    # source_id/已等于 id)时改,避免覆盖用户手填名。回填后用于响应与后续展示。
+    if source_title:
+        desired = source_title  # 存纯真实名;来源标签在响应里派生(source_label),不拼进 name
+        if _is_placeholder_name(coll.name, coll) and coll.name != desired:
+            await asyncio.to_thread(db.update_collection, coll.id, name=desired)
+            coll.name = desired
+
+    ingested = await asyncio.to_thread(db.ingested_item_ids, coll.id)
+    # 迁移兜底:B站来源的 item_id=bvid。新去重表上线前已入库的 B站视频不在 ingested_items,
+    # 把"jobs.url 里出现过的 BV 号"并入,避免历史视频被重复建 job(其它来源无此问题)。
+    if coll.source_type and coll.source_type.startswith("bilibili"):
+        ingested |= await asyncio.to_thread(db.ingested_bvids)
+    new = [it for it in items if it.item_id not in ingested]
+    for it in new:
         await create_job_core(
             db, redis, storage,
-            url=f"https://www.bilibili.com/video/{v['bvid']}",
-            content_type="video", domain=coll.domain,
-            collection_id=coll.id, title=(v.get("title") or "").strip() or None,
+            url=it.url, content_type=it.content_type, domain=coll.domain,
+            collection_id=coll.id, title=it.title or None,
         )
+        await asyncio.to_thread(db.mark_ingested, coll.id, it.item_id)
         await asyncio.sleep(0.2)  # 轻微间隔,别瞬时灌爆队列/触发风控
     await asyncio.to_thread(db.mark_collection_synced, coll.id, datetime.now(timezone.utc))
-    logger.info("collection_synced", coll=coll.id, total=len(videos), new=len(new))
-    return {"total": len(videos), "new": len(new), "skipped": len(videos) - len(new)}
+    logger.info("collection_synced", coll=coll.id, total=len(items), new=len(new))
+    return {"total": len(items), "new": len(new), "skipped": len(items) - len(new)}
+
+
+def _is_placeholder_name(name: str | None, coll: Collection) -> bool:
+    """判断集合名是否为可被首次同步覆盖的占位名(空 / 等于来源 id / 等于集合 id)。
+    用户显式填的真实名不在此列,不会被回填覆盖。"""
+    n = (name or "").strip()
+    return (not n) or n == coll.source_id or n == coll.id
 
 
 @router.post("", status_code=201, response_model=CollectionResponse)
@@ -97,10 +121,19 @@ async def create_collection(
             raise HTTPException(400, "该来源已订阅")
         cid = collection_id_for_subscription(req.source_type, req.source_id)
     else:
+        # 手动集合必须有名(订阅集合可留空,首次同步自动命名)。
+        if not (req.name or "").strip():
+            raise HTTPException(400, "集合名不能为空")
         cid = generate_collection_id()
 
+    # 订阅集合名留空 = 要求自动命名:先以 source_id 占位(NOT NULL),首次同步拿到
+    # source_title 后由 sync_collection 回填为 <名>-<来源>(见 _is_placeholder_name)。
+    name = (req.name or "").strip()
+    if is_sub and not name:
+        name = req.source_id
+
     collection = Collection(
-        id=cid, name=req.name, domain=req.domain,
+        id=cid, name=name, domain=req.domain,
         description=req.description or "", tags=req.tags,
         source_type=req.source_type if is_sub else None,
         source_id=req.source_id if is_sub else None,
@@ -180,14 +213,16 @@ async def trigger_sync(
 @router.delete("/{collection_id}", status_code=204)
 async def delete_collection(
     collection_id: str,
+    purge: bool = Query(False),   # false=仅解绑(保留 job/笔记);true=连名下 job 一起删(前端需二次确认)
     db: Database = Depends(get_db),
 ):
-    """删集合=解绑：名下 job 的 collection_id 置 NULL（保留 job），再删集合行。"""
+    """删集合两模式:默认解绑(名下 job 的 collection_id 置 NULL、保留内容);
+    purge=true 连名下 job 一起删。两种都清该集合的 ingested_items(便于重订阅重新入库)。"""
     _validate_collection_id(collection_id)
     c = await asyncio.to_thread(db.get_collection, collection_id)
     if not c:
         raise HTTPException(404, "collection not found")
-    await asyncio.to_thread(db.delete_collection, collection_id)
+    await asyncio.to_thread(db.delete_collection, collection_id, purge)
 
 
 @router.get("/{collection_id}/jobs", response_model=JobListResponse)

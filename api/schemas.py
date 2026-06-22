@@ -120,13 +120,16 @@ class TermAddRequest(BaseModel):
 
 
 class CollectionCreateRequest(BaseModel):
-    name: str
+    # 手动集合 name 必填;订阅集合可留空(""),首次同步后自动命名为 <来源名>-<来源>。
+    name: str = ""
     domain: str
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     # 订阅集合：给定 source_type/source_id 即创建订阅集合(自动从该来源追更)。
-    source_type: str | None = None      # 目前: bilibili_up
-    source_id: str | None = None        # B站 mid
+    # source_type 取值: bilibili_up / bilibili_fav / bilibili_collection /
+    # youtube_channel / rss / local_dir(适配器见 shared/subscriptions/)。
+    source_type: str | None = None
+    source_id: str | None = None        # 来源 id：B站 mid / YouTube 频道 / RSS url / 目录路径
     sync_now: bool = True               # 建后立即首次同步
 
 
@@ -139,8 +142,9 @@ class CollectionUpdateRequest(BaseModel):
 
 class CollectionSubscriptionInfo(BaseModel):
     """集合的订阅源信息(订阅是集合属性)。同步/开关端点用集合自身 id。"""
-    source_type: str          # bilibili_up
-    source_id: str            # B站 mid
+    source_type: str          # bilibili_up/fav/collection · youtube_channel · rss · local_dir
+    source_id: str            # B站 mid / 频道URL / feed URL / 目录路径 / 收藏夹id ...
+    source_label: str = ""    # 由 source_type 派生的来源短标签(bilibili/youtube/rss/local);前端 = name + 该徽标
     enabled: bool             # 自动同步开关 = collection.sync_enabled
     last_synced_at: str | None = None
 

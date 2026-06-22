@@ -42,6 +42,10 @@ services:
       - "${API_BIND_IP:-127.0.0.1}:${API_PORT:-8000}:8000"
     volumes:
       - ${MNEMO_DATA_DIR:-mnemo-data}:/data
+      # local_dir 订阅来源约定监听目录:把文件放进 ${MNEMO_INBOX_DIR}(默认宿主 ./inbox)
+      # 即被 source_type=local_dir、source_id=/data/inbox 的订阅枚举入库。
+      # api 跑 enumerate_source→scan_dir(枚举,只读即可);与 worker-cpu 挂同一容器内路径。
+      - ${MNEMO_INBOX_DIR:-./inbox}:/data/inbox:ro
     environment:
       <<: *common-env
       WORK_DIR: ${WORK_DIR:-/tmp/mnemo-work}
@@ -102,6 +106,9 @@ services:
     volumes:
       - ${MNEMO_DATA_DIR:-mnemo-data}:/data
       - ${HOST_WORK_DIR:-mnemo-work}:/tmp/mnemo-work
+      # local_dir 订阅:worker 跑 step_01_download._copy_local_file 复制源文件,
+      # 须与 api 挂同一容器内路径 /data/inbox(file:// url 在 worker 容器内按此解析)。只读即可。
+      - ${MNEMO_INBOX_DIR:-./inbox}:/data/inbox:ro
     environment:
       <<: *common-env
       STEP_RUNTIME: ${STEP_RUNTIME:-subprocess}

@@ -21,6 +21,8 @@ services:
       - ./api:/app/api
       - ./configs:/app/configs
       - ${MNEMO_DATA_DIR:-./data}:/data
+      # local_dir 订阅约定监听目录(放文件进宿主 ./inbox 即被枚举入库);与 worker 挂同一容器路径。
+      - ${MNEMO_INBOX_DIR:-./inbox}:/data/inbox
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATA_DIR=/data
@@ -63,6 +65,8 @@ services:
       - ./steps:/app/steps
       - ./configs:/app/configs
       - ${MNEMO_DATA_DIR:-./data}:/data
+      # local_dir 订阅:worker 复制源文件,须与 api 挂同一容器路径 /data/inbox。
+      - ${MNEMO_INBOX_DIR:-./inbox}:/data/inbox
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATA_DIR=/data

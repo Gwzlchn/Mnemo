@@ -472,7 +472,24 @@ PUT    /api/runner/jobs/{id}/artifacts/{rel}              → 回传单个产物
 
 ### 1.8 集合管理
 
-Base: `/api/collections`。集合是内容分组；当 `source_type`+`source_id` 非空时该集合即"订阅集合"，会自动从来源（目前仅 B 站 UP 主）追更新内容。订阅没有独立实体，全部由集合的字段拼装为 `subscription` 对象返回。
+Base: `/api/collections`。集合是内容分组；当 `source_type`+`source_id` 非空时该集合即"订阅集合"，会自动从来源追更新内容。来源由 source-adapter 模式扩展（见 `shared/subscriptions/`）。订阅没有独立实体，全部由集合的字段拼装为 `subscription` 对象返回。
+
+<!-- contract: source_type 全量取值(2026-06-22 起六种适配器全部接线并通过测试) -->
+
+`source_type` 取值（全部已实现并注册到 `SOURCE_ADAPTERS`，`enumerate_source` 可分派）：
+
+| `source_type` | 来源 | `source_id` 写法 | 来源标签 | 内容类型 |
+|---|---|---|---|---|
+| `bilibili_up` | B 站 UP 主全部投稿 | UP 的 mid（纯数字） | `bilibili` | video |
+| `bilibili_fav` | B 站收藏夹 | media_id（纯数字）或 favlist URL（取其中 `fid`） | `bilibili` | video |
+| `bilibili_collection` | B 站合集/系列 | 合集/列表 URL，或紧凑式 `mid:season:sid` / `mid:series:sid` | `bilibili` | video |
+| `youtube_channel` | YouTube 频道/用户全部投稿 | 频道 URL（`/@handle`、`/channel/UC...`、`/c/...`、`/user/...`）、裸 handle（`@xxx`）或裸频道 id（`UC...`） | `youtube` | video |
+| `rss` | 通用 RSS/Atom feed（含 RSSHub/公众号桥、博客、arxiv、播客、YouTube 频道 RSS 等） | feed URL | `rss` | 按 entry 判定：arxiv→paper、youtube→video、audio enclosure→audio，否则 article |
+| `local_dir` | 本地目录（挂进 api+worker 容器的监听目录） | 容器内绝对路径（约定 `/data/inbox`） | `local` | 按扩展名：pdf→paper、mp4/mkv/webm/mov→video、mp3/m4a/wav/flac→audio、md/txt/html→article（其它扩展名忽略） |
+
+- 同一来源种类细分到同一**来源标签**（`SOURCE_LABELS`）：三种 B 站来源都收敛到 `bilibili`。
+- 去重键 `item_id`（记在 `ingested_items` 表，按 `(collection_id, item_id)`）随来源不同：B 站=bvid、youtube=videoId、rss=entry id（缺则 link）、local_dir=`相对路径|大小|mtime秒`（文件被原地修改后 item_id 变化→重新入库）。
+- `local_dir` 用 `file://` url 投递，01_download 复制源文件进 job（无网络下载）；故订阅创建/同步与 worker 必须在同一容器内能解析该路径（compose 把宿主 `${MNEMO_INBOX_DIR}` 挂到 api+worker 的 `/data/inbox`，见 `docs/08-deployment`）。
 
 `CollectionResponse` 公共结构：
 
@@ -518,13 +535,20 @@ curl -X POST http://localhost:8000/api/collections \
   -d '{"name": "某 UP", "domain": "deep-learning", "source_type": "bilibili_up", "source_id": "12345678", "sync_now": true}'
 ```
 
-请求体字段：`name`（必填）、`domain`（必填）、`description`、`tags`（默认 `[]`）、`source_type`/`source_id`（成对给出才算订阅）、`sync_now`（默认 `true`，仅订阅集合有效，建后立即首次同步）。
+请求体字段：`name`、`domain`（必填）、`description`、`tags`（默认 `[]`）、`source_type`/`source_id`（成对给出才算订阅）、`sync_now`（默认 `true`，仅订阅集合有效，建后立即首次同步）。
 
-订阅集合约束：`domain` 必须是真实领域，不能为空或 `general`；同一来源全局唯一（已订阅会被拒）。首次同步失败不阻塞集合创建（集合照常建好）。
+<!-- contract: 集合存纯名 name + 派生来源标签 source_label（不拼接入库），显示 = name + 来源徽标 -->
+
+`name` 规则：手动集合必填；订阅集合可留空（`""` 或不传），首次同步拿到**来源真实名**（UP 真实昵称/频道名/RSS feed 标题/目录 basename）后自动命名为该**纯名**（如 `PAKEN财经说`，**不拼来源标签**）。来源名拿不到时停留在占位名（source_id）。用户显式填的名不会被自动命名覆盖。
+来源标签**不入库**：由 `source_type` 派生，在响应的 `subscription.source_label`（`bilibili`/`youtube`/`rss`/`local`）返回；前端显示 = `name` + 来源徽标。`CollectionResponse.subscription` 含 `{source_type, source_id, source_label, enabled, last_synced_at}`。
+
+<!-- contract: 订阅创建/同步行为 -->
+
+订阅集合约束：`domain` 必须是真实领域，不能为空或 `general`；同一来源全局唯一（已订阅会被拒）。首次同步失败不阻塞集合创建（集合照常建好）。去重按 `(collection_id, item_id)` 记录在 `ingested_items` 表（item_id 含义随来源，见上表），跨来源统一。同步流程统一为 `enumerate_source(source_type, source_id, ctx)` 枚举来源全集 →  按 `ingested_item_ids` 去重 → 新内容自动建 job 归入本集合（适配器只枚举全集、不自去重）。
 
 Response `201`：`CollectionResponse`。
 
-错误：`400` 订阅集合 domain 为 general / 该来源已订阅。
+错误：`400` 手动集合 name 为空 / 订阅集合 domain 为 general / 该来源已订阅。
 
 #### GET /api/collections — 集合列表
 
@@ -548,9 +572,15 @@ curl -X PUT http://localhost:8000/api/collections/c_xxx \
 
 请求体均可选（`null`=不改）：`name`、`description`、`tags`、`sync_enabled`。`sync_enabled` 仅订阅集合可改（对普通集合传该字段返回 `400`）。Response `200`：`CollectionResponse`。错误：`400` 非法 id / 非订阅集合改 `sync_enabled`、`404` 不存在。
 
+<!-- contract: 删除集合两模式 ?purge=false|true;均清该集合 ingested_items -->
+
 #### DELETE /api/collections/{id} — 删除集合
 
-删集合即解绑：名下 job 的 `collection_id` 置空（job 保留），再删集合行。Response `204` 无响应体。错误：`400` 非法 id、`404` 不存在。
+两模式（query `purge`，默认 `false`）：
+- `purge=false`（默认，解绑保留内容）：名下 job 的 `collection_id` 置空（job/笔记保留），删集合行。
+- `purge=true`（连内容一起删，前端需二次确认）：删名下 job 行 + FTS 行（产物/MinIO 清理走既有 job 删除路径）。
+
+两种都清该集合的 `ingested_items`（便于重订阅时重新入库）。Response `204` 无响应体。错误：`400` 非法 id、`404` 不存在。
 
 #### POST /api/collections/{id}/sync — 立即同步
 

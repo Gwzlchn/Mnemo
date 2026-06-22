@@ -59,6 +59,8 @@ class TestSubscriptionCollectionAPI:
                 {"bvid": "BV1new222222", "title": "新2", "duration": "3:00"},
             ]
         monkeypatch.setattr("shared.bili_space.enumerate_up", fake_enum)
+        async def fake_up_name(mid, cookies=None): return None   # 不打真网络(get_user_info)
+        monkeypatch.setattr("shared.bili_space.up_name", fake_up_name)
 
         resp = await client.post("/api/collections", json={
             "name": "财经说", "domain": "finance",
@@ -86,6 +88,8 @@ class TestSubscriptionCollectionAPI:
         async def fake_enum(mid, cookies=None):
             return []
         monkeypatch.setattr("shared.bili_space.enumerate_up", fake_enum)
+        async def fake_up_name(mid, cookies=None): return None   # 不打真网络(get_user_info)
+        monkeypatch.setattr("shared.bili_space.up_name", fake_up_name)
         body = {"name": "x", "domain": "finance", "source_type": "bilibili_up",
                 "source_id": "999", "sync_now": False}
         assert (await client.post("/api/collections", json=body)).status_code == 201
@@ -96,6 +100,8 @@ class TestSubscriptionCollectionAPI:
         async def fake_enum(mid, cookies=None):
             return [{"bvid": "BV1aaaaaaaaa", "title": "x", "duration": "1:00"}]
         monkeypatch.setattr("shared.bili_space.enumerate_up", fake_enum)
+        async def fake_up_name(mid, cookies=None): return None   # 不打真网络(get_user_info)
+        monkeypatch.setattr("shared.bili_space.up_name", fake_up_name)
         cid = (await client.post("/api/collections", json={
             "name": "x", "domain": "finance", "source_type": "bilibili_up",
             "source_id": "555", "sync_now": False,

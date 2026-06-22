@@ -1,0 +1,206 @@
+"""youtube_channel source-adapter 单测(不依赖网络:mock yt-dlp 子进程输出)。
+
+覆盖:
+  - URL 规整(/@handle、/channel/UC...、/c/...、裸 handle、裸 id、已带 tab)
+  - --flat-playlist --dump-json 逐行解析 → SourceItem(item_id/url/content_type)
+  - 频道名提取(channel / uploader / playlist_title 回退)
+  - 容错:空行/非 JSON 行跳过,无 id 条目跳过,重复 id 去重
+  - 注册:@register('youtube_channel') 进入 SOURCE_ADAPTERS / enumerate_source 可分派
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+import shared.subscriptions.youtube as yt
+from shared.subscriptions.base import SourceContext, SourceItem
+from shared.subscriptions.youtube import (
+    _normalize_channel_url,
+    _parse_entries,
+    enumerate_youtube_channel,
+)
+
+
+# ── URL 规整 ──────────────────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    "source_id, expected",
+    [
+        ("https://www.youtube.com/@SomeHandle",
+         "https://www.youtube.com/@SomeHandle/videos"),
+        ("https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv",
+         "https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv/videos"),
+        ("https://www.youtube.com/c/SomeName",
+         "https://www.youtube.com/c/SomeName/videos"),
+        ("https://www.youtube.com/user/SomeUser",
+         "https://www.youtube.com/user/SomeUser/videos"),
+        # 已带 tab → 不重复补
+        ("https://www.youtube.com/@SomeHandle/videos",
+         "https://www.youtube.com/@SomeHandle/videos"),
+        ("https://www.youtube.com/@SomeHandle/streams",
+         "https://www.youtube.com/@SomeHandle/streams"),
+        # 裸 handle
+        ("@BareHandle", "https://www.youtube.com/@BareHandle/videos"),
+        ("BareHandle", "https://www.youtube.com/@BareHandle/videos"),
+        # 裸频道 id(UC + 22)
+        ("UCabcdefghijklmnopqrstuv",
+         "https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv/videos"),
+        # 尾部斜杠规整
+        ("https://www.youtube.com/@SomeHandle/",
+         "https://www.youtube.com/@SomeHandle/videos"),
+    ],
+)
+def test_normalize_channel_url(source_id, expected):
+    assert _normalize_channel_url(source_id) == expected
+
+
+def test_normalize_channel_url_empty():
+    assert _normalize_channel_url("") == ""
+    assert _normalize_channel_url("   ") == ""
+
+
+# ── 逐行 JSON 解析 ────────────────────────────────────────────────────────
+def test_parse_entries_basic():
+    lines = [
+        json.dumps({"id": "vid1", "title": "T1", "channel": "酷频道"}),
+        json.dumps({"id": "vid2", "title": "T2", "channel": "酷频道"}),
+    ]
+    title, entries = _parse_entries("\n".join(lines))
+    assert title == "酷频道"
+    assert [e["id"] for e in entries] == ["vid1", "vid2"]
+
+
+def test_parse_entries_channel_fallback_uploader():
+    lines = [json.dumps({"id": "v", "title": "T", "uploader": "上传者名"})]
+    title, _ = _parse_entries("\n".join(lines))
+    assert title == "上传者名"
+
+
+def test_parse_entries_channel_fallback_playlist_title():
+    lines = [json.dumps({"id": "v", "title": "T", "playlist_title": "播放列表名"})]
+    title, _ = _parse_entries("\n".join(lines))
+    assert title == "播放列表名"
+
+
+def test_parse_entries_skips_blank_and_non_json():
+    raw = "\n".join([
+        "",
+        "WARNING: something not json",
+        json.dumps({"id": "vid1", "title": "T1", "channel": "C"}),
+        "   ",
+        "[generic] some progress line",
+        json.dumps({"id": "vid2", "title": "T2", "channel": "C"}),
+    ])
+    title, entries = _parse_entries(raw)
+    assert title == "C"
+    assert [e["id"] for e in entries] == ["vid1", "vid2"]
+
+
+def test_parse_entries_empty():
+    title, entries = _parse_entries("")
+    assert title is None
+    assert entries == []
+
+
+# ── 适配器主体(mock _run_yt_dlp,无子进程/网络)─────────────────────────
+def _fake_stdout(entries: list[dict]) -> str:
+    return "\n".join(json.dumps(e) for e in entries)
+
+
+@pytest.mark.asyncio
+async def test_enumerate_maps_items(monkeypatch):
+    captured: dict = {}
+
+    def fake_run(args, timeout=None):
+        captured["args"] = args
+        return _fake_stdout([
+            {"id": "aaa", "title": " 第一集 ", "channel": "测试频道"},
+            {"id": "bbb", "title": "第二集", "channel": "测试频道"},
+        ])
+
+    # 经模块属性 monkeypatch,使适配器内部 _self._run_yt_dlp 命中假实现。
+    monkeypatch.setattr("shared.subscriptions.youtube._run_yt_dlp", fake_run)
+
+    title, items = await enumerate_youtube_channel(
+        "https://www.youtube.com/@测试", SourceContext(),
+    )
+
+    assert title == "测试频道"
+    assert all(isinstance(i, SourceItem) for i in items)
+    assert [i.item_id for i in items] == ["aaa", "bbb"]
+    assert items[0].title == "第一集"  # 已 strip
+    assert items[0].url == "https://www.youtube.com/watch?v=aaa"
+    assert items[1].url == "https://www.youtube.com/watch?v=bbb"
+    assert all(i.content_type == "video" for i in items)
+
+    # 传给 yt-dlp 的参数:浅枚举 + dump-json + -- 分隔 + 规整后的 /videos URL
+    args = captured["args"]
+    assert "--flat-playlist" in args
+    assert "--dump-json" in args
+    assert "--" in args
+    assert args[-1] == "https://www.youtube.com/@测试/videos"
+
+
+@pytest.mark.asyncio
+async def test_enumerate_dedup_and_skip_missing_id(monkeypatch):
+    def fake_run(args, timeout=None):
+        return _fake_stdout([
+            {"id": "x", "title": "A", "channel": "C"},
+            {"id": "x", "title": "A-dup", "channel": "C"},   # 重复 id → 去重
+            {"title": "no-id"},                               # 无 id → 跳过
+            {"id": "y", "title": "B", "channel": "C"},
+        ])
+
+    monkeypatch.setattr("shared.subscriptions.youtube._run_yt_dlp", fake_run)
+    title, items = await enumerate_youtube_channel("@chan", SourceContext())
+    assert title == "C"
+    assert [i.item_id for i in items] == ["x", "y"]
+
+
+@pytest.mark.asyncio
+async def test_enumerate_empty_source_id(monkeypatch):
+    called = {"hit": False}
+
+    def fake_run(args, timeout=None):
+        called["hit"] = True
+        return ""
+
+    monkeypatch.setattr("shared.subscriptions.youtube._run_yt_dlp", fake_run)
+    title, items = await enumerate_youtube_channel("   ", SourceContext())
+    assert title is None
+    assert items == []
+    assert called["hit"] is False  # 空 source_id 直接短路,不起子进程
+
+
+@pytest.mark.asyncio
+async def test_enumerate_no_channel_name_returns_none(monkeypatch):
+    def fake_run(args, timeout=None):
+        # entry 无 channel/uploader/playlist_title → 频道名回退 None
+        return _fake_stdout([{"id": "z", "title": "T"}])
+
+    monkeypatch.setattr("shared.subscriptions.youtube._run_yt_dlp", fake_run)
+    title, items = await enumerate_youtube_channel("@x", SourceContext())
+    assert title is None
+    assert [i.item_id for i in items] == ["z"]
+
+
+# ── 注册 ──────────────────────────────────────────────────────────────────
+def test_registered_in_table():
+    from shared.subscriptions.base import SOURCE_ADAPTERS
+    assert SOURCE_ADAPTERS.get("youtube_channel") is enumerate_youtube_channel
+
+
+@pytest.mark.asyncio
+async def test_dispatch_via_enumerate_source(monkeypatch):
+    from shared.subscriptions.base import enumerate_source
+
+    def fake_run(args, timeout=None):
+        return _fake_stdout([{"id": "q", "title": "T", "channel": "频道Q"}])
+
+    monkeypatch.setattr("shared.subscriptions.youtube._run_yt_dlp", fake_run)
+    title, items = await enumerate_source(
+        "youtube_channel", "@q", SourceContext(),
+    )
+    assert title == "频道Q"
+    assert [i.item_id for i in items] == ["q"]

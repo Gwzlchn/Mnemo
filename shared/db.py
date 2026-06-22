@@ -137,6 +137,16 @@ CREATE TABLE IF NOT EXISTS app_credentials (
     updated_at TEXT
 );
 
+-- 订阅去重(通用,跨来源):一个集合(订阅)已入库过哪些 item(B站=bvid、youtube=videoId、
+-- rss=entry id/link、local=文件名)。source-adapter 模式下各来源统一用 item_id 去重,
+-- 不再依赖从 jobs.url 抠 BV 号(旧 ingested_bvids 仅 B站可用)。
+CREATE TABLE IF NOT EXISTS ingested_items (
+    collection_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    ingested_at TEXT NOT NULL,
+    PRIMARY KEY (collection_id, item_id)
+);
+
 -- 概念图/知识层：occurrences=[{job_id,content_type,location}] 类型化出现索引(替代旧 sources)；
 -- is_topic=粗粒度浏览主题；definition_locked=钉住后不被自动综合覆盖。
 CREATE TABLE IF NOT EXISTS glossary (
@@ -1000,17 +1010,29 @@ class Database:
             )
             self._conn.commit()
 
-    def delete_collection(self, collection_id: str) -> None:
-        """删集合=解绑：把名下 job 的 collection_id 置 NULL（保留 job），再删集合行。
-        FTS 索引行同步解绑,否则按已删集合 id 检索仍命中悬空行。"""
+    def delete_collection(self, collection_id: str, purge: bool = False) -> None:
+        """删集合两模式。默认解绑:名下 job 的 collection_id 置 NULL(保留 job)。
+        purge=True:连名下 job 一起删(jobs 行 + FTS 行;注:产物/MinIO 清理走既有 job 删除路径)。
+        两种都清该集合 ingested_items(便于重订阅重新入库)。FTS 索引行同步处理,避免悬空行。"""
         with self._lock:
+            if purge:
+                self._conn.execute(
+                    "DELETE FROM notes_fts5 WHERE collection_id=?", (collection_id,)
+                )
+                self._conn.execute(
+                    "DELETE FROM jobs WHERE collection_id=?", (collection_id,)
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE jobs SET collection_id=NULL WHERE collection_id=?",
+                    (collection_id,),
+                )
+                self._conn.execute(
+                    "UPDATE notes_fts5 SET collection_id='' WHERE collection_id=?",
+                    (collection_id,),
+                )
             self._conn.execute(
-                "UPDATE jobs SET collection_id=NULL WHERE collection_id=?",
-                (collection_id,),
-            )
-            self._conn.execute(
-                "UPDATE notes_fts5 SET collection_id='' WHERE collection_id=?",
-                (collection_id,),
+                "DELETE FROM ingested_items WHERE collection_id=?", (collection_id,)
             )
             self._conn.execute(
                 "DELETE FROM collections WHERE id=?", (collection_id,)
@@ -1147,7 +1169,11 @@ class Database:
         return [{"topic": t, "count": n} for t, n in c.most_common()]
 
     def ingested_bvids(self) -> set[str]:
-        """已入库的 B站 BV 号集合(从 jobs.url 提取),供订阅同步去重。"""
+        """已入库的 B站 BV 号集合(从 jobs.url 提取),供订阅同步去重。
+        注:source-adapter 模式新增了通用去重表 ingested_items(见 ingested_item_ids/
+        mark_ingested),按 (collection_id, item_id) 去重。此方法保留供旧库/旧 bili
+        数据的兜底回填——同步首跑时可把它的结果并入某集合的 ingested 集合,
+        避免迁移前已入库的 B站视频被重复建 job。"""
         import re
         out: set[str] = set()
         for (u,) in self._conn.execute(
@@ -1157,6 +1183,25 @@ class Database:
             if m:
                 out.add(m.group(1))
         return out
+
+    def ingested_item_ids(self, collection_id: str) -> set[str]:
+        """某集合(订阅)已入库过的 item_id 集合,供 source-adapter 通用去重。
+        item_id 含义随来源而定(B站=bvid、youtube=videoId、rss=entry id 等)。"""
+        rows = self._conn.execute(
+            "SELECT item_id FROM ingested_items WHERE collection_id=?",
+            (collection_id,),
+        ).fetchall()
+        return {r["item_id"] for r in rows}
+
+    def mark_ingested(self, collection_id: str, item_id: str) -> None:
+        """登记某集合已入库 item_id(幂等:重复 mark 不报错),同步成功后调。"""
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO ingested_items "
+                "(collection_id, item_id, ingested_at) VALUES (?,?,?)",
+                (collection_id, item_id, _now_iso()),
+            )
+            self._conn.commit()
 
     def increment_collection_count(self, collection_id: str, delta: int) -> None:
         """维护集合的 job_count：建/删 job 时增减；负值不下穿 0。"""

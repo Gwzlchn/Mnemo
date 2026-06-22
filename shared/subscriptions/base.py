@@ -1,0 +1,110 @@
+"""source-adapter 模式的核心接口:SourceItem / 注册表 / 分派 / 命名 helper。
+
+【适配器契约】(写给后续实现 youtube/rss/local_dir/bili_fav 的 agent)
+
+适配器是一个 async 函数,签名:
+    async def enum(source_id: str, ctx: SourceContext) -> tuple[str | None, list[SourceItem]]
+返回 (source_title, items):
+  - source_title: 来源的人类可读名(UP 主名 / 频道名 / RSS 标题 / 目录名)。
+    拿不到时返回 None(集合命名会回退用 source_id)。
+  - items: 该来源当前可见的全部内容项(不做去重——去重在 sync_collection 层按
+    ingested_item_ids 做;适配器只管"枚举全集")。
+
+用 @register("<source_type>") 装饰即注册。source_type 是细粒度来源种类:
+    bilibili_up / bilibili_fav / bilibili_collection / youtube_channel / rss / local_dir
+
+SourceItem 字段:
+  - item_id:   该来源内稳定唯一的 ID,用于去重(B站=bvid、youtube=videoId、
+               rss=entry id 或 link、local=文件名/路径)。必须稳定:同一内容多次
+               枚举要给同一个 item_id,否则会重复建 job。
+  - title:     内容标题(可空字符串)。
+  - url:       投递给 create_job_core 的 url(下载/抓取入口)。
+  - content_type: video / paper / article / audio 之一(决定走哪条 pipeline)。
+
+SourceContext(ctx)给适配器提供:
+  - ctx.bili_cookies: B站 cookie JSON 串(从 db.get_credential('bili_cookies') 取),
+                      未登录为 None。
+  - ctx.db:           可选的 Database 句柄(多数适配器用不到;需要查别的凭证/状态时用)。
+  - ctx.get_credential(key): 便捷读其它凭证(如 youtube cookies),底层走 ctx.db。
+ctx 由 sync_collection 构造并传入,适配器不要自己去 import db / 读环境。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Awaitable, Callable, Optional
+
+
+@dataclass
+class SourceItem:
+    """一个待入库的内容项(适配器枚举出的最小单元)。"""
+    item_id: str          # 来源内稳定唯一 ID(去重键):bvid / videoId / rss entry id / 文件名
+    title: str            # 内容标题(可空字符串)
+    url: str              # 投递给 create_job_core 的下载/抓取 url
+    content_type: str     # video / paper / article / audio
+
+
+@dataclass
+class SourceContext:
+    """适配器运行时上下文。由 sync_collection 构造并传入,集中提供凭证/句柄,
+    使适配器纯函数化(不自己 import db、不读环境/全局)。"""
+    bili_cookies: Optional[str] = None   # B站 cookie JSON 串(db.get_credential('bili_cookies'))
+    db: object | None = None             # 可选 Database 句柄(需要别的凭证/状态时用)
+
+    def get_credential(self, key: str) -> str | None:
+        """便捷读应用级凭证(如 youtube_cookies)。无 db 时返回 None。"""
+        if self.db is None:
+            return None
+        getter = getattr(self.db, "get_credential", None)
+        return getter(key) if callable(getter) else None
+
+
+# 适配器类型: (source_id, ctx) -> (source_title | None, [SourceItem])
+SourceAdapter = Callable[[str, SourceContext], Awaitable[tuple[Optional[str], list[SourceItem]]]]
+
+# source_type -> 适配器函数。@register 在 import 适配器模块时填充。
+SOURCE_ADAPTERS: dict[str, SourceAdapter] = {}
+
+# source_type -> 集合命名用的短标签(<名>-<来源>,如 "财经说-bilibili")。
+# 同一平台的多种来源(up/fav/collection)收敛到同一个平台标签。
+SOURCE_LABELS: dict[str, str] = {
+    "bilibili_up": "bilibili",
+    "bilibili_fav": "bilibili",
+    "bilibili_collection": "bilibili",
+    "youtube_channel": "youtube",
+    "rss": "rss",
+    "local_dir": "local",
+}
+
+
+def register(source_type: str) -> Callable[[SourceAdapter], SourceAdapter]:
+    """装饰器:把适配器函数登记到 SOURCE_ADAPTERS[source_type]。
+    重复注册同一 source_type 直接覆盖(便于测试替换 / 热重载)。"""
+    def deco(fn: SourceAdapter) -> SourceAdapter:
+        SOURCE_ADAPTERS[source_type] = fn
+        return fn
+    return deco
+
+
+def source_label(source_type: str) -> str:
+    """source_type -> 短标签(未登记则回退用 source_type 本身,保证总有标签)。"""
+    return SOURCE_LABELS.get(source_type, source_type)
+
+
+def subscription_display_name(source_title: str | None, source_type: str) -> str:
+    """订阅集合的展示名 <名>-<来源>,如 "财经说-bilibili"。
+    source_title 为空时回退用短标签本身(避免出现 "-bilibili" 这种空前缀)。"""
+    label = source_label(source_type)
+    title = (source_title or "").strip()
+    return f"{title}-{label}" if title else label
+
+
+async def enumerate_source(
+    source_type: str, source_id: str, ctx: SourceContext,
+) -> tuple[str | None, list[SourceItem]]:
+    """按 source_type 分派到注册的适配器,枚举该来源的全部内容项。
+    返回 (source_title, items)。未知 source_type 抛 ValueError(调用方转 4xx/记日志)。"""
+    adapter = SOURCE_ADAPTERS.get(source_type)
+    if adapter is None:
+        raise ValueError(f"unsupported source_type: {source_type}")
+    return await adapter(source_id, ctx)
