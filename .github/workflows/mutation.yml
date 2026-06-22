@@ -1,32 +1,24 @@
 name: Mutation (manual)
 
-# 变异测试(mutmut):给核心模块注入小改动(< → <=、+1、True→False…),逐个跑测试套件——
-# 测试仍绿 = "存活变异" = 你的断言抓不住的真实 bug。变异分数(killed / 非等价)直接量
-# "测试到底有没有意义",比覆盖率更狠。
+# 变异测试:给核心模块注入小改动(< → <=、+1、True→False、删行…),逐个跑相关测试——
+# 测试仍绿 = "存活变异" = 你的断言抓不住的真实 bug。变异分数(killed / 总数)直接量
+# "测试到底有没有意义",比覆盖率更狠。打哪些模块见 scripts/mutation_score.py 的 TARGETS:
+#   shared/ai_gateway.py(计费/exec_id 去重 → 重复计费风险)、shared/db.py、
+#   scheduler/(状态迁移)、worker/(乐观锁)—— docs/09-testing.md 反复强调的并发/计费安全面。
 #
 # 慢(每个变异要跑相关测试)→ 仅手动触发(workflow_dispatch),不挂每个 PR。
-# 打哪些模块见 pyproject.toml [tool.mutmut].source_paths:
-#   shared/ai_gateway.py(计费/exec_id 去重 → 重复计费风险)、shared/db.py、
-#   scheduler/(步骤状态迁移)、worker/(乐观锁)—— 都是 docs/09-testing.md 反复强调的并发/计费安全面。
+# 报告态:存活变异不让本 job 变红(初期必有存活/等价变异),分数打日志供人工裁定。
 #
-# 报告态:存活变异不让本 job 变红(初期必有存活),killed/survived/stats 打到日志供人工裁定;
-# 想收紧成硬门时,把下面 `|| true` 去掉、或对 survived 数加阈值即可。
-#
-# ⚠️ 已知问题(2026-06-22 实测,待修):本仓库布局下 mutmut 3.x 运行器报告 killed=0(看似全存活),
-#    但**测试本身有效**——手动可证其会杀:
-#      cd mutants && MUTANT_UNDER_TEST=<mutant_id> PYTHONPATH= python3 -m pytest <相关测试>  → 测试 FAIL = 已杀。
-#    即运行器没让自动跑的测试 import 到 mutated 副本(mutants/),而手动 `python -m pytest`(cwd 进 path)能。
-#    已排除:卸载 flori、清空 PYTHONPATH、干净副本(无 bind-mount)——均仍 killed=0。
-#    根因(2026-06-22 worktree 复核确认):容器内 `import shared` 解析到 /app/shared(WORKDIR=/app 的
-#    顶层包),mutmut 自动跑测试时并未让被测代码从 mutants/ 副本导入,故跑的是【未变异】原文→全存活;
-#    mutmut 3.6 的 `run` 只有 --max-children 一个选项,无 runner/cwd 配置可纠正(故无法在配置层修)。
-#    修复前:变异分数用上面手动方式
-#    抽样核验,**勿信本 job 的 killed=0**。(说明:新增的 test_ai_gateway 计费/usage 断言已手动证实能杀变异。)
+# 为什么不用 `mutmut run` 自带的判生死:本仓库布局下 mutmut 3.6 的自动 runner 恒报 killed=0
+# (它跑测试时 import shared 解析到 /app/shared 原文,没从 mutants/ 副本激活变异;mutmut 3.6 的
+# run 只有 --max-children 一个选项,无 runner/cwd 配置可纠正)。底层 trampoline 机制是好的——
+# 设 MUTANT_UNDER_TEST={module}.{mutant} 后从 mutants/ 跑 pytest 能真正路由到变异体。
+# scripts/mutation_score.py 就把这条手动 recipe 做成循环,产出**真实**的 killed/survived。
 on:
   workflow_dispatch:
     inputs:
-      pattern:
-        description: "只跑匹配的子集(mutmut 通配符,如 shared.ai_gateway*);留空=全部 source_paths"
+      target:
+        description: "只跑 key 含该子串的目标(如 ai_gateway / db / scheduler / worker);留空=全部核心模块"
         required: false
         default: ""
 
@@ -41,21 +33,12 @@ jobs:
       - name: Build test image
         run: docker compose -f docker-compose.test.yml build
 
-      - name: Mutation testing(核心模块,配置取 pyproject [tool.mutmut])
+      - name: Mutation score(真实 killed/survived,见 scripts/mutation_score.py)
         env:
-          PATTERN: ${{ github.event.inputs.pattern }}
+          TARGET: ${{ github.event.inputs.target }}
         run: |
-          docker compose -f docker-compose.test.yml run --rm -e PATTERN="$PATTERN" test sh -c '
-            set -f   # 关 glob,让 shared.db* 等通配符原样传给 mutmut(而非被 shell 展开成文件名)
-            pip install -q "fakeredis[lua]>=2.28,<4" "pytest>=8.0,<9" "pytest-asyncio>=0.24,<1" "mutmut>=3,<4" || exit 1
-            # source_paths 是整个应用(见 pyproject [tool.mutmut]);这里把"真正测哪几个模块"scope 到核心 4 个。
-            # 逐目标顺序跑,每跑完一个就打印它的 results/stats —— mutmut 共用一个 ./mutants/,跑下一个目标
-            # 会把上一个的结果重置为 None,故"聚合"以下面各目标段落为准,不要只看最后一次的总数。
-            if [ -n "$PATTERN" ]; then TARGETS="$PATTERN"; else TARGETS="shared.ai_gateway* shared.db* scheduler* worker*"; fi
-            for p in $TARGETS; do
-              echo "════════ mutmut run $p ════════"
-              mutmut run "$p" || true
-              echo "──── results: $p ────"; mutmut results || true
-              echo "──── CI/CD stats: $p ────"; mutmut export_cicd_stats && cat mutants/mutmut-cicd-stats.json || true
-            done
+          docker compose -f docker-compose.test.yml run --rm -e TARGET="$TARGET" test sh -c '
+            pip install -q "fakeredis[lua]>=2.28,<4" "pytest>=8.0,<9" "pytest-asyncio>=0.24,<1" \
+              "mutmut>=3,<4" "openai>=1.50,<3" "anthropic>=0.40,<1" || exit 1
+            python3 scripts/mutation_score.py "$TARGET"
           '

@@ -17,6 +17,8 @@ services:
       - ./worker:/app/worker
       - ./tests:/app/tests
       - ./configs:/app/configs
+      # 变异分数驱动(scripts/mutation_score.py;mutation.yml 调用)
+      - ./scripts:/app/scripts
       # pytest/coverage 配置(markers、[tool.coverage])的单一事实源:挂进来,改了不用重建镜像
       - ./pyproject.toml:/app/pyproject.toml
       # schemathesis 检查配置(只跑 not_a_server_error + response_schema_conformance)

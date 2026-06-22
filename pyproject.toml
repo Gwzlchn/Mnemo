@@ -79,11 +79,12 @@ show_missing = true
 
 # 变异测试(mutmut 3.x)。目标:量"花钱/正确性关键"模块(计费去重 ai_gateway、DB、调度状态机、worker 乐观锁)
 # 的测试到底有没有意义。慢 → 仅经 .github/workflows/mutation.yml 手动触发;本地 pip install '.[test,mutation]'。
-# 注:v3 用 source_paths(非 v2 的 paths_to_mutate)。mutmut 把 source_paths 复制到 ./mutants/ 再变异+跑测试,
-#     故 mutants/ 必须是"可运行的完整副本":source_paths 放整个应用 + also_copy 补 tests/configs/pyproject;
-#     "真正测哪几个模块"靠 mutmut run 的通配符 scope(见 mutation.yml,默认只打那 4 个)。
-# ⚠️ 已知问题:本布局下 mutmut 运行器实测报告 killed=0(运行器没让测试 import 到 mutants/ 副本;
-#     手动 MUTANT_UNDER_TEST + `python -m pytest` 可杀)。详见 .github/workflows/mutation.yml 注释,待修。
+# 注:v3 用 source_paths(非 v2 的 paths_to_mutate)。mutmut 把 source_paths 复制到 ./mutants/ 再变异,
+#     故 mutants/ 必须是"可运行的完整副本":source_paths 放整个应用 + also_copy 补 tests/configs/pyproject。
+# 评分不用 mutmut 自带的 run-判生死(本布局下恒报 killed=0:它跑测试时 import shared 解析到 /app/shared
+#     原文,没从 mutants/ 副本激活变异;mutmut 3.6 的 run 无 runner/cwd 配置可纠正)。改用
+#     scripts/mutation_score.py:设 MUTANT_UNDER_TEST 从 mutants/ 跑相关测试,产出【真实】killed/survived。
+#     本节的 pytest_add_cli_args_test_selection 仅供 mutmut 生成阶段(脚本会临时换成快基线再还原)。
 [tool.mutmut]
 source_paths = ["shared", "scheduler", "worker", "api", "steps"]
 also_copy = ["tests", "configs", "pyproject.toml"]
