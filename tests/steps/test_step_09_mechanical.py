@@ -16,16 +16,16 @@ class TestMechanicalStep:
             (job_dir / d).mkdir()
 
         dedup = [
-            {"index": 0, "scene_index": 0, "timestamp_sec": 5.0, "filename": "scene_0000_5.0s.jpg", "keep": True, "phash": "abc"},
-            {"index": 1, "scene_index": 1, "timestamp_sec": 65.0, "filename": "scene_0001_65.0s.jpg", "keep": True, "phash": "def"},
-            {"index": 2, "scene_index": 2, "timestamp_sec": 200.0, "filename": "scene_0002_200.0s.jpg", "keep": True, "phash": "ghi"},
+            {"index": 0, "scene_index": 0, "timestamp_sec": 5.0, "filename": "frame-0000.jpg", "keep": True, "phash": "abc"},
+            {"index": 1, "scene_index": 1, "timestamp_sec": 65.0, "filename": "frame-0001.jpg", "keep": True, "phash": "def"},
+            {"index": 2, "scene_index": 2, "timestamp_sec": 200.0, "filename": "frame-0002.jpg", "keep": True, "phash": "ghi"},
         ]
         (job_dir / "intermediate" / "dedup.json").write_text(json.dumps(dedup))
 
         ocr = [
-            {"index": 0, "filename": "scene_0000_5.0s.jpg", "timestamp_sec": 5.0, "text": "Hello", "boxes": []},
-            {"index": 1, "filename": "scene_0001_65.0s.jpg", "timestamp_sec": 65.0, "text": "", "boxes": []},
-            {"index": 2, "filename": "scene_0002_200.0s.jpg", "timestamp_sec": 200.0, "text": "World", "boxes": []},
+            {"index": 0, "filename": "frame-0000.jpg", "timestamp_sec": 5.0, "text": "Hello", "boxes": []},
+            {"index": 1, "filename": "frame-0001.jpg", "timestamp_sec": 65.0, "text": "", "boxes": []},
+            {"index": 2, "filename": "frame-0002.jpg", "timestamp_sec": 200.0, "text": "World", "boxes": []},
         ]
         (job_dir / "intermediate" / "ocr.json").write_text(json.dumps(ocr))
 
@@ -40,7 +40,7 @@ class TestMechanicalStep:
         assert result["frames"] == 3
         md = (job_dir / "output" / "notes_mechanical.md").read_text()
         assert "## [00:00]" in md            # 图文时间线:按时间节分段
-        assert "scene_0000_5.0s.jpg" in md
+        assert "frame-0000.jpg" in md
 
     def test_with_optional_inputs(self, tmp_path):
         job_dir = self._setup_job(tmp_path)
