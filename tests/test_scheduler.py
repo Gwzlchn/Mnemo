@@ -7,12 +7,11 @@ import json
 from pathlib import Path
 
 import pytest
-import fakeredis.aioredis
 
+from tests.conftest import make_fakeredis
 from shared.config import AppConfig
 from shared.db import Database
 from shared.models import Job, JobStatus, StepStatus, AIUsage
-from shared.redis_client import RedisClient
 from scheduler.scheduler import Scheduler
 
 
@@ -36,9 +35,7 @@ def db(tmp_path):
 
 @pytest.fixture
 async def redis():
-    client = RedisClient.__new__(RedisClient)
-    client._url = "redis://fake"
-    client._redis = fakeredis.aioredis.FakeRedis(decode_responses=True, protocol=2)
+    client = make_fakeredis()
     yield client
     await client.close()
 
@@ -458,6 +455,13 @@ class TestConditions:
     async def test_nonexistent_dir(self, scheduler):
         assert await scheduler.check_condition("j_nodir", "has_subtitle") is False
         assert await scheduler.check_condition("j_nodir", "no_subtitle") is True
+
+    @pytest.mark.asyncio
+    async def test_unknown_condition_defaults_true(self, scheduler, tmp_jobs_dir):
+        # 文档化契约(scheduler.py:692):未知条件名 → 默认 True(放行,不静默跳过该步)。
+        # 配置期无条件名白名单,故此默认是误拼/打错条件名时的安全兜底,值得钉死。
+        (tmp_jobs_dir / "j_cond_unknown" / "input").mkdir(parents=True)
+        assert await scheduler.check_condition("j_cond_unknown", "bogus_condition") is True
 
     @pytest.mark.asyncio
     async def test_unknown_condition_returns_true(self, scheduler):

@@ -6,7 +6,7 @@ import os
 import pytest
 
 from steps.video.step_08_punctuate import PunctuateStep
-from tests.steps.conftest import make_step_config
+from tests.steps.conftest import make_job_dir, make_step_config
 
 SRT = """\
 1
@@ -33,17 +33,16 @@ class TestPunctuateStep:
 
     def test_execute_dry_run(self, tmp_path, monkeypatch):
         monkeypatch.setenv("DRY_RUN", "1")
-        job_dir = tmp_path / "job"
-        job_dir.mkdir()
-        for d in ["input", "output", "logs"]:
-            (job_dir / d).mkdir()
+        job_dir = make_job_dir(tmp_path, "input", "output", "logs")
         (job_dir / "input" / "subtitle.srt").write_text(SRT)
 
         step = self._make(job_dir, tmp_path)
         result = step.execute()
         assert result["lines"] == 2
         assert result["chunks"] == 1
-        assert (job_dir / "output" / "transcript.md").exists()
+        # DRY_RUN 下 AI 输出是占位串([DRY_RUN] ...),真实标点内容无法在此验证(那需非-DRY_RUN
+        # 注入 fake 响应,属另一类用例)。这里在"存在"之上至少断产物非空——挡写出空文件。
+        assert (job_dir / "output" / "transcript.md").read_text().strip()
 
     def test_chunking(self, tmp_path):
         step = PunctuateStep.__new__(PunctuateStep)

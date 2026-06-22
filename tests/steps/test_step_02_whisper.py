@@ -7,15 +7,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from steps.video.step_02_whisper import WhisperStep
-from tests.steps.conftest import make_step_config
+from tests.steps.conftest import make_job_dir, make_step_config
 
 
 class TestWhisperStep:
     def _setup(self, tmp_path):
-        job_dir = tmp_path / "job"
-        job_dir.mkdir()
-        for d in ["input", "logs"]:
-            (job_dir / d).mkdir()
+        job_dir = make_job_dir(tmp_path, "input", "logs")
         (job_dir / "input" / "source.mp4").write_bytes(b"\x00" * 1024)
         return job_dir
 

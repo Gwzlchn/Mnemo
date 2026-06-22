@@ -62,6 +62,11 @@ class TestLoginStart:
         assert body["qrcode_key"] == "KEY123"
         assert body["url"] == "https://passport.bilibili.com/h5/x"
         assert body["qr_png"].startswith("data:image/png;base64,")
+        # 不止前缀:base64 解出来必须是能真正解码的 PNG(防拼了个坏串也"看着像")。
+        import base64, io
+        from PIL import Image
+        png = base64.b64decode(body["qr_png"].split(",", 1)[1])
+        assert Image.open(io.BytesIO(png)).format == "PNG"
 
     @pytest.mark.asyncio
     async def test_start_passport_error(self, client, monkeypatch):

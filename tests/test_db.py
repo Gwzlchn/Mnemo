@@ -48,7 +48,9 @@ class TestSchema:
     def test_init_idempotent(self, tmp_path):
         d = Database(tmp_path / "test.db")
         d.init_schema()
-        d.init_schema()
+        d.init_schema()   # 二次建表不抛(IF NOT EXISTS)
+        # 不止"不抛":表仍在且可查——防 init_schema 被改成 no-op 也假绿。
+        assert d.get_job("nope") is None
         d.close()
 
 

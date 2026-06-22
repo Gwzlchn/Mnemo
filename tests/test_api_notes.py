@@ -6,14 +6,6 @@ import json
 
 import pytest
 
-from api.main import create_app
-from unittest.mock import AsyncMock
-
-
-@pytest.fixture
-def app(db, test_config):
-    return create_app(db=db, redis=AsyncMock(), config=test_config)
-
 
 def _create_job_files(jobs_dir, job_id):
     job_dir = jobs_dir / job_id
@@ -45,12 +37,14 @@ class TestNotes:
         _create_job_files(test_config.jobs_dir, "j_test")
         resp = await client.get("/api/jobs/j_test/notes/mechanical")
         assert resp.status_code == 200
+        assert "# Mechanical" in resp.text   # 取到的是机械笔记内容,而非空/错文件
 
     @pytest.mark.asyncio
     async def test_transcript(self, client, test_config):
         _create_job_files(test_config.jobs_dir, "j_test")
         resp = await client.get("/api/jobs/j_test/notes/transcript")
         assert resp.status_code == 200
+        assert "[00:00] Hello" in resp.text   # 取到逐字稿正文
 
     @pytest.mark.asyncio
     async def test_review(self, client, test_config):
@@ -64,6 +58,8 @@ class TestNotes:
         _create_job_files(test_config.jobs_dir, "j_test")
         resp = await client.get("/api/jobs/j_test/assets/scene_0001.jpg")
         assert resp.status_code == 200
+        assert resp.content[:4] == b"\xff\xd8\xff\xe0"   # 取到的是真 JPEG 字节(非空/错文件)
+        assert resp.headers["content-type"] in ("image/jpeg", "application/octet-stream")
 
     @pytest.mark.asyncio
     async def test_asset_path_traversal(self, client, test_config):

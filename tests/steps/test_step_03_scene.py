@@ -7,15 +7,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from steps.video.step_03_scene import SceneStep
-from tests.steps.conftest import make_step_config
+from tests.steps.conftest import make_job_dir, make_step_config
 
 
 class TestSceneStep:
     def _setup(self, tmp_path):
-        job_dir = tmp_path / "job"
-        job_dir.mkdir()
-        for d in ["input", "intermediate"]:
-            (job_dir / d).mkdir()
+        job_dir = make_job_dir(tmp_path, "input", "intermediate")
         (job_dir / "input" / "source.mp4").write_bytes(b"\x00" * 2048)
         return job_dir
 
@@ -78,4 +75,7 @@ class TestSceneStep:
         assert result["scenes"] == 1
         scenes = json.loads((job_dir / "intermediate" / "scenes.json").read_text())
         assert len(scenes) == 1
+        # 钉死从 mock 边界导出的派生字段(此前只断 start_sec,end/duration 变量互换不会被发现)。
         assert scenes[0]["start_sec"] == 0.0
+        assert scenes[0]["end_sec"] == 10.0
+        assert scenes[0]["duration_sec"] == 10.0

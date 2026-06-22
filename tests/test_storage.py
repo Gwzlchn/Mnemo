@@ -138,7 +138,10 @@ class TestRemoteListFiles:
         client.list_objects.assert_called_once_with("b", prefix="j1/", recursive=True)
 
 
-class TestGatewayStorage:
+class _GatewayStorageHelpers:
+    """GatewayStorage 测试共用 mock builder(此前在 TestGatewayStorage / ...Reuse 两类逐字复制)。
+    下划线前缀 → pytest 不收集为测试类。"""
+
     def _gw(self, tmp_path):
         gw = GatewayStorage(
             "https://gw.example", token_getter=lambda: "wt", work_dir=tmp_path / "work",
@@ -171,6 +174,9 @@ class TestGatewayStorage:
         cm.__aenter__ = AsyncMock(return_value=resp)
         cm.__aexit__ = AsyncMock(return_value=False)
         return cm
+
+
+class TestGatewayStorage(_GatewayStorageHelpers):
 
     @pytest.mark.asyncio
     async def test_pull_downloads_manifest_and_objects_and_snapshots(self, tmp_path):
@@ -248,40 +254,9 @@ class TestGatewayStorage:
         assert str(work_dir) not in gw._snapshots
 
 
-class TestGatewayStorageReuse:
-    """STORAGE_WORKDIR_REUSE + STORAGE_NO_PUSH_GLOBS:大源文件留本机、不走慢链路。"""
-
-    def _gw(self, tmp_path):
-        gw = GatewayStorage(
-            "https://gw.example", token_getter=lambda: "wt", work_dir=tmp_path / "work",
-        )
-        client = MagicMock()
-        client.get = AsyncMock()
-        client.put = AsyncMock()
-        client.stream = MagicMock()   # 流式下载:同步返回 async-CM,再 await __aenter__
-        gw._client_obj = client
-        return gw, client
-
-    def _resp(self, status_code=200, content=b"", json_data=None):
-        r = MagicMock()
-        r.status_code = status_code
-        r.content = content
-        r.json.return_value = json_data if json_data is not None else {}
-        r.raise_for_status = MagicMock()
-        return r
-
-    def _stream_cm(self, content=b""):
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-
-        async def _aiter(chunk_size=65536):
-            yield content
-
-        resp.aiter_bytes = _aiter
-        cm = MagicMock()
-        cm.__aenter__ = AsyncMock(return_value=resp)
-        cm.__aexit__ = AsyncMock(return_value=False)
-        return cm
+class TestGatewayStorageReuse(_GatewayStorageHelpers):
+    """STORAGE_WORKDIR_REUSE + STORAGE_NO_PUSH_GLOBS:大源文件留本机、不走慢链路。
+    _gw/_resp/_stream_cm 复用 _GatewayStorageHelpers。"""
 
     @pytest.mark.asyncio
     async def test_no_push_skips_matching_glob(self, tmp_path, monkeypatch):
