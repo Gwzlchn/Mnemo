@@ -2,8 +2,9 @@
 import { ref, onMounted, inject } from 'vue'
 import { useApi } from '../../composables/useApi'
 import type { ProfileDetail } from '../../types'
-import { resolveIcon, ICON_NAMES } from '../../utils/kbIcons'
-import { X, Plus, Trash2, SlidersHorizontal, Check, Lightbulb } from 'lucide-vue-next'
+import { KB_COLORS } from '../../utils/kbIcons'
+import IconPicker from '../common/IconPicker.vue'
+import { X, Plus, Trash2, SlidersHorizontal, Check } from 'lucide-vue-next'
 
 const props = defineProps<{ domain: string }>()
 const emit = defineEmits<{ close: []; saved: [] }>()
@@ -22,10 +23,7 @@ const description = ref('')
 const newTerm = ref('')
 const newDoNot = ref('')
 
-// 图标 / 配色候选（与 HomeView 新建弹窗一致）。
-const COLORS = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#64748b']
-
-// 图标名→组件解析改用 utils/kbIcons 的 resolveIcon。
+// 图标 / 配色候选(KB_COLORS;与 HomeView 新建弹窗共用单一来源)。图标网格抽为 IconPicker 组件。
 
 onMounted(async () => {
   try {
@@ -120,12 +118,7 @@ async function save() {
         <!-- 图标 -->
         <div class="field">
           <label>图标（icon）</label>
-          <div class="icon-grid">
-            <button v-for="name in ICON_NAMES" :key="name" class="icon-pick"
-              :class="{ on: icon === name }" @click="icon = name">
-              <component :is="resolveIcon(name) || Lightbulb" :size="18" />
-            </button>
-          </div>
+          <IconPicker v-model="icon" />
           <div class="note-tip">挑一个 lucide 图标，配色见下。</div>
         </div>
 
@@ -133,7 +126,7 @@ async function save() {
         <div class="field">
           <label>颜色（color）</label>
           <div class="color-row">
-            <button v-for="c in COLORS" :key="c" class="swatch"
+            <button v-for="c in KB_COLORS" :key="c" class="swatch"
               :class="{ on: color === c }" :style="{ background: c }" @click="color = c" />
           </div>
         </div>

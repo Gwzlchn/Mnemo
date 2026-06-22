@@ -3,11 +3,10 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDomainStore } from '../stores/domains'
 import { useApi } from '../composables/useApi'
-import { CONTENT_TYPE_LABELS } from '../types'
+import { contentTypeIcon, contentTypePill, contentTypeLabel } from '../utils/contentType'
 import type { TermOccurrence, GlossaryTerm } from '../types'
 import {
   Lightbulb, Bookmark, Check, FileText, Link, MapPin, ChevronRight,
-  Play, Newspaper, Headphones,
 } from 'lucide-vue-next'
 
 // 概念详情（原型 #term）：定义 / 关联概念 / 出现处反查。
@@ -29,11 +28,6 @@ const toggling = ref(false)
 const related = computed<string[]>(() => (Array.isArray(data.value?.related) ? data.value!.related : []))
 const occurrences = computed<TermOccurrence[]>(() => (Array.isArray(data.value?.occurrences) ? data.value!.occurrences : []))
 const isTopic = computed<boolean>(() => data.value?.is_topic === true)
-
-const typeIcon = (t: string) =>
-  t === 'video' ? Play : t === 'paper' ? FileText : t === 'audio' ? Headphones : Newspaper
-const typePillClass = (t: string) =>
-  t === 'video' ? 't-video' : t === 'paper' ? 't-paper' : t === 'audio' ? 't-audio' : 't-article'
 
 async function load() {
   loading.value = true
@@ -146,11 +140,11 @@ watch(() => [route.params.domain, route.params.term], load)
         <div class="card-h"><MapPin :size="15" />出现处 · {{ occurrences.length }}</div>
         <template v-if="occurrences.length">
           <div v-for="o in occurrences" :key="o.job_id + (o.location || '')" class="occ" @click="goJob(o.job_id)">
-            <span class="type-pill" :class="typePillClass(o.content_type)" style="width:28px;height:28px">
-              <component :is="typeIcon(o.content_type)" :size="13" />
+            <span class="type-pill" :class="contentTypePill(o.content_type)" style="width:28px;height:28px">
+              <component :is="contentTypeIcon(o.content_type)" :size="13" />
             </span>
             <span class="occ-t" style="flex:1;min-width:0;font-weight:600;color:var(--ink-900);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ o.job_id }}</span>
-            <span class="badge b-mut">{{ CONTENT_TYPE_LABELS[o.content_type] || o.content_type }}</span>
+            <span class="badge b-mut">{{ contentTypeLabel(o.content_type) }}</span>
             <span v-if="o.location" class="dim" style="font-size:12px">{{ o.location }}</span>
             <ChevronRight :size="15" class="dim" />
           </div>

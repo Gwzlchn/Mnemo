@@ -1,69 +1,49 @@
 import { ref, onUnmounted } from 'vue'
 import type { SystemStatus } from '../types'
+import { createWsReconnect } from './useWsReconnect'
 
 const MAX_RETRIES = 10
 
 const systemStatus = ref<SystemStatus | null>(null)
-const connected = ref(false)
-let ws: WebSocket | null = null
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-let retryDelay = 1000
-let retryCount = 0
 let started = false
 let refCount = 0
 
-function connect() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return
+const conn = createWsReconnect({
+  url: () => '/api/ws/global',
+  withToken: true,
+  maxRetries: MAX_RETRIES,
+  shouldReconnect: () => refCount > 0,
+  onMessage: (data) => { systemStatus.value = JSON.parse(data) },
+})
 
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  ws = new WebSocket(`${protocol}//${location.host}/api/ws/global`)
-
-  ws.onopen = () => {
-    connected.value = true
-    retryDelay = 1000
-    retryCount = 0
-  }
-
-  ws.onmessage = (e) => {
-    systemStatus.value = JSON.parse(e.data)
-  }
-
-  ws.onclose = () => {
-    connected.value = false
-    if (retryCount < MAX_RETRIES && refCount > 0) {
-      reconnectTimer = setTimeout(connect, retryDelay)
-      retryDelay = Math.min(retryDelay * 2, 30000)
-      retryCount++
-    }
-  }
-
-  ws.onerror = () => ws?.close()
+// 网络恢复 / 页面重新可见时,重置退避并重连 —— 否则连续断开达 MAX_RETRIES 后会永久放弃,
+// 只能整页刷新才恢复(见审计 I-M6)。仅在仍有页面引用(refCount>0)时触发。
+function wake() {
+  if (refCount > 0) conn.reconnect()
 }
-
-function disconnect() {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
-  }
-  ws?.close()
-  ws = null
-  started = false
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', wake)
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') wake()
+  })
 }
 
 export function useGlobalWs() {
   if (!started) {
     started = true
-    connect()
+    conn.connect()
   }
   refCount++
 
   onUnmounted(() => {
     refCount--
     if (refCount <= 0) {
-      disconnect()
       refCount = 0
+      conn.disconnect()
+      started = false
     }
   })
 
-  return { systemStatus, connected }
+  // reconnect 暴露给 UI:断连提示可提供「重新连接」入口。
+  return { systemStatus, connected: conn.connected, reconnect: conn.reconnect }
 }

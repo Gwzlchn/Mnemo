@@ -8,10 +8,11 @@ import ConceptTimeline from '../components/ConceptTimeline.vue'
 import { fmtDateTime } from '../utils/datetime'
 import type { JobSummary } from '../types'
 import { resolveIcon } from '../utils/kbIcons'
+import { contentTypeIcon, contentTypePill } from '../utils/contentType'
 import {
   SlidersHorizontal, RefreshCw, Folder, Lightbulb, BarChart3,
   Plus, Settings2, Rss, Inbox, ChevronRight, Sparkles, Bookmark,
-  Star, FileText, Play, Newspaper, Headphones,
+  Star,
   Cpu, Atom, Dna, Code, Database, Globe, FlaskConical, BookOpen,
   Brain, Calculator, Scale, Languages, Music, Palette, Leaf, Rocket,
 } from 'lucide-vue-next'
@@ -101,13 +102,7 @@ function strength(sourceCount: number): number {
   return Math.max(1, Math.min(5, sourceCount))
 }
 
-// 内容类型 → 图标（与原型一致：视频 play / 论文 file-text / 文章 newspaper / 播客 headphones）。
-const TYPE_ICON: Record<string, any> = {
-  video: Play, paper: FileText, article: Newspaper, audio: Headphones,
-}
-function typeIcon(t: string) {
-  return TYPE_ICON[t] ?? FileText
-}
+// 内容类型 → 图标/配色:统一走 utils/contentType(contentTypeIcon / contentTypePill)。
 
 // 集合 + 未归集合内容分组：recent_jobs 按 collection_id 归到对应集合，其余进「未归集合」。
 const grouped = computed(() => {
@@ -252,8 +247,8 @@ function onProfileSaved() {
             <div class="list">
               <template v-if="grouped.byCol.get(c.id)?.length">
                 <div v-for="j in grouped.byCol.get(c.id)" :key="j.job_id" class="row" @click="goJob(j.job_id)">
-                  <span class="type-pill" :class="`t-${j.content_type}`">
-                    <component :is="typeIcon(j.content_type)" :size="16" />
+                  <span class="type-pill" :class="contentTypePill(j.content_type)">
+                    <component :is="contentTypeIcon(j.content_type)" :size="16" />
                   </span>
                   <div class="body">
                     <div class="title">{{ j.title || '未命名内容' }}</div>
@@ -277,8 +272,8 @@ function onProfileSaved() {
             </div>
             <div class="list">
               <div v-for="j in grouped.loose" :key="j.job_id" class="row" @click="goJob(j.job_id)">
-                <span class="type-pill" :class="`t-${j.content_type}`">
-                  <component :is="typeIcon(j.content_type)" :size="16" />
+                <span class="type-pill" :class="contentTypePill(j.content_type)">
+                  <component :is="contentTypeIcon(j.content_type)" :size="16" />
                 </span>
                 <div class="body">
                   <div class="title">{{ j.title || '未命名内容' }}</div>

@@ -7,12 +7,12 @@ import { useApi } from '../composables/useApi'
 import StatusBadge from '../components/common/StatusBadge.vue'
 import DeleteCollectionDialog from '../components/collection/DeleteCollectionDialog.vue'
 import { fmtDateTime } from '../utils/datetime'
-import { CONTENT_TYPE_LABELS } from '../types'
+import { contentTypeIcon, contentTypePill, contentTypeLabel } from '../utils/contentType'
 import type { Collection, JobSummary } from '../types'
 import { sourceLabelOf, sourceBadge, sourceMeta, sourceHomeUrl } from '../constants/sources'
 import {
   Rss, Folder, RefreshCw, Info, ExternalLink, LayoutList, ChevronRight,
-  Play, FileText, Newspaper, Headphones, Check, Trash2,
+  Check, Trash2,
 } from 'lucide-vue-next'
 
 // 集合详情（原型 #collection）：头部信息 + 订阅源（开关/同步） + 名下内容列表。
@@ -41,11 +41,6 @@ const srcBadge = computed(() => sourceBadge(sourceLabelOf(collection.value?.subs
 const srcIcon = computed(() => sourceMeta(collection.value?.subscription?.source_type || '')?.icon ?? Rss)
 const srcTypeLabel = computed(() => sourceMeta(collection.value?.subscription?.source_type || '')?.label || '订阅源')
 const srcHome = computed(() => collection.value?.subscription ? sourceHomeUrl(collection.value.subscription) : null)
-
-const typeIcon = (t: string) =>
-  t === 'video' ? Play : t === 'paper' ? FileText : t === 'audio' ? Headphones : Newspaper
-const typePillClass = (t: string) =>
-  t === 'video' ? 't-video' : t === 'paper' ? 't-paper' : t === 'audio' ? 't-audio' : 't-article'
 
 async function load() {
   loading.value = true
@@ -264,14 +259,14 @@ onBeforeUnmount(() => global.setCrumbs(null))
       </div>
       <div v-else class="list">
         <div v-for="j in jobs" :key="j.job_id" class="row" @click="openJob(j)">
-          <span class="type-pill" :class="typePillClass(j.content_type)">
-            <component :is="typeIcon(j.content_type)" :size="17" />
+          <span class="type-pill" :class="contentTypePill(j.content_type)">
+            <component :is="contentTypeIcon(j.content_type)" :size="17" />
           </span>
           <div class="body">
             <div class="title">{{ j.title || j.job_id }}</div>
             <div class="meta">
               <StatusBadge :status="j.status" />
-              <span>{{ CONTENT_TYPE_LABELS[j.content_type] || j.content_type }}</span>
+              <span>{{ contentTypeLabel(j.content_type) }}</span>
               <template v-if="j.source"><span class="sep">·</span><span>{{ j.source }}</span></template>
               <span class="sep">·</span>
               <span class="dim">{{ fmtDateTime(j.created_at) }}</span>

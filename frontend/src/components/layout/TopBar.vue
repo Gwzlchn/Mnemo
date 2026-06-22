@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Search, Menu, Play, FileText, Newspaper, Headphones } from 'lucide-vue-next'
+import { ArrowLeft, Search, Menu } from 'lucide-vue-next'
 import { useApi } from '../../composables/useApi'
 import { useGlobalStore } from '../../stores/global'
-import type { SearchResponse, SearchResultItem } from '../../types'
+import { contentTypeIcon, contentTypePill, noteTypeLabel } from '../../utils/contentType'
+import type { BreadcrumbSeg, SearchResponse, SearchResultItem } from '../../types'
 
 // 移动端汉堡：开合左侧抽屉。桌面端隐藏（CSS 媒体查询控制）。
 defineEmits<{ (e: 'toggle-mobile'): void }>()
@@ -15,14 +16,12 @@ const api = useApi()
 const global = useGlobalStore()
 const q = ref('')
 
-interface Seg { t: string; to?: string }
-
 // 面包屑:详情页加载到真实数据后可经 global.crumbOverride 覆盖(如内容标题/领域);
-// 否则按路由名派生通用文案。
-const crumbs = computed<Seg[]>(() => {
+// 否则按路由名派生通用文案。段类型 BreadcrumbSeg 与 store.crumbOverride 共用(types/index.ts)。
+const crumbs = computed<BreadcrumbSeg[]>(() => {
   if (global.crumbOverride?.length) return global.crumbOverride
   const p = route.params as any
-  const root: Seg = { t: '知识库', to: '/' }
+  const root: BreadcrumbSeg = { t: '知识库', to: '/' }
   switch (route.name) {
     case 'knowledge-bases': return [{ t: '知识库' }]
     case 'knowledge-base': return [root, { t: String(p.domain) }]
@@ -56,19 +55,7 @@ const loading = ref(false)
 const wrapEl = ref<HTMLElement | null>(null)
 const inputEl = ref<HTMLInputElement | null>(null)
 
-// 笔记类型徽章：与后端 note_type 取值对齐（与 SearchView 一致）。
-const NOTE_TYPE_LABELS: Record<string, string> = {
-  smart: '智能笔记',
-  mechanical: '机械稿',
-  transcript: '逐字稿',
-}
-// 内容类型 → type-pill 配色类 + 图标（与 SearchView 一致）。
-const PILL_CLASS: Record<string, string> = {
-  video: 't-video', paper: 't-paper', article: 't-article', audio: 't-audio',
-}
-const PILL_ICON: Record<string, any> = {
-  video: Play, paper: FileText, article: Newspaper, audio: Headphones,
-}
+// 笔记类型徽章 / 内容类型图标·配色:统一走 utils/contentType(与 SearchView 共用单一来源)。
 
 const term = computed(() => q.value.trim())
 
@@ -181,9 +168,9 @@ onBeforeUnmount(() => {
           class="sp-row"
           @click="openItem(item)"
         >
-          <span class="sp-tag">{{ NOTE_TYPE_LABELS[item.note_type] || item.note_type }}</span>
-          <span class="sp-pill type-pill" :class="PILL_CLASS[item.content_type] || 't-article'">
-            <component :is="PILL_ICON[item.content_type] || Newspaper" :size="13" />
+          <span class="sp-tag">{{ noteTypeLabel(item.note_type) }}</span>
+          <span class="sp-pill type-pill" :class="contentTypePill(item.content_type)">
+            <component :is="contentTypeIcon(item.content_type)" :size="13" />
           </span>
           <div style="min-width:0;flex:1">
             <div class="sp-t">{{ item.title || item.job_id }}</div>

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useApi } from '../composables/useApi'
-import type { ProfileSummary } from '../types'
+import type { ProfileSummary, BreadcrumbSeg } from '../types'
 
 export const useGlobalStore = defineStore('global', () => {
   const api = useApi()
@@ -10,8 +10,8 @@ export const useGlobalStore = defineStore('global', () => {
 
   // 面包屑覆盖:详情页加载到真实数据后(如内容标题/所属领域)发布给 TopBar,
   // 替代 TopBar 仅按路由名派生的通用文案。视图离开时务必置 null(onBeforeUnmount)避免残留。
-  const crumbOverride = ref<{ t: string; to?: string }[] | null>(null)
-  function setCrumbs(segs: { t: string; to?: string }[] | null) {
+  const crumbOverride = ref<BreadcrumbSeg[] | null>(null)
+  function setCrumbs(segs: BreadcrumbSeg[] | null) {
     crumbOverride.value = segs
   }
 

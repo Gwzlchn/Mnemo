@@ -1,3 +1,9 @@
+// 面包屑段:TopBar 渲染 + store.crumbOverride 共用同一形状。
+export interface BreadcrumbSeg {
+  t: string        // 文案
+  to?: string      // 可点跳转目标(末段通常无 to)
+}
+
 // 内容类型:与后端 pipeline 一一对应(video/paper/article/audio)。
 export type ContentType = 'video' | 'paper' | 'article' | 'audio'
 

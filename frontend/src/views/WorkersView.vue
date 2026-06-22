@@ -7,6 +7,8 @@ import { useApi } from '../composables/useApi'
 import { useWorkerStore } from '../stores/workers'
 import { useGlobalWs } from '../composables/useGlobalWs'
 import StatusBadge from '../components/common/StatusBadge.vue'
+import { fmtDuration, fmtRelative } from '../utils/datetime'
+import { workerDotClass, workerComputeDesc } from '../utils/worker'
 import type { Worker } from '../types'
 import {
   Server, RefreshCw, Cpu, Loader, MessageSquare, X, Plus,
@@ -60,48 +62,11 @@ const doneCount = computed(() => systemStatus.value?.jobs?.done ?? status.value?
 
 const pools = computed(() => Object.entries(status.value?.pools ?? {}))
 
-// dot 颜色跟随 worker 状态。
-function dotClass(s: string): string {
-  switch (s) {
-    case 'online-idle': return 'd-ok'
-    case 'online-busy': return 'd-info'
-    case 'draining': return 'd-warn'
-    case 'stale': return 'd-bad'
-    default: return 'd-mut'
-  }
-}
+// dot 颜色 / 算力描述统一走 utils/worker(状态→点色、算力描述),时长/相对时间走 utils/datetime。
+const dotClass = workerDotClass
+const computeDesc = workerComputeDesc
 function isOnline(w: Worker): boolean {
   return w.status.startsWith('online') || w.status === 'draining'
-}
-
-// 时长（秒 → Nh Nm）。
-function fmtDuration(sec: number): string {
-  if (sec <= 0) return '0m'
-  const s = Math.floor(sec)
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  if (h > 0) return `${h}h${String(m).padStart(2, '0')}m`
-  return `${m}m`
-}
-// 心跳相对时间。
-function ago(v: string | null): string {
-  if (!v) return '—'
-  const diff = Date.now() - new Date(v).getTime()
-  if (isNaN(diff)) return '—'
-  const sec = Math.floor(diff / 1000)
-  if (sec < 60) return `${sec}s 前`
-  const min = Math.floor(sec / 60)
-  if (min < 60) return `${min}m 前`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}h 前`
-  return `${Math.floor(hr / 24)}d 前`
-}
-// 算力描述。
-function computeDesc(w: Worker): string {
-  if (w.gpu_name) {
-    return w.gpu_memory_mb ? `${w.gpu_name} ${Math.round(w.gpu_memory_mb / 1024)}GB` : w.gpu_name
-  }
-  return w.type === 'ai' ? 'AI' : (w.type.toUpperCase())
 }
 
 // ── 行内 drain / undrain / 移除 ──
@@ -136,7 +101,8 @@ async function removeWorker(w: Worker) {
 }
 
 // ── 接入新 Worker：mintToken + docker 命令 ──
-const IMAGE = 'ghcr.io/gwzlchn/flori:latest'
+// 镜像 owner/tag 不写死:优先构建期注入(VITE_WORKER_IMAGE),回退默认值。
+const IMAGE = import.meta.env.VITE_WORKER_IMAGE || 'ghcr.io/gwzlchn/flori:latest'
 const WORKER_TYPES = ['cpu', 'gpu', 'ai', 'download']
 const TABS = [
   { id: 'gateway', label: '分布式' },
@@ -321,7 +287,7 @@ onMounted(refreshAll)
             <template v-if="w.total_duration_sec > 0">
               <span class="sep">·</span><span>运行 {{ fmtDuration(w.total_duration_sec) }}</span>
             </template>
-            <span class="sep">·</span><span>心跳 {{ ago(w.last_heartbeat) }}</span>
+            <span class="sep">·</span><span>心跳 {{ fmtRelative(w.last_heartbeat) }}</span>
           </div>
         </div>
         <!-- 在线/排空中：排空/取消 + 备注入口（备注跳详情编辑）；离线：移除 -->

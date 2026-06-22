@@ -2,7 +2,8 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useApi } from '../../composables/useApi'
 import MarkdownViewer from '../notes/MarkdownViewer.vue'
-import { fmtDateTime } from '../../utils/datetime'
+import { fmtDateTime, fmtDuration } from '../../utils/datetime'
+import { statusLabel } from '../../utils/status'
 import type { StepInfo } from '../../types'
 import { Check, X, Minus, Loader, Clock, ChevronRight, FileText, Braces } from 'lucide-vue-next'
 
@@ -15,9 +16,7 @@ const statusColor: Record<string, string> = {
   running: 'bg-blue-500 text-white animate-pulse', skipped: 'bg-gray-300 text-gray-500',
   waiting: 'bg-gray-200 text-gray-400', ready: 'bg-yellow-400 text-white',
 }
-const statusText: Record<string, string> = {
-  done: '完成', failed: '失败', running: '进行中', skipped: '跳过', waiting: '等待', ready: '就绪',
-}
+// 状态文案统一走 utils/status.statusLabel(避免与 StatusBadge 文案漂移);配色保留本组件 Tailwind 体系。
 
 // 产出摘要:把 step.meta 渲染成友好「标签：值」。未知键回退原键,内部键跳过。
 const META_LABELS: Record<string, string> = {
@@ -56,10 +55,6 @@ const mediaUrl = (p: string) => `/api/jobs/${props.jobId}/media?path=${encodeURI
 const fname = (p: string) => p.split('/').pop()
 const stepLabel = (s: StepInfo) => s.label || s.name
 
-function fmtDur(sec: number | null): string {
-  if (sec == null) return '—'
-  return sec < 60 ? `${sec.toFixed(1)}s` : `${Math.floor(sec / 60)}m${Math.floor(sec % 60)}s`
-}
 function stepPct(s: StepInfo): number | null {
   return s.status === 'running' && s.meta?.pct != null ? s.meta.pct : null
 }
@@ -167,13 +162,13 @@ watch(() => props.steps.map(s => s.name).join(','), () => { if (!sel.value) pick
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-1.5">
               <span class="text-sm font-medium truncate" :class="s.status === 'waiting' ? 'text-gray-400' : 'text-gray-800'">{{ stepLabel(s) }}</span>
-              <span class="text-[10px] px-1 py-0.5 rounded flex-shrink-0" :class="statusColor[s.status] || statusColor.waiting">{{ statusText[s.status] || s.status }}</span>
+              <span class="text-[10px] px-1 py-0.5 rounded flex-shrink-0" :class="statusColor[s.status] || statusColor.waiting">{{ statusLabel(s.status) }}</span>
             </div>
             <div class="text-[11px] text-gray-400 font-mono mt-0.5">{{ s.name }}</div>
             <div v-if="stepPct(s) != null" class="mt-1 w-full bg-gray-200 rounded-full h-1">
               <div class="bg-blue-500 h-full rounded-full transition-all" :style="{ width: `${stepPct(s)}%` }" />
             </div>
-            <div v-else-if="s.duration_sec && ['done', 'failed'].includes(s.status)" class="text-[11px] text-gray-400 mt-0.5">耗时 {{ fmtDur(s.duration_sec) }}</div>
+            <div v-else-if="s.duration_sec && ['done', 'failed'].includes(s.status)" class="text-[11px] text-gray-400 mt-0.5">耗时 {{ fmtDuration(s.duration_sec, { decimalSeconds: true }) }}</div>
           </div>
         </button>
       </div>
@@ -183,7 +178,7 @@ watch(() => props.steps.map(s => s.name).join(','), () => { if (!sel.value) pick
         <template v-if="selStep">
           <div class="flex items-center gap-2 flex-wrap">
             <h4 class="text-base font-semibold text-gray-800">{{ stepLabel(selStep) }}</h4>
-            <span class="text-xs px-1.5 py-0.5 rounded" :class="statusColor[selStep.status] || statusColor.waiting">{{ statusText[selStep.status] || selStep.status }}</span>
+            <span class="text-xs px-1.5 py-0.5 rounded" :class="statusColor[selStep.status] || statusColor.waiting">{{ statusLabel(selStep.status) }}</span>
             <span class="text-xs text-gray-400 font-mono">{{ selStep.name }}</span>
           </div>
 
@@ -191,7 +186,7 @@ watch(() => props.steps.map(s => s.name).join(','), () => { if (!sel.value) pick
           <div v-if="['done', 'failed', 'running'].includes(selStep.status)" class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 mt-2">
             <span><Clock :size="12" class="inline -mt-0.5" /> 开始 {{ fmtDateTime(selStep.started_at) }}</span>
             <span>结束 {{ selStep.status === 'running' ? '进行中' : fmtDateTime(selStep.finished_at) }}</span>
-            <span>耗时 {{ selStep.status === 'running' ? '进行中' : fmtDur(selStep.duration_sec) }}</span>
+            <span>耗时 {{ selStep.status === 'running' ? '进行中' : fmtDuration(selStep.duration_sec, { decimalSeconds: true }) }}</span>
           </div>
           <div v-else-if="['waiting', 'ready'].includes(selStep.status)" class="text-xs text-gray-400 mt-2">尚未运行</div>
 

@@ -8,11 +8,12 @@ import { useJobWs } from '../composables/useJobWs'
 import MarkdownViewer from '../components/notes/MarkdownViewer.vue'
 import StepWorkbench from '../components/job/StepWorkbench.vue'
 import StatusBadge from '../components/common/StatusBadge.vue'
-import { fmtDateTime } from '../utils/datetime'
-import { CONTENT_TYPE_LABELS } from '../types'
+import { fmtDateTime, fmtDuration } from '../utils/datetime'
+import { contentTypeIcon, contentTypePill, contentTypeLabel } from '../utils/contentType'
+import { jobSourceLabel } from '../constants/sources'
 import type { JobDetail, GlossaryTerm, JobConcept } from '../types'
 import {
-  Play, FileText, Newspaper, Headphones, ExternalLink, BookOpen, Lightbulb,
+  Play, FileText, ExternalLink, BookOpen, Lightbulb,
   GitBranch, Info, RefreshCw, ChevronDown, Star, List, RotateCcw, Trash2,
   AlertTriangle, ChevronRight, Bookmark,
 } from 'lucide-vue-next'
@@ -44,32 +45,13 @@ const TABS: { key: Tab; label: string; icon: any }[] = [
   { key: 'info', label: '元信息', icon: Info },
 ]
 
-// 头部派生
-const typeIcon = computed(() => {
-  const m: Record<string, any> = { video: Play, paper: FileText, article: Newspaper, audio: Headphones }
-  return m[job.value?.content_type || ''] || FileText
-})
-const typeClass = computed(() => {
-  const m: Record<string, string> = { video: 't-video', paper: 't-paper', article: 't-article', audio: 't-audio' }
-  return m[job.value?.content_type || ''] || 't-video'
-})
-const SOURCE_LABELS: Record<string, string> = {
-  bilibili: 'Bilibili', youtube: 'YouTube', arxiv: 'arXiv',
-  http_article: '公众号', podcast: '播客', upload: '本地', other: '其它',
-}
-const sourceLabel = computed(() => {
-  const s = job.value?.source
-  return s ? (SOURCE_LABELS[s] || s) : '—'
-})
+// 头部派生:内容类型图标/配色、来源标签统一走共享单一来源(utils/contentType、constants/sources)。
+const typeIcon = computed(() => contentTypeIcon(job.value?.content_type))
+const typeClass = computed(() => contentTypePill(job.value?.content_type))
+const sourceLabel = computed(() => jobSourceLabel(job.value?.source))
 // BV 号(B 站)
 const bv = computed(() => jobId.value.match(/_(BV[0-9A-Za-z]+)/)?.[1] ?? null)
 
-// 生成时间窗口(由步骤起止推导)。
-function fmtDur(sec: number | null): string {
-  if (sec == null) return '—'
-  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60)
-  return h ? `${h}h${m}m` : m ? `${m}m${s}s` : `${s}s`
-}
 // 原始文件大小:字节优先(精确,可转 KB);无字节时回退 MB。
 function fmtSize(media: { file_size_bytes?: number; file_size_mb?: number }): string {
   let b = media.file_size_bytes
@@ -121,8 +103,8 @@ async function fetchDetail() {
 }
 
 onMounted(fetchDetail)
-watch(jobId, fetchDetail)
-onBeforeUnmount(() => global.setCrumbs(null))   // 离开详情页清掉面包屑覆盖,避免残留到别的页
+watch(jobId, () => { stopPolling(); fetchDetail() })   // 切 job 先停旧轮询
+onBeforeUnmount(() => { global.setCrumbs(null); stopPolling() })   // 离开详情页清面包屑覆盖 + 停轮询
 
 // ════════════════════ 笔记 tab ════════════════════
 const domain = computed(() => job.value?.domain || '')
@@ -263,14 +245,20 @@ async function confirmRerun() {
     rerunning.value = false
   }
 }
+// 轮询定时器提升到组件作用域,卸载/切 job/再次重跑时统一清理,避免泄漏与对已销毁状态的写入。
+let pollTimer: ReturnType<typeof setInterval> | null = null
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+}
 function pollForVersion(provider: string) {
+  stopPolling()
   let n = 0
-  const timer = setInterval(async () => {
+  pollTimer = setInterval(async () => {
     n++
     await loadVersions()
     const got = versions.value.find(v => v.provider === provider)
     if (got || n > 48) {
-      clearInterval(timer)
+      stopPolling()
       rerunning.value = false
       if (got) { showToast(`${provider} 版本已生成`, 'success'); await selectVersion(got.file) }
     }
@@ -326,7 +314,7 @@ async function loadConcepts() {
 }
 // 本内容里命中的位置(逐个出现处),用 location/content_type 描述。
 function occLabel(o: { content_type: string; location: string | null }): string {
-  const t = CONTENT_TYPE_LABELS[o.content_type] || o.content_type
+  const t = contentTypeLabel(o.content_type)
   return o.location ? `${t} · ${o.location}` : t
 }
 function conceptOccText(c: JobConcept): string {
@@ -414,7 +402,7 @@ watch(job, (j) => {
             <div class="h1 sm" style="overflow:hidden;text-overflow:ellipsis">{{ job.title || job.job_id }}</div>
             <div class="meta" style="margin-top:5px">
               <StatusBadge :status="jobStatus" />
-              <span class="badge b-mut">{{ CONTENT_TYPE_LABELS[job.content_type] || job.content_type }}</span>
+              <span class="badge b-mut">{{ contentTypeLabel(job.content_type) }}</span>
               <span>{{ sourceLabel }}</span>
               <template v-if="job.domain">
                 <span class="sep">·</span><span>{{ job.domain }}</span>
@@ -431,7 +419,7 @@ watch(job, (j) => {
               上传于 {{ fmtDateTime(job.published_at) }} · 生成
               {{ genStart ? fmtDateTime(genStart) : '—' }} →
               {{ anyRunning ? '进行中' : (genEnd ? fmtDateTime(genEnd) : '—') }}
-              · 耗时 {{ genEnd ? fmtDur(genDurSec) : '—' }}
+              · 耗时 {{ genEnd ? fmtDuration(genDurSec) : '—' }}
             </div>
             <div v-if="jobStatus === 'processing'" class="dim" style="font-size:11.5px;margin-top:4px;display:flex;align-items:center;gap:6px">
               <span class="dot" :class="connected ? 'd-ok pulse' : 'd-bad'" />
@@ -613,11 +601,11 @@ watch(job, (j) => {
           <div class="card-h"><Info :size="15" />内容信息</div>
           <table class="kv">
             <tr><td>标题</td><td>{{ job.title || '—' }}</td></tr>
-            <tr><td>类型</td><td>{{ CONTENT_TYPE_LABELS[job.content_type] || job.content_type }}</td></tr>
+            <tr><td>类型</td><td>{{ contentTypeLabel(job.content_type) }}</td></tr>
             <tr><td>来源</td><td>{{ sourceLabel }}</td></tr>
             <tr><td>发布时间</td><td>{{ fmtDateTime(job.published_at) }}</td></tr>
             <!-- 视频→时长+分辨率、文章→字数、通用→原始大小/字幕(metadata.json/parsed.json) -->
-            <tr v-if="job.media?.duration_sec"><td>时长</td><td>{{ fmtDur(job.media.duration_sec) }}</td></tr>
+            <tr v-if="job.media?.duration_sec"><td>时长</td><td>{{ fmtDuration(job.media.duration_sec) }}</td></tr>
             <tr v-if="job.media?.resolution"><td>分辨率</td><td class="mono">{{ job.media.resolution }}</td></tr>
             <tr v-if="job.media?.word_count"><td>字数</td><td>{{ job.media.word_count.toLocaleString() }} 字</td></tr>
             <tr v-if="job.media && (job.media.file_size_bytes != null || job.media.file_size_mb != null)">
@@ -653,7 +641,7 @@ watch(job, (j) => {
             </td></tr>
             <tr><td>创建于</td><td>{{ fmtDateTime(job.created_at) }}</td></tr>
             <tr v-if="job.updated_at"><td>更新于</td><td>{{ fmtDateTime(job.updated_at) }}</td></tr>
-            <tr><td>生成耗时</td><td>{{ genEnd ? fmtDur(genDurSec) : (anyRunning ? '进行中' : '—') }}</td></tr>
+            <tr><td>生成耗时</td><td>{{ genEnd ? fmtDuration(genDurSec) : (anyRunning ? '进行中' : '—') }}</td></tr>
           </table>
 
           <!-- 产物路径(绝对路径,可折叠) -->
@@ -674,6 +662,23 @@ watch(job, (j) => {
         </div>
       </div>
     </template>
+
+    <!-- 换 provider 重跑确认(rerunWith 设 pendingProvider → 此弹窗确认才真正发起 rerun-smart) -->
+    <div v-if="pendingProvider" class="overlay show confirm" @click.self="pendingProvider = null">
+      <div class="modal">
+        <div class="hd">
+          <span class="lead-ic"><RefreshCw :size="16" /></span>
+          <b>换 provider 重跑</b>
+        </div>
+        <div class="bd" style="font-size:13.5px;color:var(--ink-700)">
+          用 <b>{{ pendingProvider.name }}</b>（{{ pendingProvider.label }}）重新生成智能笔记？将新增一个版本，原版本保留。
+        </div>
+        <div class="ft">
+          <button class="btn" @click="pendingProvider = null">取消</button>
+          <button class="btn pri" :disabled="rerunning" @click="confirmRerun"><RefreshCw :size="14" />开始重跑</button>
+        </div>
+      </div>
+    </div>
 
     <!-- 删除确认 -->
     <div v-if="showDelete" class="overlay show confirm" @click.self="showDelete = false">
@@ -698,9 +703,8 @@ watch(job, (j) => {
   display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600;
   color: var(--ink-700); background: none; cursor: pointer; padding: 0;
 }
-.art-caret { transition: transform .15s; }
-.art-caret.open { transform: rotate(0deg); }
-.art-caret:not(.open) { transform: rotate(-90deg); }
+.art-caret { transition: transform .15s; transform: rotate(-90deg); }  /* 默认折叠 */
+.art-caret.open { transform: rotate(0deg); }                            /* 展开:箭头朝下 */
 .art-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .art-list li {
   font-size: 12px; color: var(--ink-600); padding: 3px 8px; border-radius: 5px;

@@ -3,6 +3,7 @@ import { ref, computed, onMounted, inject } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useCollectionStore } from '../stores/collections'
+import { fmtRelative } from '../utils/datetime'
 import type { Collection } from '../types'
 import { sourceLabelOf, sourceBadge, sourceMeta } from '../constants/sources'
 import AddSubscriptionDialog from '../components/collection/AddSubscriptionDialog.vue'
@@ -40,17 +41,8 @@ function badgeOf(c: Collection) {
   return sourceBadge(sourceLabelOf(c.subscription))
 }
 
-function syncAgo(v: string | null): string {
-  if (!v) return '从未同步'
-  const diff = Date.now() - new Date(v).getTime()
-  if (isNaN(diff)) return '从未同步'
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return '刚刚同步'
-  if (mins < 60) return `${mins} 分钟前同步`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours} 小时前同步`
-  return `${Math.floor(hours / 24)} 天前同步`
-}
+// 相对同步时间走 utils/datetime.fmtRelative(中文单位 + 「同步」后缀)。
+const syncAgo = (v: string | null) => fmtRelative(v, { style: 'cn', suffix: '同步', fallback: '从未同步' })
 
 async function load() {
   error.value = ''

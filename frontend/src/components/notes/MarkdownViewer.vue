@@ -105,17 +105,12 @@ md.core.ruler.after('timestamp_marks', 'term_links', (state: any) => {
   }
 })
 
-const rendered = computed(() => {
-  let headingIdx = 0
+// 渲染 + 标题 id 注入 + TOC 提取一次完成:标题 id / 目录通过 DOM 遍历(替代易碎的 HTML 正则)。
+const renderedDoc = computed(() => {
   // 每次渲染前按当前 props 重建术语正则 + 清空"已链接"集合(每词仅首次出现)。
   termLink.re = buildTermRegex(props.terms || [])
   termLink.linked = new Set()
   let html = md.render(props.content, { jobId: props.jobId })
-
-  html = html.replace(/<h([2-3])>/g, (_match: string, level: string) => {
-    const id = `heading-${headingIdx++}`
-    return `<h${level} id="${id}">`
-  })
 
   // OCR 仅在显示时折叠：把 `> OCR：…` 渲染出的引用块包成默认收起的 <details>，
   // 原文仍保留在笔记里，只是阅读时不喧宾夺主。
@@ -125,18 +120,21 @@ const rendered = computed(() => {
       `<details class="ocr-fold"><summary>OCR</summary><div class="ocr-body">${body}</div></details>`,
   )
 
-  return html
+  // markdown-it html:false 输入受控,DOMParser 安全:遍历 h2/h3 注入稳定 id 并取 textContent 作目录。
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const headings: { id: string; text: string; level: number }[] = []
+  let i = 0
+  doc.querySelectorAll('h2, h3').forEach((el) => {
+    const id = `heading-${i++}`
+    el.id = id
+    headings.push({ id, text: el.textContent || '', level: el.tagName === 'H3' ? 3 : 2 })
+  })
+  return { html: doc.body.innerHTML, headings }
 })
 
-watch(rendered, (html) => {
-  const headings: { id: string; text: string; level: number }[] = []
-  const headingRegex = /<h([2-3])\s+id="([^"]*)">(.*?)<\/h[2-3]>/g
-  let match
-  while ((match = headingRegex.exec(html)) !== null) {
-    headings.push({ level: parseInt(match[1]), id: match[2], text: match[3].replace(/<[^>]*>/g, '') })
-  }
-  emit('headings', headings)
-}, { immediate: true })
+const rendered = computed(() => renderedDoc.value.html)
+
+watch(() => renderedDoc.value.headings, (hs) => emit('headings', hs), { immediate: true })
 
 // 术语链接走 SPA 跳转(v-html 内的 <a> 不被 vue-router 接管，用事件委托)。
 function onClick(e: MouseEvent) {
@@ -145,7 +143,7 @@ function onClick(e: MouseEvent) {
   e.preventDefault()
   const term = a.getAttribute('data-term')
   if (term && props.domain) {
-    router.push(`/domains/${encodeURIComponent(props.domain)}/terms/${encodeURIComponent(term)}`)
+    router.push(`/kb/${encodeURIComponent(props.domain)}/concepts/${encodeURIComponent(term)}`)
   }
 }
 </script>
