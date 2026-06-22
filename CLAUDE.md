@@ -158,5 +158,12 @@ docker compose -f docker-compose.yml -f .local/docker-compose.uptest.yml --env-f
 ### 单一来源 / 防漂移
 - 依赖只在 `pyproject.toml`（optional extras）；Dockerfile/CI 按 extras 名装,勿重抄版本。
 - 改任何对外接口 → 同提交更新 `docs/03-contracts.md`（commit 用 `contract:` 前缀）。
-- 每次迭代在 `.local/processing/<日期>/` 留「计划→实际→起止时间」记录；值得长存的决策升格 `docs/adr/`。
+### 迭代工作记录（每次开发/运维都要保持的习惯）
+每次迭代（修复 / 新实现 / 重构 / 调研 / 运维）在 `.local/processing/<YYYY-MM-DD>/` 建一个工作项文件,**边做边更新**（不要只动手不记录,尤其大改动）：
+- 命名 `NN-类型-简述.txt`（类型对齐 git：feat/fix/refactor/chore/ops/research/plan/docs/test）。
+- 头部：类型 / 状态（计划→进行中→已完成/阻塞）/ 创建·开始·结束·耗时（绝对时间 `YYYY-MM-DD HH:MM`）/ 分支·提交。
+- 正文：背景 → 计划（动手前写）→ 实际实现（与计划差异、踩坑）→ 涉及改动 → 验证 → 遗留。
+- 当天建 `00-当日索引.txt`；跨天未完的滚动进 `.local/processing/待办池.txt`。
+- 标准/模板/待办池放 `.local/processing/` 根目录（长存,不随日期清理）；完整规范见 `.local/processing/迭代记录规范.txt`。
+- 全程在 `.local/`（gitignored,永不入 git）；值得长存的决策升格 `docs/adr/`,接口变更进 `docs/03-contracts.md`。
 
