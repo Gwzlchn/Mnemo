@@ -259,6 +259,9 @@ class AppConfig:
     # 来源网络路由(configs/sources.yaml 的 net_routing 段):net_steps / proxy_sources。
     # 缺省空 dict → scheduler 回落到内置默认,向后兼容(无 sources.yaml 也能跑)。
     net_routing: dict = field(default_factory=dict)
+    # 资源槽上限(configs/resources.yaml 的 resources 段):资源名 -> 并发上限。
+    # 缺省空 dict → 不启用任何资源限流(无 resources.yaml 也能跑)。
+    resources: dict = field(default_factory=dict)
 
 
 def load_config(
@@ -278,6 +281,7 @@ def load_config(
         pools=load_yaml(config_dir / "pools.yaml"),
         providers=_load_optional(config_dir / "providers.yaml"),
         net_routing=(_load_optional(config_dir / "sources.yaml") or {}).get("net_routing") or {},
+        resources=(_load_optional(config_dir / "resources.yaml") or {}).get("resources") or {},
     )
 
 

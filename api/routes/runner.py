@@ -315,6 +315,19 @@ async def step_progress(
     return {"ok": True}
 
 
+@router.post("/jobs/{job_id}/steps/{step}/alive")
+async def step_alive(
+    job_id: str,
+    step: str,
+    worker_id: str = Depends(verify_worker_token),
+    redis: RedisClient = Depends(get_redis),
+):
+    """步进度心跳:刷新 redis 步进度时间戳(worker on_tick 每 10s 调,仅子进程存活时),
+    供 scheduler.check_stuck 对远程 job(产物不落调度器盘)判进度停滞。"""
+    await redis.set_step_progress_at(job_id, step)
+    return {"ok": True}
+
+
 @router.post("/usage")
 async def record_usage(
     req: RunnerUsageRequest,

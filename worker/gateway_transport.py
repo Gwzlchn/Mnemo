@@ -229,6 +229,17 @@ class GatewayTransport:
             except httpx.HTTPError:
                 logger.warning("gateway_progress_failed", job_id=job_id)
 
+    async def report_step_alive(self, job_id, step):
+        # 步进度心跳走 gateway(best-effort,失败只 log,绝不影响步骤执行)。
+        try:
+            resp = await self._http.post(
+                f"/api/runner/jobs/{job_id}/steps/{step}/alive",
+                headers=self._auth(),
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError:
+            logger.warning("gateway_step_alive_failed", job_id=job_id, step=step)
+
     # ── 其余方法:有内层(混合模式)则委派,无内层(纯网关)返回安全默认值 ──
     # gateway 模式 worker 不调这些细粒度方法(claim 已在服务端 enrich),
     # 此处仅作防御:纯网关无内层时绝不抛 AttributeError。

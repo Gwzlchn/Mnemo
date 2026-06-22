@@ -92,6 +92,8 @@ class WorkerTransport(Protocol):
     # ── 事件 ──
     async def publish_step_event(self, channel: str, data: dict) -> None: ...
 
+    async def report_step_alive(self, job_id: str, step: str) -> None: ...
+
     async def close(self) -> None: ...
 
 
@@ -237,6 +239,9 @@ class RedisTransport:
     # ── 事件 ──
     async def publish_step_event(self, channel, data):
         await self._redis.publish(channel, data)
+
+    async def report_step_alive(self, job_id, step):
+        await self._redis.set_step_progress_at(job_id, step)
 
     async def close(self):
         # redis/db 的关闭由 main.py 负责,此处 no-op。

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timezone
 from typing import AsyncIterator
 
@@ -86,12 +87,16 @@ class RedisClient:
         tags: list[str],
         priority: int,
         require_tags: list[str] | None = None,
+        resources: list[str] | None = None,
     ) -> None:
-        task = json.dumps(
-            {"job_id": job_id, "step": step, "tags": sorted(tags),
-             "require_tags": sorted(require_tags) if require_tags else []},
-            sort_keys=True,
-        )
+        payload = {
+            "job_id": job_id, "step": step, "tags": sorted(tags),
+            "require_tags": sorted(require_tags) if require_tags else [],
+        }
+        # 仅在声明了资源槽时才写 resources 键:无声明时 task JSON 与旧形态逐字一致(向后兼容)。
+        if resources:
+            payload["resources"] = sorted(resources)
+        task = json.dumps(payload, sort_keys=True)
         await self.r.zadd(f"queue:{pool}", {task: priority})
 
     async def dequeue_step(self, pool: str) -> tuple[dict, float] | None:
@@ -148,6 +153,41 @@ class RedisClient:
         val = await self.r.get(f"pool:{pool}:count")
         return int(val) if val else 0
 
+    # ── 资源槽(单账号/单出口IP 等池粒度外的细粒度并发,复用池槽 Lua)──
+    # limit 由 scheduler 从 configs/resources.yaml 推到 redis hash(单一事实源),
+    # claim_step 按任务声明的 resources 占槽;无声明=零开销,未配上限=不限(安全降级)。
+
+    _RESOURCE_LIMITS_KEY = "resource_limits"
+
+    async def set_resource_limits(self, limits: dict) -> None:
+        """把资源上限刷进 redis(先清后写,删掉的资源不残留)。"""
+        await self.r.delete(self._RESOURCE_LIMITS_KEY)
+        if limits:
+            await self.r.hset(
+                self._RESOURCE_LIMITS_KEY,
+                mapping={k: str(int(v)) for k, v in limits.items()},
+            )
+
+    async def get_resource_limit(self, resource: str) -> int | None:
+        val = await self.r.hget(self._RESOURCE_LIMITS_KEY, resource)
+        return int(val) if val is not None else None
+
+    async def try_acquire_resource(self, resource: str, limit: int) -> bool:
+        # 复用池槽 Lua;资源无 frozen 概念,frozen 键永不置位故恒放行该检查。
+        result = await self.r.eval(
+            _LUA_ACQUIRE_SLOT, 2,
+            f"res:{resource}:count", f"res:{resource}:frozen", str(limit),
+        )
+        return result == 1
+
+    async def release_resource(self, resource: str) -> bool:
+        result = await self.r.eval(_LUA_RELEASE_SLOT, 1, f"res:{resource}:count")
+        return result == 1
+
+    async def get_resource_count(self, resource: str) -> int:
+        val = await self.r.get(f"res:{resource}:count")
+        return int(val) if val else 0
+
     # ── Job 实时状态 ──
 
     async def init_job(self, job_id: str, pipeline: str, info: dict) -> None:
@@ -198,6 +238,42 @@ class RedisClient:
     async def get_step_exec_id(self, job_id: str, step: str) -> str | None:
         return await self.r.hget(f"job:{job_id}:step_exec", step)
 
+    async def set_step_resources(
+        self, job_id: str, step: str, resources: list[str]
+    ) -> None:
+        # 记本步占用的资源槽,供 release/orphan 回收据此释放(gateway 模式 release 请求不回传
+        # 资源列表,故统一存 redis 由共享 release_step/_reclaim_step 读取)。
+        await self.r.hset(
+            f"job:{job_id}:step_resources", step, json.dumps(resources),
+        )
+
+    async def get_step_resources(self, job_id: str, step: str) -> list[str]:
+        raw = await self.r.hget(f"job:{job_id}:step_resources", step)
+        if not raw:
+            return []
+        try:
+            val = json.loads(raw)
+            return val if isinstance(val, list) else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    async def clear_step_resources(self, job_id: str, step: str) -> None:
+        await self.r.hdel(f"job:{job_id}:step_resources", step)
+
+    async def set_step_progress_at(self, job_id: str, step: str) -> None:
+        # 步进度心跳:worker on_tick(每 10s,仅子进程存活时)刷新。供 check_stuck 对远程
+        # (产物不落调度器盘)job 判进度停滞;本地 job 仍读 .{step}.progress 文件。
+        await self.r.hset(f"job:{job_id}:step_progress", step, str(time.time()))
+
+    async def get_step_progress_at(self, job_id: str, step: str) -> float | None:
+        val = await self.r.hget(f"job:{job_id}:step_progress", step)
+        if val is None:
+            return None
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return None
+
     async def incr_step_retries(self, job_id: str, step: str) -> int:
         return await self.r.hincrby(f"job:{job_id}:retries", step, 1)
 
@@ -215,6 +291,8 @@ class RedisClient:
             f"job:{job_id}:retries",
             f"job:{job_id}:step_worker",
             f"job:{job_id}:step_exec",
+            f"job:{job_id}:step_resources",
+            f"job:{job_id}:step_progress",
         ]
         await self.r.delete(*keys)
 

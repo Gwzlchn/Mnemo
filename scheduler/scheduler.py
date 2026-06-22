@@ -98,6 +98,7 @@ class Scheduler:
 
     async def run(self) -> None:
         logger.info("scheduler_start")
+        await self._publish_resource_limits()
         await self._recover()
         self._pubsub_task = asyncio.create_task(self._event_loop())
         self._periodic_task = asyncio.create_task(self._periodic_loop())
@@ -108,6 +109,11 @@ class Scheduler:
             )
         except asyncio.CancelledError:
             logger.info("scheduler_cancelled")
+
+    async def _publish_resource_limits(self) -> None:
+        """把 configs/resources.yaml 的资源上限刷进 redis(单一事实源),供 claim_step 读。
+        资源上限改动需重启 scheduler 才重推(资源集稳定,极少改)。"""
+        await self.redis.set_resource_limits(self.config.resources or {})
 
     async def shutdown(self) -> None:
         logger.info("scheduler_shutdown")
@@ -657,6 +663,7 @@ class Scheduler:
         await self.redis.enqueue_step(
             pool, job_id, step_name, merged_tags, priority,
             require_tags=require_tags,
+            resources=step_cfg.get("resources") or [],
         )
 
         await asyncio.to_thread(
@@ -876,6 +883,13 @@ class Scheduler:
                     await self.redis.release_slot(pool)
                     if pool == "scene":
                         await self.redis.unfreeze_pool("cpu")
+            # 死 worker 的步:代为归还其占用的资源槽(release_slot=False 时 worker 仍活、会自释放,
+            # 不在此重复归还)。
+            resources = await self.redis.get_step_resources(job_id, step)
+            if resources:
+                for res in resources:
+                    await self.redis.release_resource(res)
+                await self.redis.clear_step_resources(job_id, step)
 
         await self.redis.publish("step_failed", {
             "job_id": job_id, "step": step, "status": "failed",
@@ -884,10 +898,10 @@ class Scheduler:
         })
 
     async def check_stuck(self) -> None:
-        # 注:本检查读 jobs_dir/.{step}.progress(由 worker 的 _progress_monitor 写入其本地
-        # ctx.work_dir)。仅单机 LocalStorage 下 work_dir==调度器 jobs_dir 时有效;Remote/Gateway
-        # 部署 work_dir 是 worker 本地 tmp、不回传调度器盘 → 对远程 job 恒 no-op(分布式卡死兜底
-        # 需把进度新鲜度纳入心跳上报据 DB 判,属待办,见审阅报告 B7)。
+        # 进度停滞检测:本地 job 读 jobs_dir/.{step}.progress(worker _progress_monitor 写其
+        # work_dir;单机 LocalStorage 下 work_dir==jobs_dir 才可见)。远程 job(Gateway/Remote
+        # 存储,work_dir 是 worker 本地 tmp、不落调度器盘)退回读 redis 步进度心跳——由 worker
+        # on_tick 每 10s(仅子进程存活时)经 set_step_progress_at 刷新(修原 B7:远程恒 no-op)。
         active_jobs = await self.redis.get_active_jobs()
         for job_id in active_jobs:
             statuses = await self.redis.get_all_step_statuses(job_id)
@@ -895,17 +909,18 @@ class Scheduler:
                 if status != "running":
                     continue
                 progress_file = self.jobs_dir / job_id / f".{step}.progress"
-                if not progress_file.exists():
-                    continue
-                try:
-                    raw = await asyncio.to_thread(progress_file.read_text)
-                    data = json.loads(raw)
-                except (json.JSONDecodeError, OSError):
-                    continue
-
-                step_updated = data.get("updated_at")
-                worker_hb = data.get("worker_heartbeat_at")
-                latest = max(filter(None, [step_updated, worker_hb]), default=None)
+                if progress_file.exists():
+                    try:
+                        data = json.loads(await asyncio.to_thread(progress_file.read_text))
+                    except (json.JSONDecodeError, OSError):
+                        continue
+                    latest = max(
+                        filter(None, [data.get("updated_at"), data.get("worker_heartbeat_at")]),
+                        default=None,
+                    )
+                else:
+                    # 远程 job:退回 redis 步进度心跳(无文件且无心跳=刚起步/未上报,跳过)。
+                    latest = await self.redis.get_step_progress_at(job_id, step)
                 if latest is None:
                     continue
                 age = time.time() - latest

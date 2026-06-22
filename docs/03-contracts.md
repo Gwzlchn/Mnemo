@@ -459,6 +459,7 @@ POST   /api/runner/jobs/{id}/steps/{step}/complete         → 上报完成
 POST   /api/runner/jobs/{id}/steps/{step}/fail             → 上报失败
 POST   /api/runner/jobs/{id}/steps/{step}/release          → 释放认领（不计成败）
 POST   /api/runner/jobs/{id}/steps/{step}/progress         → 上报运行中进度（转发到 events:{id}）
+POST   /api/runner/jobs/{id}/steps/{step}/alive            → 步进度心跳（on_tick 每 10s，仅子进程存活时；供远程 job 卡死检测）
 POST   /api/runner/usage                                   → 记录一次 AI 用量（exec_id 去重）
 GET    /api/runner/jobs/{id}/artifacts                     → 产物清单（GatewayStorage.pull 据此）
 GET    /api/runner/jobs/{id}/artifacts/{rel}              → 取单个产物字节

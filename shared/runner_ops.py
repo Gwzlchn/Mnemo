@@ -113,6 +113,29 @@ async def claim_step(
         task, raw_json, score = matched
         job_id = task["job_id"]
         step = task["step"]
+
+        # 资源槽(单账号/单出口IP 等细粒度并发):任务在 enqueue 时带 resources;对每个有配置上限
+        # (redis resource_limits,由 scheduler 从 configs/resources.yaml 推送)的资源占一个槽。
+        # 任一占不到 → 回滚已占资源 + 释放池槽 + 把任务放回队列,继续看下一个池(不绑定本 worker)。
+        # 未配上限的资源跳过(声明了但 resources.yaml 没配 = 不限,安全降级);无声明则整段零开销。
+        acquired_resources: list[str] = []
+        resource_blocked = False
+        for res in task.get("resources", []):
+            limit = await redis.get_resource_limit(res)
+            if limit is None:
+                continue
+            if await redis.try_acquire_resource(res, limit):
+                acquired_resources.append(res)
+            else:
+                resource_blocked = True
+                break
+        if resource_blocked:
+            for res in acquired_resources:
+                await redis.release_resource(res)
+            await redis.release_slot(pool)
+            await redis.return_step(pool, raw_json, score)
+            continue
+
         # 池拓扑权威在代码:scene 独占 cpu_bound —— 认领 scene 即冻结 cpu 池,
         # 释放时解冻(见 release_step)。pools.yaml 只配 limit,不配这层关系。
         if pool == "scene":
@@ -122,14 +145,19 @@ async def claim_step(
         try:
             acquired = await redis.cas_step_status(job_id, step, "ready", "running")
             if not acquired:
-                # CAS 失败(被他人抢先):释放槽 + 解冻 cpu,跳过本认领继续看其他池(净效果与旧 execute 一致)。
+                # CAS 失败(被他人抢先):释放槽 + 解冻 cpu + 归还资源槽,继续看其他池。
                 await redis.release_slot(pool)
                 if pool == "scene":
                     await redis.unfreeze_pool("cpu")
+                for res in acquired_resources:
+                    await redis.release_resource(res)
                 continue
 
             await redis.set_step_worker(job_id, step, worker_id)
             await redis.set_step_exec_id(job_id, step, exec_id)
+            if acquired_resources:
+                # 存 redis 供 release_step / orphan 回收据此释放(gateway release 请求不回传资源)。
+                await redis.set_step_resources(job_id, step, acquired_resources)
             await _set_status(redis, db, worker_id, "busy", job_id, step)
             await redis.publish("step_started", {
                 "job_id": job_id, "step": step, "status": "running",
@@ -140,7 +168,7 @@ async def claim_step(
             })
         except Exception:
             # dequeue 成功但随后 CAS/publish 抛错时,把 raw 放回队列(尽力而为),
-            # 否则这条任务被永久吞掉。释放槽/解冻 cpu 让占用不泄漏。
+            # 否则这条任务被永久吞掉。释放槽/解冻 cpu/归还资源让占用不泄漏。
             try:
                 await redis.return_step(pool, raw_json, score)
             except Exception:
@@ -151,6 +179,11 @@ async def claim_step(
                     await redis.unfreeze_pool("cpu")
             except Exception:
                 pass
+            for res in acquired_resources:
+                try:
+                    await redis.release_resource(res)
+                except Exception:
+                    pass
             raise
 
         # pipeline/domain/style_tags 不在认领时读:直连模式留给 worker 在 execute 内解析;
@@ -230,4 +263,11 @@ async def release_step(
     await redis.release_slot(pool)
     if pool == "scene":
         await redis.unfreeze_pool("cpu")
+    # 归还本步占用的资源槽(从 redis 读,gateway release 请求不回传资源列表);清记录防重复归还。
+    job_id, step = claim["job_id"], claim["step"]
+    resources = await redis.get_step_resources(job_id, step)
+    if resources:
+        for res in resources:
+            await redis.release_resource(res)
+        await redis.clear_step_resources(job_id, step)
     await _set_status(redis, db, worker_id, "idle")

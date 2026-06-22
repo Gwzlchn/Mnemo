@@ -247,8 +247,11 @@ class Worker:
                 )
 
             async def on_tick() -> None:
-                # 续约:让 DB/Redis 里的 "当前 task" 秒级新鲜 + 推送运行中日志。
+                # 续约:让 DB/Redis 里的 "当前 task" 秒级新鲜 + 刷步进度心跳 + 推送运行中日志。
+                # 步进度心跳每 10s(仅子进程存活时由 monitor 调用),供 scheduler.check_stuck
+                # 对远程 job(产物不落调度器盘)判进度停滞。
                 await self.transport.update_status(self.worker_id, "busy", job_id, step)
+                await self.transport.report_step_alive(job_id, step)
                 await self._push_step_log(job_id, step, work_dir)
 
             try:
