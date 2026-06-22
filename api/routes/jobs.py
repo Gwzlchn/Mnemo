@@ -283,7 +283,7 @@ async def get_job(
         raw = await storage.read_file(job_id, "input/metadata.json")
         if raw:
             md = json.loads(raw.decode("utf-8"))
-            published_at = md.get("published_at")
+            published_at = md.get("published_at")  # 兜底;DB 值(scheduler 已同步)优先,见下
             # 仅透出展示相关字段(元信息标签页用);分辨率优先 resolution,无则由 width×height 拼。
             res = md.get("resolution")
             if not res and md.get("width") and md.get("height"):
@@ -326,7 +326,8 @@ async def get_job(
         job_id=job.id, content_type=job.content_type, status=job.status.value,
         created_at=job.created_at.isoformat(),
         updated_at=job.updated_at.isoformat() if job.updated_at else None,
-        published_at=published_at, media=media, artifacts=artifacts,
+        published_at=(job.published_at.isoformat() if job.published_at else published_at),
+        media=media, artifacts=artifacts,
         title=job.title, url=job.url,
         progress_pct=job.progress_pct, source=job.source, domain=job.domain,
         collection_id=job.collection_id, collection_name=collection_name,
