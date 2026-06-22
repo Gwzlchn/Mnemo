@@ -101,7 +101,7 @@ const isContentActive = (jid: string) =>
   route.name === 'content-detail' && String(route.params.id) === String(jid)
 
 // #5dup 知识库拖拽排序:领域是派生视图、后端无顺序,故顺序存浏览器 localStorage。
-const ORDER_KEY = 'mnemo.kbOrder'
+const ORDER_KEY = 'flori.kbOrder'
 const kbOrder = ref<string[]>(loadOrder())
 function loadOrder(): string[] {
   try { return JSON.parse(localStorage.getItem(ORDER_KEY) || '[]') } catch { return [] }
@@ -139,8 +139,8 @@ function moveKb(i: number, dir: number) {
 <template>
   <aside class="side" :class="{ open: mobileOpen }">
     <div class="brand">
-      <div class="logo" title="Mnemo" @click="nav('/')">M</div>
-      <b>Mnemo</b>
+      <div class="logo" title="Flori" @click="nav('/')">M</div>
+      <b>Flori</b>
     </div>
 
     <div class="top-row">

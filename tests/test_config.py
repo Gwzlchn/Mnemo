@@ -208,13 +208,13 @@ class TestNormalizePipelineLegacy:
         assert s["timeout_sec"] == 60
         assert s["retries"] == 1
         # 旧格式无 image 时归一化补 worker 默认镜像。
-        assert s["image"] == "mnemo/step-base"
+        assert s["image"] == "flori/step-base"
 
     def test_legacy_image_preserved(self):
         raw = {"steps": [{"name": "A", "module": "m.a", "pool": "gpu",
-                          "image": "mnemo/step-gpu", "depends_on": []}]}
+                          "image": "flori/step-gpu", "depends_on": []}]}
         s = normalize_pipeline(raw)["steps"][0]
-        assert s["image"] == "mnemo/step-gpu"
+        assert s["image"] == "flori/step-gpu"
 
 
 class TestLoadPipelinesShape:

@@ -87,10 +87,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - image: mnemo           # api/scheduler/worker 共用
+          - image: flori           # api/scheduler/worker 共用
             dockerfile: docker/base.Dockerfile
             context: .
-          - image: mnemo-frontend  # nginx + 构建好的 Vue 静态资源
+          - image: flori-frontend  # nginx + 构建好的 Vue 静态资源
             dockerfile: frontend/Dockerfile
             context: ./frontend
     steps:

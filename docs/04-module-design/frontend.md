@@ -156,7 +156,7 @@
 │  │ docker run -d --restart unless-stopped \         │    │
 │  │   -e GATEWAY_URL=https://<host> \                │    │
 │  │   -e WORKER_REGISTRATION_TOKEN=mnw-xxxxxxxx \    │    │
-│  │   mnemo/worker --type gpu                        │    │
+│  │   flori/worker --type gpu                        │    │
 │  └──────────────────────────────────────────────────┘    │
 │  [复制命令]  类型: [GPU ▼]                               │
 └──────────────────────────────────────────────────────────┘

@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Mnemo · 全站重设计原型</title>
+<title>Flori · 全站重设计原型</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="../frontend/src/assets/mnemo.css" />
+<link rel="stylesheet" href="../frontend/src/assets/flori.css" />
 <script src="https://unpkg.com/lucide@latest"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
@@ -14,7 +14,7 @@
 <div class="app">
   <!-- ===================== 侧边栏（桌面） ===================== -->
   <aside class="side">
-    <div class="brand"><span class="logo" onclick="go('home')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V6l8 7 8-7v13"/></svg></span><b>Mnemo</b></div>
+    <div class="brand"><span class="logo" onclick="go('home')"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V6l8 7 8-7v13"/></svg></span><b>Flori</b></div>
     <div class="top-row">
       <button class="btn-submit" onclick="openModal('m-submit')" data-tip="投递内容"><i data-lucide="plus"></i><span>投递内容</span></button>
       <button class="top-tool" data-go="content" onclick="go('content')" data-tip="所有来源"><i data-lucide="inbox"></i></button>
@@ -942,7 +942,7 @@
     <div class="card-h"><i data-lucide="info"></i>关于</div>
     <div class="row" onclick="go('about')">
       <span class="type-pill" style="background:var(--brand-50);color:var(--brand-600)"><i data-lucide="book-open"></i></span>
-      <div class="body"><div class="title">关于 Mnemo</div>
+      <div class="body"><div class="title">关于 Flori</div>
         <div class="meta"><span>这个项目在做什么、如何使用</span></div></div>
       <i data-lucide="chevron-right" class="dim"></i>
     </div>
@@ -1046,7 +1046,7 @@
     <button class="btn pri" style="margin-bottom:16px"><i data-lucide="key"></i>生成接入 token</button>
 
     <div class="seg" style="margin-bottom:12px"><button class="on">分布式</button><button>docker run</button><button>compose</button></div>
-    <div style="background:var(--ink-900);color:#cbd5e1;font-family:var(--mono);font-size:12px;padding:12px;border-radius:var(--r-sm);overflow:auto;line-height:1.7">docker run -d --name mnemo-worker \<br>&nbsp;&nbsp;-e MNEMO_SERVER=https://mnemo.local \<br>&nbsp;&nbsp;-e WORKER_TYPE=gpu --gpus all \<br>&nbsp;&nbsp;-e JOIN_TOKEN=wk_8f2a...d31c \<br>&nbsp;&nbsp;ghcr.io/gwzlchn/mnemo:latest worker</div>
+    <div style="background:var(--ink-900);color:#cbd5e1;font-family:var(--mono);font-size:12px;padding:12px;border-radius:var(--r-sm);overflow:auto;line-height:1.7">docker run -d --name flori-worker \<br>&nbsp;&nbsp;-e FLORI_SERVER=https://flori.local \<br>&nbsp;&nbsp;-e WORKER_TYPE=gpu --gpus all \<br>&nbsp;&nbsp;-e JOIN_TOKEN=wk_8f2a...d31c \<br>&nbsp;&nbsp;ghcr.io/gwzlchn/flori:latest worker</div>
     <button class="btn sm" style="margin-top:10px"><i data-lucide="copy"></i>复制命令</button>
   </div>
 </section>
@@ -1253,16 +1253,16 @@
 </section>
 
 <!-- ============================================================ -->
-<!-- (2) 关于 Mnemo 页 -->
+<!-- (2) 关于 Flori 页 -->
 <!-- ============================================================ -->
 <section class="page" id="about" hidden>
 
-  <div class="h1"><i data-lucide="book-open"></i>关于 Mnemo</div>
+  <div class="h1"><i data-lucide="book-open"></i>关于 Flori</div>
   <div class="lead">把视频 / 论文 / 文章 / 播客自动转成结构化笔记，沉淀为可检索、互相关联的个人知识库。</div>
 
   <div class="card pad" style="margin-top:18px">
     <div class="card-h"><i data-lucide="info"></i>这是什么</div>
-    <p style="color:var(--ink-700)">Mnemo 把你投递的学习材料自动转成<b>两种笔记</b>：<b>机械版</b>逐字稿 + 关键截图，忠实还原原内容；<b>智能版</b>由 AI 重组成结构化讲解，便于阅读理解。</p>
+    <p style="color:var(--ink-700)">Flori 把你投递的学习材料自动转成<b>两种笔记</b>：<b>机械版</b>逐字稿 + 关键截图，忠实还原原内容；<b>智能版</b>由 AI 重组成结构化讲解，便于阅读理解。</p>
     <p style="color:var(--ink-700);margin-top:9px">这些笔记按知识范围归入各个 <b>知识库</b>（Notebook），并通过其中抽取的 <b>概念</b> 互相关联，逐渐织成一张属于你自己的知识网。</p>
   </div>
 

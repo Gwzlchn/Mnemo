@@ -396,7 +396,7 @@ class TestSanitizeSmartNote:
     BODY = "\n\n".join(f"## 第{i}章\n这是正文内容,足够长以通过长度判废。" * 3 for i in range(1, 8))
 
     def test_strips_chinese_preamble_to_first_header(self):
-        raw = ("已完成重组。结构化学习笔记已生成并保存到 `/tmp/mnemo-work/x/学习笔记.md`。\n\n"
+        raw = ("已完成重组。结构化学习笔记已生成并保存到 `/tmp/flori-work/x/学习笔记.md`。\n\n"
                "我做的关键处理：\n- 按章节重组\n\n# 庄股操盘复盘\n\n" + self.BODY)
         out = self._SB._sanitize_smart_note(raw)
         assert out.startswith("# 庄股操盘复盘")
@@ -436,7 +436,7 @@ class TestSanitizeSmartNote:
 
     def test_degenerate_lost_note_raises(self):
         # BV1Msh 实况:claude 只回"已保存到 xx.md + 我做了什么"元汇报,正文整段丢失。
-        raw = ("已完成。结构化学习笔记保存在 `/tmp/mnemo-work/x/notes_structured.md`。\n\n"
+        raw = ("已完成。结构化学习笔记保存在 `/tmp/flori-work/x/notes_structured.md`。\n\n"
                "## 我做了什么\n1. 并行审阅了全部 86 张截图\n2. 按章节重组\n\n"
                "## 笔记结构一览\n- 本案速览表 + 关键时间线")
         with pytest.raises(ProcessingError):

@@ -19,7 +19,7 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then usage 0; fi
 
 TAG="${1:?需要镜像标签/sha;见 --help}"; shift || true
 OWNER="${IMAGE_OWNER:-gwzlchn}"
-IMG="ghcr.io/${OWNER}/mnemo:${TAG}"
+IMG="ghcr.io/${OWNER}/flori:${TAG}"
 read -r -a CF <<< "${COMPOSE_FILES:--f docker-compose.yml}"
 SERVICES=("$@")
 if [ "${#SERVICES[@]}" -eq 0 ]; then SERVICES=(api scheduler worker-cpu worker-ai); fi

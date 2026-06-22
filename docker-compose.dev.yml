@@ -1,5 +1,5 @@
-# 显式项目名,避免回退目录名(ai-knowledge-base)时 redis-data 等命名卷与生产同名 → 覆盖/串数据。
-name: mnemo-dev
+# 显式项目名,避免回退目录名(flori)时 redis-data 等命名卷与生产同名 → 覆盖/串数据。
+name: flori-dev
 
 services:
   redis:
@@ -20,9 +20,9 @@ services:
       - ./shared:/app/shared
       - ./api:/app/api
       - ./configs:/app/configs
-      - ${MNEMO_DATA_DIR:-./data}:/data
+      - ${FLORI_DATA_DIR:-./data}:/data
       # local_dir 订阅约定监听目录(放文件进宿主 ./inbox 即被枚举入库);与 worker 挂同一容器路径。
-      - ${MNEMO_INBOX_DIR:-./inbox}:/data/inbox
+      - ${FLORI_INBOX_DIR:-./inbox}:/data/inbox
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATA_DIR=/data
@@ -30,7 +30,7 @@ services:
       - API_TOKEN=${API_TOKEN:-}
       - API_ALLOW_NO_AUTH=${API_ALLOW_NO_AUTH:-1}   # 本机开发默认放行(空 token 时);公网暴露设 0
       # app_credentials at-rest 加密的 Fernet key。空=明文落库；设 key 即加密。
-      - MNEMO_SECRET_KEY=${MNEMO_SECRET_KEY:-}
+      - FLORI_SECRET_KEY=${FLORI_SECRET_KEY:-}
       - API_RELOAD=1   # 开发热更新(生产默认关,避免 StatReload 常驻)
     depends_on:
       - redis
@@ -45,7 +45,7 @@ services:
       - ./shared:/app/shared
       - ./scheduler:/app/scheduler
       - ./configs:/app/configs
-      - ${MNEMO_DATA_DIR:-./data}:/data
+      - ${FLORI_DATA_DIR:-./data}:/data
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATA_DIR=/data
@@ -64,9 +64,9 @@ services:
       - ./worker:/app/worker
       - ./steps:/app/steps
       - ./configs:/app/configs
-      - ${MNEMO_DATA_DIR:-./data}:/data
+      - ${FLORI_DATA_DIR:-./data}:/data
       # local_dir 订阅:worker 复制源文件,须与 api 挂同一容器路径 /data/inbox。
-      - ${MNEMO_INBOX_DIR:-./inbox}:/data/inbox
+      - ${FLORI_INBOX_DIR:-./inbox}:/data/inbox
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATA_DIR=/data
@@ -85,7 +85,7 @@ services:
       - ./worker:/app/worker
       - ./steps:/app/steps
       - ./configs:/app/configs
-      - ${MNEMO_DATA_DIR:-./data}:/data
+      - ${FLORI_DATA_DIR:-./data}:/data
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATA_DIR=/data

@@ -78,18 +78,18 @@ async def metrics(request: Request, db: Database = Depends(get_db), redis: Redis
     workers = await asyncio.to_thread(db.list_workers)
     online = sum(1 for w in workers if w.status.startswith("online"))
     lines = [
-        "# TYPE mnemo_up gauge", "mnemo_up 1",
-        "# TYPE mnemo_redis_up gauge", f"mnemo_redis_up {redis_up}",
-        "# TYPE mnemo_db_up gauge", f"mnemo_db_up {db_up}",
-        "# TYPE mnemo_disk_free_gb gauge", f"mnemo_disk_free_gb {disk_free}",
-        "# TYPE mnemo_workers_total gauge", f"mnemo_workers_total {len(workers)}",
-        "# TYPE mnemo_workers_online gauge", f"mnemo_workers_online {online}",
+        "# TYPE flori_up gauge", "flori_up 1",
+        "# TYPE flori_redis_up gauge", f"flori_redis_up {redis_up}",
+        "# TYPE flori_db_up gauge", f"flori_db_up {db_up}",
+        "# TYPE flori_disk_free_gb gauge", f"flori_disk_free_gb {disk_free}",
+        "# TYPE flori_workers_total gauge", f"flori_workers_total {len(workers)}",
+        "# TYPE flori_workers_online gauge", f"flori_workers_online {online}",
     ]
     try:
         by_status = await asyncio.to_thread(db.count_jobs_by_status)
-        lines.append("# TYPE mnemo_jobs gauge")
+        lines.append("# TYPE flori_jobs gauge")
         for st, n in sorted(by_status.items()):
-            lines.append(f'mnemo_jobs{{status="{st}"}} {n}')
+            lines.append(f'flori_jobs{{status="{st}"}} {n}')
     except Exception:
         pass
     return "\n".join(lines) + "\n"

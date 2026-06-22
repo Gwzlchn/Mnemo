@@ -22,7 +22,7 @@
 # 用法:
 #   bash tests/integration/ci_paper_e2e.sh
 # 可调环境:
-#   COMPOSE_PROJECT_NAME  compose 项目名(默认 mnemo-ci-paper;本地跑务必与生产栈隔离!)
+#   COMPOSE_PROJECT_NAME  compose 项目名(默认 flori-ci-paper;本地跑务必与生产栈隔离!)
 #   API_PORT              宿主机映射端口(默认 8000;本地若 8000 被占用可改,如 18000)
 #   JOB_TIMEOUT           job 跑到 done 的总超时秒数(默认 480)
 #   KEEP_STACK=1          结束不拆栈(排查用)
@@ -36,7 +36,7 @@ FIXTURE="$ROOT/tests/fixtures/sample.pdf"
 API_PORT="${API_PORT:-8000}"
 API="http://localhost:${API_PORT}"
 JOB_TIMEOUT="${JOB_TIMEOUT:-480}"
-PROJECT="${COMPOSE_PROJECT_NAME:-mnemo-ci-paper}"
+PROJECT="${COMPOSE_PROJECT_NAME:-flori-ci-paper}"
 # 用独立项目名 + 自定义端口,确保与本机可能在跑的生产栈完全隔离(尤其 down -v 不误删)。
 COMPOSE=(docker compose -p "$PROJECT" -f docker-compose.integration.yml)
 export DRY_RUN=1          # AI 步走 DryRunProvider,无需任何 API key

@@ -16,7 +16,7 @@ name: Mutation (manual)
 #    但**测试本身有效**——手动可证其会杀:
 #      cd mutants && MUTANT_UNDER_TEST=<mutant_id> PYTHONPATH= python3 -m pytest <相关测试>  → 测试 FAIL = 已杀。
 #    即运行器没让自动跑的测试 import 到 mutated 副本(mutants/),而手动 `python -m pytest`(cwd 进 path)能。
-#    已排除:卸载 mnemo、清空 PYTHONPATH、干净副本(无 bind-mount)——均仍 killed=0。
+#    已排除:卸载 flori、清空 PYTHONPATH、干净副本(无 bind-mount)——均仍 killed=0。
 #    根因疑似 mutmut 运行器的 import/cwd 处理与顶层包 shared/ 布局冲突。修复前:变异分数用上面手动方式
 #    抽样核验,**勿信本 job 的 killed=0**。(说明:新增的 test_ai_gateway 计费/usage 断言已手动证实能杀变异。)
 on:

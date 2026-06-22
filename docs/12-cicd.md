@@ -15,13 +15,13 @@ Merge to main     → + Build + Push Image (ghcr.io) → Watchtower 自动拉取
 ## 2. 镜像发布
 
 ```
-Registry: ghcr.io/gwzlchn/mnemo, ghcr.io/gwzlchn/mnemo-frontend
+Registry: ghcr.io/gwzlchn/flori, ghcr.io/gwzlchn/flori-frontend
 Tags:     latest, <git-short-sha>
 ```
 
 用户一键部署：
 ```bash
-git clone https://github.com/gwzlchn/mnemo
+git clone https://github.com/gwzlchn/flori
 cp .env.example .env   # 填 API key
 docker compose up -d   # 拉公开镜像，不需要本地 build
 ```
@@ -40,7 +40,7 @@ mkdir -p ~/actions-runner && cd ~/actions-runner
 curl -o actions-runner-linux-x64.tar.gz -L \
   https://github.com/actions/runner/releases/latest/download/actions-runner-linux-x64-2.321.0.tar.gz
 tar xzf ./actions-runner-linux-x64.tar.gz
-./config.sh --url https://github.com/gwzlchn/mnemo --token <TOKEN>
+./config.sh --url https://github.com/gwzlchn/flori --token <TOKEN>
 sudo ./svc.sh install && sudo ./svc.sh start
 ```
 
@@ -52,8 +52,8 @@ sudo ./svc.sh install && sudo ./svc.sh start
   - **单测 + 分支覆盖率门**:`docker compose -f docker-compose.test.yml run --rm test` —— 跑 `-m 'not fuzz'` 全部单测,带 `--cov-branch` 分支覆盖 + `--cov-fail-under=75`(低于 75% 直接红,防覆盖率倒退;当前基线 ~78%)。覆盖率配置(分支/markers)单一事实源在 `pyproject.toml`,经 compose 挂载进容器。
   - **Schemathesis 模糊/契约**:`pytest -m fuzz tests/test_openapi_fuzz.py` —— in-process 从 `/openapi.json` 自动派生用例喂每个端点,断言不 5xx(`not_a_server_error` + `response_schema_conformance`,检查集见仓库根 `schemathesis.toml`)。曾借此揪出分页 `offset` 溢出 SQLite int64 的 500 并修复。
 - `build-push`：仅 main、测试通过后，用 buildx 构建 **amd64**（所有目标机均为 x86，不构 arm64）推 ghcr.io；
-  矩阵两个镜像 `mnemo`（api/scheduler/worker 共用）与 `mnemo-frontend`。
-- `step-images.yml`：步骤执行镜像（`mnemo-step-base` / `mnemo-step-heavy` / `mnemo-step-gpu`）独立于主 CI，`workflow_dispatch` 手动触发，同样只构 amd64。
+  矩阵两个镜像 `flori`（api/scheduler/worker 共用）与 `flori-frontend`。
+- `step-images.yml`：步骤执行镜像（`flori-step-base` / `flori-step-heavy` / `flori-step-gpu`）独立于主 CI，`workflow_dispatch` 手动触发，同样只构 amd64。
 - `e2e.yml`（**集成回归门**，`workflow_dispatch` 手动触发，不挂 PR）：补审计缺口 #7 —— 主 CI 只跑单测，缺 pipeline DAG ↔ worker ↔ scheduler ↔ step 的接线回归。含两个互不依赖、可并行的 job：
 
   **① `integration-smoke` —— 接线健康探针**（用 `docker-compose.integration.yml`，`DRY_RUN=1` 起栈）：
@@ -66,7 +66,7 @@ sudo ./svc.sh install && sudo ./svc.sh start
   投一个仓库自带的微型 PDF `tests/fixtures/sample.pdf`（~2KB，PyMuPDF 生成，含可抽文本 + 标题 + 多个章节标题 + 一条 `Figure 1:` 图注），走 `POST /api/jobs/upload` 进 **paper** pipeline，轮询到 `done`，断言 `notes/smart`(200) + `review`(200, 合法 JSON) + `sections.json` 非空。**无需任何外部网络 / arXiv / B站 / API key**。这是审计缺口 #7 在 GitHub-hosted runner 上的**实质**覆盖（不止探活，真跑解析链）。
   - **真跑（REAL）**：`01_download`（upload 模式——文件已落 `input/source.pdf`，本步只抽 metadata，不联网）、`02_pdf_parse`（PyMuPDF 解析）、`03_sections`（章节树）、`04_figures`（抽图 + 图注成条）。
   - **合成（SYNTHETIC）**：`05_smart_paper`、`06_review` 经 `DRY_RUN=1` → `DryRunProvider` 返回占位产物（不调真实 AI），但落盘 / 版本化 / 接线全程真实。
-  - 脚本用独立 compose 项目名（默认 `mnemo-ci-paper`）+ 退出 trap `down -v` 拆栈，本地跑也不会误碰生产栈（本地若 8000 被占，需先停占用方或换独立项目；CI runner 干净直接用 8000）。
+  - 脚本用独立 compose 项目名（默认 `flori-ci-paper`）+ 退出 trap `down -v` 拆栈，本地跑也不会误碰生产栈（本地若 8000 被占，需先停占用方或换独立项目；CI runner 干净直接用 8000）。
 
   **仍是人工/自托管的覆盖**（本 workflow 不跑）：真实**视频** mp4 / 真连 B站·arXiv 联网下载 / **真实 AI** 笔记全链路。`01_download` 对 URL 源会真连 B站/arXiv（`DRY_RUN` 不绕过下载），真实 AI 步需真 API key，GitHub-hosted runner 无网络素材跑不通，只能在装好素材的机器上对**已部署栈**手动执行：
   ```bash
@@ -84,7 +84,7 @@ sudo ./svc.sh install && sudo ./svc.sh start
 # 生产用：拉远程镜像
 services:
   api:
-    image: ghcr.io/gwzlchn/mnemo:latest
+    image: ghcr.io/gwzlchn/flori:latest
     # ...
 ```
 
@@ -129,7 +129,7 @@ CONFIG_DIR=/data/configs        # 配置目录
 ## 8. TODO
 
 - [x] 创建 `.github/workflows/ci.yml`（test + amd64 build-push 到 ghcr.io）
-- [x] docker-compose.yml 改用 `image: ghcr.io/gwzlchn/mnemo:latest`（拉远程镜像部署）
+- [x] docker-compose.yml 改用 `image: ghcr.io/gwzlchn/flori:latest`（拉远程镜像部署）
 - [x] docker-compose.yml 接入 Watchtower 自动 CD
 - [x] 创建 `.env.example`
 - [x] 创建 `.github/workflows/e2e.yml`（手动集成回归门：`integration-smoke` 接线探针 + 单测兜底 / `paper-e2e` 真实素材 paper 链跑到 done）

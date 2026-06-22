@@ -1,4 +1,4 @@
-# Mnemo 前端开发交接（HANDOFF）
+# Flori 前端开发交接（HANDOFF）
 
 > 给接手的 Claude Code：照这份文档 + 原型 + 起步工程，直接开发真实前端。三者配套，本文件是入口。
 
@@ -7,7 +7,7 @@
 | 文件 | 是什么 | 怎么用 |
 |------|--------|--------|
 | `design/prototype.html` | 全站高保真原型（15 页 + 弹窗，可交互） | 视觉与交互的「所见即所得」基准。浏览器打开，底部黑条切换页面 |
-| `design/mnemo.css` | 设计系统：token（CSS 变量）+ 全部组件类 | 已拷进起步工程 `src/assets/mnemo.css`，全局引入；组件直接用它的类 |
+| `design/flori.css` | 设计系统：token（CSS 变量）+ 全部组件类 | 已拷进起步工程 `src/assets/flori.css`，全局引入；组件直接用它的类 |
 | `design/DESIGN-SPEC.md` | IA 心智模型、状态枚举、后端能力清单、逐页 API 对接点 | 查后端 API 与状态映射。**注意：视觉/命名以原型为准，此文档为早期版，部分偏旧** |
 | `design/handoff/frontend-starter/` | **Vue 3 起步工程**（骨架已搭好） | `npm install && npm run dev` |
 
@@ -33,8 +33,8 @@ npm run dev
 
 ## 3. 工程约定
 
-- **样式**：全局 `import './assets/mnemo.css'`（`main.ts` 已做）。组件直接用 mnemo.css 的类：`class="btn pri"` / `card pad` / `badge b-ok` / `chip on` …。**不要重写样式、不要用 Tailwind 工具类堆样式。** `tailwind.config.js` 里的 token 仅备用（需要工具类时取 `text-ink-700` / `bg-brand-600` / `rounded-md` 等）。
-- **图标**：`lucide-vue-next`，如 `<Plus :size="16" />`。尺寸跟随原型 mnemo.css 的层级（标题 18 / 卡标 15 / 正文 16 / 元信息 13 / 徽章 12）。
+- **样式**：全局 `import './assets/flori.css'`（`main.ts` 已做）。组件直接用 flori.css 的类：`class="btn pri"` / `card pad` / `badge b-ok` / `chip on` …。**不要重写样式、不要用 Tailwind 工具类堆样式。** `tailwind.config.js` 里的 token 仅备用（需要工具类时取 `text-ink-700` / `bg-brand-600` / `rounded-md` 等）。
+- **图标**：`lucide-vue-next`，如 `<Plus :size="16" />`。尺寸跟随原型 flori.css 的层级（标题 18 / 卡标 15 / 正文 16 / 元信息 13 / 徽章 12）。
 - **数据**：起步工程里是写死的示例数据；接后端处都留了 `// TODO: GET /api/...` 注释。
 
 ## 4. 页面清单（原型 → Vue → 路由 → 后端 API）
@@ -57,7 +57,7 @@ npm run dev
 
 ## 5. 组件清单
 
-**base/**（薄封装，emit mnemo.css 类）
+**base/**（薄封装，emit flori.css 类）
 - `BaseButton`（`variant: pri|default|danger|ghost`，`size?: sm`）· `BaseBadge`（`variant → b-ok/b-info/b-run/b-warn/b-bad/b-mut/b-brand`）· `StatusBadge`（Job 状态枚举 → 中文 + 色）· `BaseCard` · `Chip` · `Modal`（`v-model` 控制显隐，overlay+modal）· `EmptyState`
 
 **layout/**
@@ -96,5 +96,5 @@ npm run dev
 ## 9. 其它
 
 - 全中文 UI；单用户，无登录页 / 账户菜单（网关层 Basic Auth 兜底）。
-- 改了 `mnemo.css` 想在原型里看效果，记得 bump `prototype.html` 里的 `mnemo.css?v=N`；开发期建议 DevTools → Network 勾「Disable cache」。
+- 改了 `flori.css` 想在原型里看效果，记得 bump `prototype.html` 里的 `flori.css?v=N`；开发期建议 DevTools → Network 勾「Disable cache」。
 - Notion 风格基调：暖灰中性 + Notion 蓝点缀、小圆角、扁平阴影、激活态用中性灰。读笔记是最高频场景，阅读体验优先级最高。

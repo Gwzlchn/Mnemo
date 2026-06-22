@@ -199,13 +199,13 @@ _log = structlog.get_logger(component="db")
 
 @lru_cache(maxsize=1)
 def _fernet():
-    """凭证 at-rest 加密的 Fernet 实例（按 MNEMO_SECRET_KEY 缓存）。
+    """凭证 at-rest 加密的 Fernet 实例（按 FLORI_SECRET_KEY 缓存）。
 
-    key 取自环境变量 MNEMO_SECRET_KEY（urlsafe-base64 的 32 字节 Fernet key）。
+    key 取自环境变量 FLORI_SECRET_KEY（urlsafe-base64 的 32 字节 Fernet key）。
     未设/为空 → 返回 None（凭证退回明文存储，向后兼容）。cryptography 在此惰性
     导入，缺库或 key 非法时返回 None，使本模块在无该依赖/未配 key 时仍可正常 import
     与运行（其它 DB 用法与测试不受影响）。"""
-    key = (os.environ.get("MNEMO_SECRET_KEY") or "").strip()
+    key = (os.environ.get("FLORI_SECRET_KEY") or "").strip()
     if not key:
         return None
     try:
@@ -220,13 +220,13 @@ _PLAINTEXT_CRED_WARNED = False
 
 
 def _warn_plaintext_credentials_once() -> None:
-    """无 Fernet key 时存凭证仅警告一次，提示设 MNEMO_SECRET_KEY 以加密 at-rest。"""
+    """无 Fernet key 时存凭证仅警告一次，提示设 FLORI_SECRET_KEY 以加密 at-rest。"""
     global _PLAINTEXT_CRED_WARNED
     if not _PLAINTEXT_CRED_WARNED:
         _PLAINTEXT_CRED_WARNED = True
         _log.warning(
             "credentials_stored_plaintext",
-            hint="set MNEMO_SECRET_KEY (a Fernet key) to encrypt app_credentials at rest",
+            hint="set FLORI_SECRET_KEY (a Fernet key) to encrypt app_credentials at rest",
         )
 
 
@@ -804,7 +804,7 @@ class Database:
     def set_credential(self, key: str, value: str) -> None:
         """存/覆盖一条应用级凭证（如 B站 cookie JSON），按 key 幂等 upsert。
 
-        设了 MNEMO_SECRET_KEY 时以 Fernet token 加密落库；未设则存明文(向后兼容)
+        设了 FLORI_SECRET_KEY 时以 Fernet token 加密落库；未设则存明文(向后兼容)
         并一次性告警(建议设 key 以 at-rest 加密)。"""
         f = _fernet()
         if f is not None:

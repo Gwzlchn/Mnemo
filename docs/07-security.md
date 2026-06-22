@@ -129,7 +129,7 @@ Worker 执行前校验 job_id + step + url，不合法直接丢弃。
 | Claude OAuth | 主机 ~/.claude/ | Claude Worker |
 | 平台 cookies | 主机 /data/cookies/ | Download Worker |
 | B站 SESSDATA(扫码登录) | 主机 SQLite app_credentials(Fernet 加密) + job 本机侧载文件 | 同机 Download Worker |
-| MNEMO_SECRET_KEY(凭证 at-rest 加密) | 主机 .env（只在宿主，不入库） | API/scheduler 进程 |
+| FLORI_SECRET_KEY(凭证 at-rest 加密) | 主机 .env（只在宿主，不入库） | API/scheduler 进程 |
 
 **原则**：Claude 凭证和平台 cookies 只在主机，不传到中转/GPU。
 
@@ -149,21 +149,21 @@ Worker 执行前校验 job_id + step + url，不合法直接丢弃。
 sessdata 触发）：
 
 - 用 [`cryptography`](https://cryptography.io/) 的 **Fernet**（AES-128-CBC + HMAC，带版本/时间戳），不自造算法。
-- 钥匙来自环境变量 **`MNEMO_SECRET_KEY`**（一把 urlsafe-base64 的 32 字节 Fernet key）。
+- 钥匙来自环境变量 **`FLORI_SECRET_KEY`**（一把 urlsafe-base64 的 32 字节 Fernet key）。
   生成一把：
 
   ```bash
   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
   ```
 
-  把输出写进主机 **`.env`** 的 `MNEMO_SECRET_KEY=...`（compose 已把它透传给 `api`/`scheduler`）。
+  把输出写进主机 **`.env`** 的 `FLORI_SECRET_KEY=...`（compose 已把它透传给 `api`/`scheduler`）。
 - **钥匙只在 `.env`/宿主，绝不入库**——DB 里只有密文，单独拿到 SQLite 文件解不开。
 - **务必备份这把 key**：丢了就解不开已存的凭证。但**爆炸半径很小**——凭证可重新登录
   （扫码）再取，丢 key 顶多需要重新登录一次，不丢业务数据。
 - **向后兼容**：历史明文行读取时透明透传（Fernet 解密遇 `InvalidToken` → 原样返回），
   下次写入即自动加密；也可用 `scripts/reencrypt-credentials.sh --apply` 一次性批量重写。
   换 key 同理：旧 token 解不开则按透传处理，跑重写脚本即可在新 key 下重新加密。
-- **未设 `MNEMO_SECRET_KEY`**：凭证仍以**明文**落库（保持旧行为不阻断），并打印一次性
+- **未设 `FLORI_SECRET_KEY`**：凭证仍以**明文**落库（保持旧行为不阻断），并打印一次性
   告警提示设置该 key。`cryptography` 缺失或 key 非法时同样回退明文，不阻断启动。
 
 **残留 / 待办**：纯 MinIO 直连的多机部署不分发该凭证——此类部署的远端 Download Worker 请改用本机

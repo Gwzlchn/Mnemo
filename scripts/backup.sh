@@ -4,7 +4,7 @@
 # 设计要点:
 #   - 无需停服:通过一次性 alpine 容器以只读方式挂载命名卷,把数据拷出来。
 #   - Redis 先尽力 `redis-cli SAVE` 落盘(容器不在则告警跳过),再拷 dump.rdb / appendonly。
-#   - 数据目录既支持命名卷,也支持 bind-mount(MNEMO_DATA_DIR=绝对路径)。
+#   - 数据目录既支持命名卷,也支持 bind-mount(FLORI_DATA_DIR=绝对路径)。
 #   - 幂等可重复:每次产出独立时间戳文件,不覆盖、不改动源卷。
 #
 # 用法:
@@ -13,21 +13,21 @@
 #
 # 环境变量(均有默认值,通常不用动):
 #   BACKUP_DIR        备份输出目录(默认 ./backups,可被第一个位置参数覆盖)
-#   COMPOSE_PROJECT   compose 项目名,用于推断命名卷前缀(默认 ai-knowledge-base)
-#   MNEMO_DATA_DIR    数据目录;留空=用命名卷,填绝对路径=bind-mount 直接打包该路径
-#   MNEMO_DATA_VOLUME 数据命名卷名(默认 ${COMPOSE_PROJECT}_mnemo-data)
+#   COMPOSE_PROJECT   compose 项目名,用于推断命名卷前缀(默认 flori)
+#   FLORI_DATA_DIR    数据目录;留空=用命名卷,填绝对路径=bind-mount 直接打包该路径
+#   FLORI_DATA_VOLUME 数据命名卷名(默认 ${COMPOSE_PROJECT}_flori-data)
 #   REDIS_VOLUME      Redis 命名卷名(默认 ${COMPOSE_PROJECT}_redis-data)
-#   REDIS_CONTAINER   Redis 容器名(默认 mnemo-redis),用于触发 SAVE
+#   REDIS_CONTAINER   Redis 容器名(默认 flori-redis),用于触发 SAVE
 
 set -euo pipefail
 
 # ── 默认值 ──────────────────────────────────────────────
-COMPOSE_PROJECT="${COMPOSE_PROJECT:-ai-knowledge-base}"
+COMPOSE_PROJECT="${COMPOSE_PROJECT:-flori}"
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
-MNEMO_DATA_DIR="${MNEMO_DATA_DIR:-}"
-MNEMO_DATA_VOLUME="${MNEMO_DATA_VOLUME:-${COMPOSE_PROJECT}_mnemo-data}"
+FLORI_DATA_DIR="${FLORI_DATA_DIR:-}"
+FLORI_DATA_VOLUME="${FLORI_DATA_VOLUME:-${COMPOSE_PROJECT}_flori-data}"
 REDIS_VOLUME="${REDIS_VOLUME:-${COMPOSE_PROJECT}_redis-data}"
-REDIS_CONTAINER="${REDIS_CONTAINER:-mnemo-redis}"
+REDIS_CONTAINER="${REDIS_CONTAINER:-flori-redis}"
 ALPINE_IMAGE="${ALPINE_IMAGE:-alpine:3.20}"
 
 usage() {
@@ -51,13 +51,13 @@ mkdir -p "$BACKUP_DIR"
 BACKUP_DIR="$(cd "$BACKUP_DIR" && pwd)"
 
 TS="$(date +%Y%m%d-%H%M%S)"
-STAGE="$(mktemp -d "${TMPDIR:-/tmp}/mnemo-backup.XXXXXX")"
+STAGE="$(mktemp -d "${TMPDIR:-/tmp}/flori-backup.XXXXXX")"
 # shellcheck disable=SC2064
 trap "rm -rf '$STAGE'" EXIT
 
-OUT="$BACKUP_DIR/mnemo-backup-$TS.tar.gz"
+OUT="$BACKUP_DIR/flori-backup-$TS.tar.gz"
 
-echo "==> Mnemo 备份开始 ($TS)"
+echo "==> Flori 备份开始 ($TS)"
 echo "    输出: $OUT"
 
 # 用一次性 alpine 容器以只读挂载源、读写挂载暂存目录,把 SUBDIR 下内容拷到暂存。
@@ -81,15 +81,15 @@ copy_from_source() {
 
 # ── 1. SQLite DB(/data/db) ─────────────────────────────
 echo "==> 备份 SQLite 库 (db/)"
-if [ -n "$MNEMO_DATA_DIR" ]; then
-  echo "    数据源: bind-mount $MNEMO_DATA_DIR"
-  copy_from_source "$MNEMO_DATA_DIR" bind "db" "db"
+if [ -n "$FLORI_DATA_DIR" ]; then
+  echo "    数据源: bind-mount $FLORI_DATA_DIR"
+  copy_from_source "$FLORI_DATA_DIR" bind "db" "db"
 else
-  echo "    数据源: 命名卷 $MNEMO_DATA_VOLUME"
-  if ! docker volume inspect "$MNEMO_DATA_VOLUME" >/dev/null 2>&1; then
-    echo "    警告: 命名卷 $MNEMO_DATA_VOLUME 不存在,跳过 DB(用 MNEMO_DATA_VOLUME= 指定正确卷名)" >&2
+  echo "    数据源: 命名卷 $FLORI_DATA_VOLUME"
+  if ! docker volume inspect "$FLORI_DATA_VOLUME" >/dev/null 2>&1; then
+    echo "    警告: 命名卷 $FLORI_DATA_VOLUME 不存在,跳过 DB(用 FLORI_DATA_VOLUME= 指定正确卷名)" >&2
   else
-    copy_from_source "$MNEMO_DATA_VOLUME" volume "db" "db"
+    copy_from_source "$FLORI_DATA_VOLUME" volume "db" "db"
   fi
 fi
 
@@ -113,9 +113,9 @@ fi
 
 # ── 3. 元信息 + 打包 ───────────────────────────────────
 cat > "$STAGE/MANIFEST.txt" <<EOF
-mnemo backup
+flori backup
 created_at=$TS
-data_source=${MNEMO_DATA_DIR:-volume:$MNEMO_DATA_VOLUME}
+data_source=${FLORI_DATA_DIR:-volume:$FLORI_DATA_VOLUME}
 redis_volume=$REDIS_VOLUME
 members: db/ redis/
 EOF

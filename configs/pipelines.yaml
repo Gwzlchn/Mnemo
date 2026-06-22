@@ -9,7 +9,7 @@
 
 # 全局默认：所有 job 自动继承、可逐字段覆盖。
 default:
-  image: mnemo/step-base
+  image: flori/step-base
   timeout: 600
   retry: 0
 
@@ -63,7 +63,7 @@ video:
     "02_whisper":
       label: "语音转写"
       run: steps.video.step_02_whisper
-      image: mnemo/step-gpu
+      image: flori/step-gpu
       pool: cpu
       needs: ["01_download"]
       timeout: 1800
@@ -77,7 +77,7 @@ video:
     "03_scene":
       label: "场景检测"
       run: steps.video.step_03_scene
-      image: mnemo/step-heavy
+      image: flori/step-heavy
       pool: scene
       needs: ["01_download"]
       retry: 2
@@ -87,7 +87,7 @@ video:
       label: "关键帧"
       extends: .cpu-step
       run: steps.video.step_04_frames
-      image: mnemo/step-heavy
+      image: flori/step-heavy
       needs: ["03_scene"]
       timeout: 1800   # cv2 逐场景 SSIM 代表帧:长视频(数百场景)耗时,远超 .cpu-step 的 120s
       outputs: ["intermediate/candidates.json", "assets/*"]
@@ -96,7 +96,7 @@ video:
       label: "画面去重"
       extends: .cpu-step
       run: steps.video.step_05_dedup
-      image: mnemo/step-heavy
+      image: flori/step-heavy
       needs: ["04_frames"]
       timeout: 900    # 数百帧 pHash + 灰区 SSIM 复核
       outputs: ["intermediate/dedup.json"]
@@ -105,7 +105,7 @@ video:
       label: "画面文字(OCR)"
       extends: .cpu-step
       run: steps.video.step_06_ocr
-      image: mnemo/step-heavy
+      image: flori/step-heavy
       needs: ["05_dedup"]
       timeout: $OCR_TIMEOUT
       retry: $OCR_RETRIES
@@ -201,7 +201,7 @@ paper:
       label: "PDF 解析"
       extends: .cpu-step
       run: steps.paper.step_02_pdf_parse
-      image: mnemo/step-heavy
+      image: flori/step-heavy
       needs: ["01_download"]
       outputs: ["intermediate/parsed.json"]
 
@@ -217,7 +217,7 @@ paper:
       label: "图表提取"
       extends: .cpu-step
       run: steps.paper.step_04_figures
-      image: mnemo/step-heavy
+      image: flori/step-heavy
       needs: ["02_pdf_parse"]
       outputs: ["intermediate/figures.json", "assets/*"]
 
@@ -323,7 +323,7 @@ audio:
     "02_whisper":
       label: "语音转写"
       run: steps.video.step_02_whisper
-      image: mnemo/step-gpu
+      image: flori/step-gpu
       pool: gpu
       needs: ["01_download"]
       timeout: 1800

@@ -201,7 +201,7 @@ class Worker:
             if raw is None:
                 raise ValueError(f"step '{step}' not found in pipeline '{pipeline}'")
             module = raw["module"]
-            image = raw.get("image", "mnemo/step-base")
+            image = raw.get("image", "flori/step-base")
             use_gpu = ("gpu" in self.tags) and (
                 pool == "gpu" or "gpu" in set(raw.get("tags", []))
             )

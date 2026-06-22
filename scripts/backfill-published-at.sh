@@ -10,7 +10,7 @@
 # 用法:
 #   scripts/backfill-published-at.sh           # dry-run:列出将回填的 job(只读)
 #   scripts/backfill-published-at.sh --apply   # 真正写入 DB
-# 环境:API_CONTAINER(默认 mnemo-api)、DATA_DIR(默认 /data,容器内路径)。
+# 环境:API_CONTAINER(默认 flori-api)、DATA_DIR(默认 /data,容器内路径)。
 set -euo pipefail
 
 usage() { sed -n '2,16p' "$0"; exit "${1:-0}"; }
@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
     *) echo "未知参数: $1" >&2; usage 1 ;;
   esac
 done
-API_CONTAINER="${API_CONTAINER:-mnemo-api}"
+API_CONTAINER="${API_CONTAINER:-flori-api}"
 DATA_DIR="${DATA_DIR:-/data}"
 
 docker exec -e BF_APPLY="$APPLY" -e BF_DATA_DIR="$DATA_DIR" -i \

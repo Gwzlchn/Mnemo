@@ -136,7 +136,7 @@ async function removeWorker(w: Worker) {
 }
 
 // ── 接入新 Worker：mintToken + docker 命令 ──
-const IMAGE = 'ghcr.io/gwzlchn/mnemo:latest'
+const IMAGE = 'ghcr.io/gwzlchn/flori:latest'
 const WORKER_TYPES = ['cpu', 'gpu', 'ai', 'download']
 const TABS = [
   { id: 'gateway', label: '分布式' },
@@ -152,7 +152,7 @@ const minting = ref(false)
 
 const gatewayUrl = computed(() => {
   const o = typeof window !== 'undefined' ? window.location?.origin : ''
-  return o && o.startsWith('http') ? o : 'https://<MNEMO_HOST>'
+  return o && o.startsWith('http') ? o : 'https://<FLORI_HOST>'
 })
 const needsAiKey = computed(() => newType.value === 'ai' || newType.value === 'gpu')
 const tagsArg = computed(() => {
@@ -170,8 +170,8 @@ const command = computed(() => {
   -e GATEWAY_URL=${gatewayUrl.value} \\
   -e WORKER_REGISTRATION_TOKEN=${tokenLine.value} \\
   -e WORKER_ID_FILE=/data/.worker_id \\
-  -e DATA_DIR=/data -e CONFIG_DIR=/app/configs -e WORK_DIR=/tmp/mnemo-work \\
-${aiLine}  -v mnemo-data:/data \\
+  -e DATA_DIR=/data -e CONFIG_DIR=/app/configs -e WORK_DIR=/tmp/flori-work \\
+${aiLine}  -v flori-data:/data \\
   ${IMAGE} \\
   ${runCmd.value}`
   }
@@ -182,7 +182,7 @@ ${aiLine}  -v mnemo-data:/data \\
     image: ${IMAGE}
     restart: unless-stopped
     command: ${runCmd.value}
-    volumes: [ "\${MNEMO_DATA_DIR:-mnemo-data}:/data" ]
+    volumes: [ "\${FLORI_DATA_DIR:-flori-data}:/data" ]
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATA_DIR=/data
@@ -192,9 +192,9 @@ ${aiLines}    depends_on: [ redis ]`
   const aiLine = needsAiKey.value ? '  -e ANTHROPIC_API_KEY=<KEY> \\\n' : ''
   return `docker run -d --restart unless-stopped${gpuFlag.value} \\
   -e REDIS_URL=redis://<HOST>:6379/0 \\
-  -e MINIO_URL=<HOST>:9000 -e MINIO_BUCKET=mnemo \\
-  -e DATA_DIR=/data -e CONFIG_DIR=/app/configs -e WORK_DIR=/tmp/mnemo-work \\
-${aiLine}  -v mnemo-data:/data \\
+  -e MINIO_URL=<HOST>:9000 -e MINIO_BUCKET=flori \\
+  -e DATA_DIR=/data -e CONFIG_DIR=/app/configs -e WORK_DIR=/tmp/flori-work \\
+${aiLine}  -v flori-data:/data \\
   ${IMAGE} \\
   ${runCmd.value}`
 })

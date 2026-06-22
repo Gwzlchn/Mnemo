@@ -1,4 +1,4 @@
-# Mnemo
+# Flori
 
 > 自托管的 AI 学习知识库 —— 把视频、论文、文章、播客自动炼成带截图与时间戳的结构化笔记，沉淀为按领域分桶、可检索的个人知识体系。
 >
@@ -6,9 +6,11 @@
 
 ![Python](https://img.shields.io/badge/python-3.11+-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Docker](https://img.shields.io/badge/deploy-docker-2496ED)
 
-[![CI](https://github.com/Gwzlchn/Mnemo/actions/workflows/ci.yml/badge.svg)](https://github.com/Gwzlchn/Mnemo/actions/workflows/ci.yml) [![backend coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FGwzlchn%2FMnemo%2Fbadges%2Fcoverage-backend.json)](https://github.com/Gwzlchn/Mnemo/actions/workflows/ci.yml) [![frontend coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FGwzlchn%2FMnemo%2Fbadges%2Fcoverage-frontend.json)](https://github.com/Gwzlchn/Mnemo/actions/workflows/ci.yml)
+[![CI](https://github.com/Gwzlchn/Flori/actions/workflows/ci.yml/badge.svg)](https://github.com/Gwzlchn/Flori/actions/workflows/ci.yml) [![backend coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FGwzlchn%2FFlori%2Fbadges%2Fcoverage-backend.json)](https://github.com/Gwzlchn/Flori/actions/workflows/ci.yml) [![frontend coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FGwzlchn%2FFlori%2Fbadges%2Fcoverage-frontend.json)](https://github.com/Gwzlchn/Flori/actions/workflows/ci.yml)
 
-投递一个视频/播客链接、一篇 PDF 或一个网页，Mnemo 自动下载、转写、截图、OCR，再用 AI 整理成结构化笔记，并把"讲清楚的概念"沉淀进按领域分桶的概念图，攒成你自己的知识库。取名 Mnemo（记忆女神 Mnemosyne）——目标不止于"存下来"，而是"学得会、记得住"（学习/复习回路见 [ROADMAP](ROADMAP.md) M4）。
+投递一个视频/播客链接、一篇 PDF 或一个网页，Flori 自动下载、转写、截图、OCR，再用 AI 整理成结构化笔记，并把"讲清楚的概念"沉淀进按领域分桶的概念图，攒成你自己的知识库。
+
+> **名字来源**：Flori 取自拉丁语 *florilegium*（"采花集"）——中世纪指从群书中采撷精华、汇编成册的选集，正是"把素材摘录、沉淀为知识"的隐喻。目标不止于"存下来"，而是"学得会、记得住"（学习/复习回路见 [ROADMAP](ROADMAP.md) M4）。
 
 ## 能做什么
 
@@ -42,7 +44,7 @@
 ## 快速开始（单机）
 
 ```bash
-git clone https://github.com/Gwzlchn/Mnemo.git && cd Mnemo
+git clone https://github.com/Gwzlchn/Flori.git && cd Flori
 cp .env.example .env            # 填 API_TOKEN(强随机串) + 一个 AI Provider 的 key
 
 # 方式 A：拉取 CI 预构建镜像（推荐；私有镜像先 docker login ghcr.io）
@@ -74,8 +76,8 @@ Python 3.11 · FastAPI · Redis · SQLite · Vue 3 · Docker
 
 ## License
 
-[MIT](LICENSE) — 覆盖 Mnemo 自身源码。
+[MIT](LICENSE) — 覆盖 Flori 自身源码。
 
 ### Third-party licenses / 运行期依赖许可
 
-Mnemo 自身代码以 MIT 发布，但运行期会调用若干强 copyleft 依赖：**PyMuPDF / `fitz`（AGPL-3.0，用于 `steps/paper/step_02_pdf_parse.py`）**、**yutto / pysrt / bilibili-api（GPL-3.0）** 等。这些组件作为独立库 / 子进程依赖被调用，Mnemo 以自托管方式运行、**不作为打包二进制对外分发**，因此 MIT 仅覆盖 Mnemo 自有源码；如需再分发包含这些依赖的产物，请遵守其各自的 AGPL/GPL 条款。逐工具许可与传染边界分析见 [docs/13-dependencies.md](docs/13-dependencies.md)。
+Flori 自身代码以 MIT 发布，但运行期会调用若干强 copyleft 依赖：**PyMuPDF / `fitz`（AGPL-3.0，用于 `steps/paper/step_02_pdf_parse.py`）**、**yutto / pysrt / bilibili-api（GPL-3.0）** 等。这些组件作为独立库 / 子进程依赖被调用，Flori 以自托管方式运行、**不作为打包二进制对外分发**，因此 MIT 仅覆盖 Flori 自有源码；如需再分发包含这些依赖的产物，请遵守其各自的 AGPL/GPL 条款。逐工具许可与传染边界分析见 [docs/13-dependencies.md](docs/13-dependencies.md)。

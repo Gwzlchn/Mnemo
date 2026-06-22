@@ -1,5 +1,5 @@
 [project]
-name = "mnemo"
+name = "flori"
 version = "0.1.0"
 description = "AI-assisted personal learning knowledge base"
 requires-python = ">=3.11"

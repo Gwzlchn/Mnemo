@@ -24,15 +24,15 @@
 #   -h, --help
 #
 # 环境变量:
-#   COMPOSE_PROJECT     compose 项目名(默认 ai-knowledge-base),推断卷名用
-#   MNEMO_DATA_DIR      数据目录;留空=命名卷,填绝对路径=bind-mount 直接操作
-#   MNEMO_DATA_VOLUME   数据命名卷(默认 ${COMPOSE_PROJECT}_mnemo-data)
+#   COMPOSE_PROJECT     compose 项目名(默认 flori),推断卷名用
+#   FLORI_DATA_DIR      数据目录;留空=命名卷,填绝对路径=bind-mount 直接操作
+#   FLORI_DATA_VOLUME   数据命名卷(默认 ${COMPOSE_PROJECT}_flori-data)
 
 set -euo pipefail
 
-COMPOSE_PROJECT="${COMPOSE_PROJECT:-ai-knowledge-base}"
-MNEMO_DATA_DIR="${MNEMO_DATA_DIR:-}"
-MNEMO_DATA_VOLUME="${MNEMO_DATA_VOLUME:-${COMPOSE_PROJECT}_mnemo-data}"
+COMPOSE_PROJECT="${COMPOSE_PROJECT:-flori}"
+FLORI_DATA_DIR="${FLORI_DATA_DIR:-}"
+FLORI_DATA_VOLUME="${FLORI_DATA_VOLUME:-${COMPOSE_PROJECT}_flori-data}"
 ALPINE_IMAGE="${ALPINE_IMAGE:-alpine:3.20}"
 
 OLDER_THAN=30
@@ -69,14 +69,14 @@ esac
 command -v docker >/dev/null 2>&1 || { echo "错误: 找不到 docker" >&2; exit 1; }
 
 # ── 解析数据源挂载 ─────────────────────────────────────
-if [ -n "$MNEMO_DATA_DIR" ]; then
-  MOUNT_SRC="$MNEMO_DATA_DIR"
-  echo "==> 数据源: bind-mount $MNEMO_DATA_DIR"
+if [ -n "$FLORI_DATA_DIR" ]; then
+  MOUNT_SRC="$FLORI_DATA_DIR"
+  echo "==> 数据源: bind-mount $FLORI_DATA_DIR"
 else
-  MOUNT_SRC="$MNEMO_DATA_VOLUME"
-  echo "==> 数据源: 命名卷 $MNEMO_DATA_VOLUME"
-  docker volume inspect "$MNEMO_DATA_VOLUME" >/dev/null 2>&1 \
-    || { echo "错误: 命名卷 $MNEMO_DATA_VOLUME 不存在(用 MNEMO_DATA_VOLUME= 指定)" >&2; exit 1; }
+  MOUNT_SRC="$FLORI_DATA_VOLUME"
+  echo "==> 数据源: 命名卷 $FLORI_DATA_VOLUME"
+  docker volume inspect "$FLORI_DATA_VOLUME" >/dev/null 2>&1 \
+    || { echo "错误: 命名卷 $FLORI_DATA_VOLUME 不存在(用 FLORI_DATA_VOLUME= 指定)" >&2; exit 1; }
 fi
 
 MODE="DRY-RUN(不删,加 --apply 才删)"

@@ -547,7 +547,7 @@ class TestNewFormatConsumption:
     ):
         # needs 声明的依赖边归一化为 depends_on，调度器据此推进 DAG。
         raw_new = {
-            "default": {"image": "mnemo/step-base"},
+            "default": {"image": "flori/step-base"},
             "nf": {
                 "jobs": {
                     "A": {"run": "m.a", "pool": "cpu"},
@@ -577,7 +577,7 @@ class TestNewFormatConsumption:
     ):
         # rules: exists+when=skip → 有 srt 则跳过 whisper；exists+when=on → 有 srt 才跑 punctuate。
         raw_new = {
-            "default": {"image": "mnemo/step-base"},
+            "default": {"image": "flori/step-base"},
             "nf": {
                 "jobs": {
                     "download": {"run": "m.dl", "pool": "io"},
@@ -616,7 +616,7 @@ class TestNewFormatConsumption:
     ):
         # 无 srt：whisper(when=skip,未命中→默认运行) 运行，punctuate(when=on,未命中→默认运行?) 见下。
         raw_new = {
-            "default": {"image": "mnemo/step-base"},
+            "default": {"image": "flori/step-base"},
             "nf": {
                 "jobs": {
                     "download": {"run": "m.dl", "pool": "io"},

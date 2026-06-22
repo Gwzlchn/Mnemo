@@ -10,7 +10,7 @@
 ## 跑
 
 ```bash
-# 本机 LAN 前端（默认连 ai-knowledge-base_default 网络上的 mnemo-fe-lan）
+# 本机 LAN 前端（默认连 flori_default 网络上的 flori-fe-lan）
 docker compose -f docker-compose.e2e.yml run --rm e2e
 
 # 指向外网部署（带 Basic Auth）

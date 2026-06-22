@@ -94,6 +94,6 @@ describe('SettingsView', () => {
     const t = w.text()
     expect(t).toContain('运维')
     expect(t).toContain('系统与 Worker')
-    expect(t).toContain('关于 Mnemo')
+    expect(t).toContain('关于 Flori')
   })
 })

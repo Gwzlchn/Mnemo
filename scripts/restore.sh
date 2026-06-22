@@ -12,20 +12,20 @@
 #
 # 用法:
 #   scripts/restore.sh <备份文件.tar.gz> [--yes] [--no-stop]
-#   scripts/restore.sh ./backups/mnemo-backup-20260620-101500.tar.gz --yes
+#   scripts/restore.sh ./backups/flori-backup-20260620-101500.tar.gz --yes
 #
 # 选项:
 #   --yes        跳过交互确认(无人值守时用)
 #   --no-stop    不尝试 docker compose stop(默认会尝试停 api/scheduler/worker)
 #
 # 环境变量(同 backup.sh):
-#   COMPOSE_PROJECT / MNEMO_DATA_DIR / MNEMO_DATA_VOLUME / REDIS_VOLUME
+#   COMPOSE_PROJECT / FLORI_DATA_DIR / FLORI_DATA_VOLUME / REDIS_VOLUME
 
 set -euo pipefail
 
-COMPOSE_PROJECT="${COMPOSE_PROJECT:-ai-knowledge-base}"
-MNEMO_DATA_DIR="${MNEMO_DATA_DIR:-}"
-MNEMO_DATA_VOLUME="${MNEMO_DATA_VOLUME:-${COMPOSE_PROJECT}_mnemo-data}"
+COMPOSE_PROJECT="${COMPOSE_PROJECT:-flori}"
+FLORI_DATA_DIR="${FLORI_DATA_DIR:-}"
+FLORI_DATA_VOLUME="${FLORI_DATA_VOLUME:-${COMPOSE_PROJECT}_flori-data}"
 REDIS_VOLUME="${REDIS_VOLUME:-${COMPOSE_PROJECT}_redis-data}"
 ALPINE_IMAGE="${ALPINE_IMAGE:-alpine:3.20}"
 
@@ -75,10 +75,10 @@ echo "    含 redis/ : $([ "$HAS_REDIS" -eq 1 ] && echo 是 || echo 否)"
 # ── 2. 确认(默认安全) ─────────────────────────────────
 echo ""
 echo "!! 即将覆盖以下目标(原数据将丢失):"
-if [ -n "$MNEMO_DATA_DIR" ]; then
-  echo "   - 数据: bind-mount $MNEMO_DATA_DIR/db"
+if [ -n "$FLORI_DATA_DIR" ]; then
+  echo "   - 数据: bind-mount $FLORI_DATA_DIR/db"
 else
-  echo "   - 数据: 命名卷 $MNEMO_DATA_VOLUME (db/)"
+  echo "   - 数据: 命名卷 $FLORI_DATA_VOLUME (db/)"
 fi
 echo "   - Redis: 命名卷 $REDIS_VOLUME"
 echo ""
@@ -105,7 +105,7 @@ if [ "$DO_STOP" -eq 1 ]; then
 fi
 
 # ── 4. 解包到暂存 ──────────────────────────────────────
-STAGE="$(mktemp -d "${TMPDIR:-/tmp}/mnemo-restore.XXXXXX")"
+STAGE="$(mktemp -d "${TMPDIR:-/tmp}/flori-restore.XXXXXX")"
 # shellcheck disable=SC2064
 trap "rm -rf '$STAGE'" EXIT
 tar -xzf "$ARCHIVE" -C "$STAGE"
@@ -132,10 +132,10 @@ restore_into() {
 # ── 5. 恢复 DB ─────────────────────────────────────────
 if [ "$HAS_DB" -eq 1 ]; then
   echo "==> 恢复 SQLite 库 (db/)"
-  if [ -n "$MNEMO_DATA_DIR" ]; then
-    restore_into db "$MNEMO_DATA_DIR" bind "db"
+  if [ -n "$FLORI_DATA_DIR" ]; then
+    restore_into db "$FLORI_DATA_DIR" bind "db"
   else
-    restore_into db "$MNEMO_DATA_VOLUME" volume "db"
+    restore_into db "$FLORI_DATA_VOLUME" volume "db"
   fi
 fi
 

@@ -88,17 +88,17 @@ GET /api/health
 免鉴权（同 `/health`），返回 Prometheus 文本曝露格式，供外部 Prometheus 抓取（个人工具不内置时序库）：
 
 ```
-mnemo_up 1
-mnemo_redis_up 1
-mnemo_db_up 1
-mnemo_disk_free_gb 600.0
-mnemo_workers_total 4
-mnemo_workers_online 4
-mnemo_jobs{status="done"} 60
-mnemo_jobs{status="processing"} 2
+flori_up 1
+flori_redis_up 1
+flori_db_up 1
+flori_disk_free_gb 600.0
+flori_workers_total 4
+flori_workers_online 4
+flori_jobs{status="done"} 60
+flori_jobs{status="processing"} 2
 ```
 
-只暴露计数/容量，无敏感信息。阈值告警在 Prometheus/Alertmanager 侧配置（如 `mnemo_disk_free_gb < 10`）。
+只暴露计数/容量，无敏感信息。阈值告警在 Prometheus/Alertmanager 侧配置（如 `flori_disk_free_gb < 10`）。
 
 ## 4. 卡住检测（两层）
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-// 状态枚举 → 中文 + mnemo.css 徽章色(.badge .b-*)。全站统一,勿自造。
+// 状态枚举 → 中文 + flori.css 徽章色(.badge .b-*)。全站统一,勿自造。
 // kind 可选(仅用于语义标注);status 在各域间基本唯一,扁平表即可解析。
 const props = defineProps<{ status: string; kind?: 'job' | 'step' | 'worker' | 'concept' }>()
 

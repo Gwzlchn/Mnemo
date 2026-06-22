@@ -1,6 +1,6 @@
 # 第三方许可与致谢
 
-本文件列出随 Mnemo 镜像与构建产物分发的第三方组件,以及各自的许可。覆盖范围:pip 运行时依赖(含 `steps`/`api`/`gpu`/`worker` 可选组)、镜像内 apt 安装的系统二进制、前端运行时依赖。版本以 `pyproject.toml`、`docker/*.Dockerfile`、`frontend/package.json` 声明的区间为准。
+本文件列出随 Flori 镜像与构建产物分发的第三方组件,以及各自的许可。覆盖范围:pip 运行时依赖(含 `steps`/`api`/`gpu`/`worker` 可选组)、镜像内 apt 安装的系统二进制、前端运行时依赖。版本以 `pyproject.toml`、`docker/*.Dockerfile`、`frontend/package.json` 声明的区间为准。
 
 ## 重点提示:Copyleft 组件
 

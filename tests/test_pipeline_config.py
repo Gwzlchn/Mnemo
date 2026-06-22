@@ -62,12 +62,12 @@ class TestExtends:
 
     def test_default_applies_under_extends(self):
         raw = {
-            "default": {"image": "mnemo/step-base", "timeout": 600, "retry": 0},
+            "default": {"image": "flori/step-base", "timeout": 600, "retry": 0},
             ".cpu-step": {"pool": "cpu", "timeout": 120},
             "p": {"jobs": {"A": {"extends": ".cpu-step", "run": "m.a"}}},
         }
         s = normalize_pipelines(raw)["p"]["steps"][0]
-        assert s["image"] == "mnemo/step-base"  # default
+        assert s["image"] == "flori/step-base"  # default
         assert s["timeout_sec"] == 120          # 模板覆盖 default
         assert s["retries"] == 0                # default
 
@@ -124,13 +124,13 @@ class TestVariables:
         # integration 退化为一份 variables 覆盖（仅换 provider），结构复用 prod；
         # 不再各写一份 06_ocr → 两侧 timeout/retry 必然一致，漂移不可能再发生。
         raw = {
-            "default": {"image": "mnemo/step-base", "timeout": 600, "retry": 0},
+            "default": {"image": "flori/step-base", "timeout": 600, "retry": 0},
             ".cpu-step": {"pool": "cpu", "timeout": 120, "retry": 1},
             "video": {
                 "variables": {"OCR_TIMEOUT": 1800, "OCR_RETRIES": 1, "PROV": "anthropic"},
                 "jobs": {
                     "06_ocr": {"extends": ".cpu-step", "run": "steps.video.step_06_ocr",
-                               "image": "mnemo/step-heavy", "needs": ["05_dedup"],
+                               "image": "flori/step-heavy", "needs": ["05_dedup"],
                                "timeout": "$OCR_TIMEOUT", "retry": "$OCR_RETRIES"},
                     "10_smart": {"run": "m.s", "pool": "ai",
                                  "ai": {"primary": {"provider": "$PROV"}}},
@@ -228,20 +228,20 @@ class TestNeeds:
 
 class TestImagePreserved:
     def test_explicit_image_kept(self):
-        raw = {"p": {"jobs": {"A": {"run": "m.a", "pool": "gpu", "image": "mnemo/step-gpu"}}}}
+        raw = {"p": {"jobs": {"A": {"run": "m.a", "pool": "gpu", "image": "flori/step-gpu"}}}}
         s = normalize_pipelines(raw)["p"]["steps"][0]
-        assert s["image"] == "mnemo/step-gpu"
+        assert s["image"] == "flori/step-gpu"
 
     def test_default_image_from_default_block(self):
-        raw = {"default": {"image": "mnemo/step-base"},
+        raw = {"default": {"image": "flori/step-base"},
                "p": {"jobs": {"A": {"run": "m.a", "pool": "cpu"}}}}
         s = normalize_pipelines(raw)["p"]["steps"][0]
-        assert s["image"] == "mnemo/step-base"
+        assert s["image"] == "flori/step-base"
 
     def test_image_fallback_when_absent(self):
         raw = {"p": {"jobs": {"A": {"run": "m.a", "pool": "cpu"}}}}
         s = normalize_pipelines(raw)["p"]["steps"][0]
-        assert s["image"] == "mnemo/step-base"
+        assert s["image"] == "flori/step-base"
 
     def test_real_pipelines_every_step_has_image(self, configs_dir):
         p = load_pipelines(configs_dir / "pipelines.yaml")

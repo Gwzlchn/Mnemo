@@ -50,17 +50,17 @@ class TestMetrics:
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("text/plain")
         body = resp.text
-        assert "mnemo_up 1" in body
-        assert "mnemo_redis_up 1" in body
-        assert "mnemo_db_up 1" in body
-        assert "mnemo_workers_online" in body
-        assert "mnemo_disk_free_gb" in body
+        assert "flori_up 1" in body
+        assert "flori_redis_up 1" in body
+        assert "flori_db_up 1" in body
+        assert "flori_workers_online" in body
+        assert "flori_disk_free_gb" in body
 
     @pytest.mark.asyncio
     async def test_metrics_redis_down_reflected(self, client, mock_redis):
         mock_redis.ping = AsyncMock(side_effect=Exception("down"))
         body = (await client.get("/api/metrics")).text
-        assert "mnemo_redis_up 0" in body
+        assert "flori_redis_up 0" in body
 
 
 class TestStatus:

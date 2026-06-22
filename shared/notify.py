@@ -23,7 +23,7 @@ def notify(event: str, message: str, **fields) -> None:
     if not url:
         return
     detail = " ".join(f"{k}={v}" for k, v in fields.items())
-    text = f"[Mnemo] {event}: {message}" + (f" ({detail})" if detail else "")
+    text = f"[Flori] {event}: {message}" + (f" ({detail})" if detail else "")
     # 同时给 text(Slack)与 content(Discord)字段,通用 webhook 也能取到其一。
     payload = json.dumps({"text": text, "content": text}).encode("utf-8")
     try:

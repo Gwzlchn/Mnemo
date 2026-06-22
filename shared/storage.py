@@ -444,8 +444,8 @@ def create_storage(jobs_dir: Path) -> StorageBackend:
             endpoint=endpoint,
             access_key=os.environ.get("MINIO_ACCESS_KEY", ""),
             secret_key=os.environ.get("MINIO_SECRET_KEY", ""),
-            bucket=os.environ.get("MINIO_BUCKET", "mnemo"),
+            bucket=os.environ.get("MINIO_BUCKET", "flori"),
             secure=os.environ.get("MINIO_SECURE", "0") == "1",
-            tmp_root=Path(os.environ.get("WORK_DIR", "/tmp/mnemo-work")),
+            tmp_root=Path(os.environ.get("WORK_DIR", "/tmp/flori-work")),
         )
     return LocalStorage(jobs_dir)

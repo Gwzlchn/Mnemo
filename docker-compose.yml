@@ -1,8 +1,8 @@
-# Mnemo 生产部署：运行 ghcr 上由 CI 构建的镜像，Watchtower 跟随 CI 自动更新（CD）。
+# Flori 生产部署：运行 ghcr 上由 CI 构建的镜像，Watchtower 跟随 CI 自动更新（CD）。
 # 主机相关项（数据目录、Dozzle 绑定地址、远程 agent 等）放 .env，见 .env.example。
 # 默认仅起后端；单机全栈再带前端：`docker compose --profile allinone up -d`。
 # 拆分部署时前端单独在公网入口机运行（边缘反代由各自部署维护）。
-# 容器统一命名 mnemo-*（单实例部署；要并行多实例请另起具名服务，见 .local 覆盖里的 worker 范式）。
+# 容器统一命名 flori-*（单实例部署；要并行多实例请另起具名服务，见 .local 覆盖里的 worker 范式）。
 # 日志轮转:json-file 默认无上限,长跑会撑爆宿主磁盘。统一锚点限单文件 10m × 3 份。
 x-logging: &default-logging
   driver: json-file
@@ -19,11 +19,11 @@ x-common-env: &common-env
   MINIO_URL: ${MINIO_URL:-}
   MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-}
   MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-}
-  MINIO_BUCKET: ${MINIO_BUCKET:-mnemo}
+  MINIO_BUCKET: ${MINIO_BUCKET:-flori}
 
 services:
   redis:
-    container_name: mnemo-redis
+    container_name: flori-redis
     image: redis:7-alpine
     restart: unless-stopped
     command: redis-server --appendonly yes
@@ -32,8 +32,8 @@ services:
       - redis-data:/data
 
   api:
-    container_name: mnemo-api
-    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/mnemo:${IMAGE_TAG:-latest}
+    container_name: flori-api
+    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/flori:${IMAGE_TAG:-latest}
     restart: unless-stopped
     command: python -m api.main
     ports:
@@ -41,21 +41,21 @@ services:
       # 需局域网直连设 API_BIND_IP=<局域网IP> 并务必设 API_TOKEN。
       - "${API_BIND_IP:-127.0.0.1}:${API_PORT:-8000}:8000"
     volumes:
-      - ${MNEMO_DATA_DIR:-mnemo-data}:/data
-      # local_dir 订阅来源约定监听目录:把文件放进 ${MNEMO_INBOX_DIR}(默认宿主 ./inbox)
+      - ${FLORI_DATA_DIR:-flori-data}:/data
+      # local_dir 订阅来源约定监听目录:把文件放进 ${FLORI_INBOX_DIR}(默认宿主 ./inbox)
       # 即被 source_type=local_dir、source_id=/data/inbox 的订阅枚举入库。
       # api 跑 enumerate_source→scan_dir(枚举,只读即可);与 worker-cpu 挂同一容器内路径。
-      - ${MNEMO_INBOX_DIR:-./inbox}:/data/inbox:ro
+      - ${FLORI_INBOX_DIR:-./inbox}:/data/inbox:ro
     environment:
       <<: *common-env
-      WORK_DIR: ${WORK_DIR:-/tmp/mnemo-work}
+      WORK_DIR: ${WORK_DIR:-/tmp/flori-work}
       API_TOKEN: ${API_TOKEN:-}
       # 可信内网默认放行(空 API_TOKEN);公网/局域网直连暴露务必设 API_TOKEN 并把此项置 0。
       # 未设 API_TOKEN 且此项非 1 时后端 fail-closed(503),不再静默裸奔(见 docs/07-security)。
       API_ALLOW_NO_AUTH: ${API_ALLOW_NO_AUTH:-1}
       # app_credentials(B站 SESSDATA 等) at-rest 加密的 Fernet key。
       # 空=凭证以明文落库；设一把 Fernet key 即加密(见 docs/07-security §密钥管理)。
-      MNEMO_SECRET_KEY: ${MNEMO_SECRET_KEY:-}
+      FLORI_SECRET_KEY: ${FLORI_SECRET_KEY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
     logging: *default-logging
     healthcheck:
@@ -73,19 +73,19 @@ services:
       - redis
 
   scheduler:
-    container_name: mnemo-scheduler
-    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/mnemo:${IMAGE_TAG:-latest}
+    container_name: flori-scheduler
+    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/flori:${IMAGE_TAG:-latest}
     restart: unless-stopped
     command: python -m scheduler.main
     logging: *default-logging
     volumes:
-      - ${MNEMO_DATA_DIR:-mnemo-data}:/data
+      - ${FLORI_DATA_DIR:-flori-data}:/data
     environment:
       <<: *common-env
-      WORK_DIR: ${WORK_DIR:-/tmp/mnemo-work}
+      WORK_DIR: ${WORK_DIR:-/tmp/flori-work}
       # 与 api 共用镜像/DB,故同样传入(凭证由 api 端读写,scheduler 一般用不到,无害)。
       # 空=凭证以明文落库；设一把 Fernet key 即加密(见 docs/07-security §密钥管理)。
-      MNEMO_SECRET_KEY: ${MNEMO_SECRET_KEY:-}
+      FLORI_SECRET_KEY: ${FLORI_SECRET_KEY:-}
       # 设了就把卡死等关键事件 POST 到 webhook(Slack/Discord/通用);空=只记日志。
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
     security_opt:
@@ -96,23 +96,23 @@ services:
       - redis
 
   worker-cpu:
-    container_name: mnemo-worker-cpu
-    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/mnemo:${IMAGE_TAG:-latest}
+    container_name: flori-worker-cpu
+    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/flori:${IMAGE_TAG:-latest}
     restart: unless-stopped
     command: python -m worker.main --type cpu
     logging: *default-logging
     # 默认 subprocess 执行器,不挂 docker.sock(避免宿主 root 等价暴露);
     # 切 docker 执行器请叠加 docker-compose.executor.yml。
     volumes:
-      - ${MNEMO_DATA_DIR:-mnemo-data}:/data
-      - ${HOST_WORK_DIR:-mnemo-work}:/tmp/mnemo-work
+      - ${FLORI_DATA_DIR:-flori-data}:/data
+      - ${HOST_WORK_DIR:-flori-work}:/tmp/flori-work
       # local_dir 订阅:worker 跑 step_01_download._copy_local_file 复制源文件,
       # 须与 api 挂同一容器内路径 /data/inbox(file:// url 在 worker 容器内按此解析)。只读即可。
-      - ${MNEMO_INBOX_DIR:-./inbox}:/data/inbox:ro
+      - ${FLORI_INBOX_DIR:-./inbox}:/data/inbox:ro
     environment:
       <<: *common-env
       STEP_RUNTIME: ${STEP_RUNTIME:-subprocess}
-      WORK_DIR: /tmp/mnemo-work
+      WORK_DIR: /tmp/flori-work
       HOST_WORK_DIR: ${HOST_WORK_DIR:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
     security_opt:
@@ -123,20 +123,20 @@ services:
       - redis
 
   worker-ai:
-    container_name: mnemo-worker-ai
-    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/mnemo:${IMAGE_TAG:-latest}
+    container_name: flori-worker-ai
+    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/flori:${IMAGE_TAG:-latest}
     restart: unless-stopped
     command: python -m worker.main --type ai
     logging: *default-logging
     # 默认 subprocess 执行器,不挂 docker.sock(避免宿主 root 等价暴露);
     # 切 docker 执行器请叠加 docker-compose.executor.yml。
     volumes:
-      - ${MNEMO_DATA_DIR:-mnemo-data}:/data
-      - ${HOST_WORK_DIR:-mnemo-work}:/tmp/mnemo-work
+      - ${FLORI_DATA_DIR:-flori-data}:/data
+      - ${HOST_WORK_DIR:-flori-work}:/tmp/flori-work
     environment:
       <<: *common-env
       STEP_RUNTIME: ${STEP_RUNTIME:-subprocess}
-      WORK_DIR: /tmp/mnemo-work
+      WORK_DIR: /tmp/flori-work
       HOST_WORK_DIR: ${HOST_WORK_DIR:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
@@ -152,7 +152,7 @@ services:
   # 日志面板（可选）。默认仅绑本机；局域网访问设 DOZZLE_BIND_IP=<局域网IP>。
   # 接入远程 dozzle agent（host:port，如经 SSH 隧道）设 DOZZLE_REMOTE_AGENT。
   dozzle:
-    container_name: mnemo-dozzle
+    container_name: flori-dozzle
     image: amir20/dozzle
     restart: unless-stopped
     environment:
@@ -164,8 +164,8 @@ services:
 
   # 单机全栈时启用：`docker compose --profile allinone up -d`。
   frontend:
-    container_name: mnemo-frontend
-    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/mnemo-frontend:${IMAGE_TAG:-latest}
+    container_name: flori-frontend
+    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/flori-frontend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     profiles: ["allinone"]
     ports:
@@ -181,7 +181,7 @@ services:
   # 启用:docker compose --profile distributed up -d,并在 .env 设 MINIO_URL=minio:9000 + 账号。
   # 数据落 MINIO_DATA_DIR(默认命名卷;放独立磁盘填绝对路径让对象存本机)。
   minio:
-    container_name: mnemo-minio
+    container_name: flori-minio
     image: minio/minio
     restart: unless-stopped
     profiles: ["distributed"]
@@ -189,14 +189,14 @@ services:
     environment:
       # 无弱默认:启用 distributed profile 必须在 .env 设 MINIO_SECRET_KEY(>=8 位),
       # 否则 MinIO 因空密码拒绝启动(fail-fast),不会以可猜的默认口令裸跑。
-      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-mnemo}
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-flori}
       - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-}
     volumes:
       - ${MINIO_DATA_DIR:-minio-data}:/data
 
   # CD：每 120s 查 ghcr，只更新带 watchtower.enable 标签的容器，自动 pull+重建+清理旧镜像。
   watchtower:
-    container_name: mnemo-watchtower
+    container_name: flori-watchtower
     image: containrrr/watchtower
     restart: unless-stopped
     volumes:
@@ -205,7 +205,7 @@ services:
 
 volumes:
   redis-data:
-  mnemo-data:
+  flori-data:
   minio-data:
   # docker 执行器的步容器共享工作区;HOST_WORK_DIR 留空时退化为命名卷。
-  mnemo-work:
+  flori-work:

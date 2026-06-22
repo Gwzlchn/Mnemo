@@ -112,7 +112,7 @@ def fake_docker(monkeypatch):
 
 
 def _ctx(
-    work_dir: Path, *, use_gpu=False, image="mnemo/step-base", timeout_sec=10, pool="cpu"
+    work_dir: Path, *, use_gpu=False, image="flori/step-base", timeout_sec=10, pool="cpu"
 ) -> StepContext:
     return StepContext(
         job_id="j1",
@@ -162,7 +162,7 @@ class TestDockerSuccess:
         host_dir = str(tmp_path / "j1")
         assert kw["volumes"] == {host_dir: {"bind": "/job", "mode": "rw"}}
         assert kw["labels"] == {
-            "mnemo.job": "j1", "mnemo.step": "A", "mnemo.worker": "w1",
+            "flori.job": "j1", "flori.step": "A", "flori.worker": "w1",
         }
         assert kw["environment"] == {"STEP_EXEC_ID": "e1", "PYTHONPATH": "/app"}
         # cpu 池离线
@@ -413,7 +413,7 @@ class TestReapOrphans:
         runner.reap_orphans()
 
         assert c1.removed and c2.removed
-        assert runner._client.containers.list_filters == {"label": "mnemo.worker=w1"}
+        assert runner._client.containers.list_filters == {"label": "flori.worker=w1"}
 
 
 # ── 宿主路径前缀替换 ──
@@ -423,31 +423,31 @@ class TestHostPath:
     def test_with_host_root(self, fake_docker, tmp_path):
         fake_docker["client"] = _FakeClient(None)
         runner = DockerStepRunner("w1", host_work_root="/host/work")
-        assert runner._host_path(Path("/tmp/mnemo-work/j_abc")) == "/host/work/j_abc"
+        assert runner._host_path(Path("/tmp/flori-work/j_abc")) == "/host/work/j_abc"
 
     def test_without_host_root_fails_fast(self, fake_docker, tmp_path):
         # HOST_WORK_DIR 缺失 → fail-fast,不静默挂错误目录(L9)
         fake_docker["client"] = _FakeClient(None)
         runner = DockerStepRunner("w1", host_work_root=None)
         with pytest.raises(ValueError):
-            runner._host_path(Path("/tmp/mnemo-work/j_abc"))
+            runner._host_path(Path("/tmp/flori-work/j_abc"))
 
 
 class TestResolveImage:
     def test_logical_name_to_registry(self, fake_docker):
         fake_docker["client"] = _FakeClient(None)
         runner = DockerStepRunner("w1", registry="ghcr.io/gwzlchn")
-        assert runner._resolve_image("mnemo/step-base") == "ghcr.io/gwzlchn/mnemo-step-base"
-        assert runner._resolve_image("mnemo/step-heavy") == "ghcr.io/gwzlchn/mnemo-step-heavy"
+        assert runner._resolve_image("flori/step-base") == "ghcr.io/gwzlchn/flori-step-base"
+        assert runner._resolve_image("flori/step-heavy") == "ghcr.io/gwzlchn/flori-step-heavy"
 
     def test_no_registry_keeps_logical_name(self, fake_docker):
-        # 未设 registry:本机自建 mnemo/step-base 直接命中,不改写。
+        # 未设 registry:本机自建 flori/step-base 直接命中,不改写。
         fake_docker["client"] = _FakeClient(None)
         runner = DockerStepRunner("w1", registry=None)
-        assert runner._resolve_image("mnemo/step-base") == "mnemo/step-base"
+        assert runner._resolve_image("flori/step-base") == "flori/step-base"
 
     def test_full_image_name_untouched(self, fake_docker):
-        # 已是带 host 的全名(非 mnemo/ 前缀)原样使用。
+        # 已是带 host 的全名(非 flori/ 前缀)原样使用。
         fake_docker["client"] = _FakeClient(None)
         runner = DockerStepRunner("w1", registry="ghcr.io/gwzlchn")
         assert runner._resolve_image("docker.io/library/python:3.11") == "docker.io/library/python:3.11"

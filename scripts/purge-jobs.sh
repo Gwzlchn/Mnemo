@@ -11,7 +11,7 @@
 #   --status S1,S2     目标状态(默认 pending,processing;可加 failed)
 #   --older-than DAYS  只删早于 N 天创建的(默认 0 = 该状态全部)
 #   --apply            真正删除(不加=dry-run 只列)
-# 环境:API_CONTAINER(默认 mnemo-api)。删除经容器内 localhost:8000,需 API 放行(默认本机放行)。
+# 环境:API_CONTAINER(默认 flori-api)。删除经容器内 localhost:8000,需 API 放行(默认本机放行)。
 set -euo pipefail
 
 usage() { sed -n '2,18p' "$0"; exit "${1:-0}"; }
@@ -25,7 +25,7 @@ while [ $# -gt 0 ]; do
     *) echo "未知参数: $1" >&2; usage 1 ;;
   esac
 done
-API_CONTAINER="${API_CONTAINER:-mnemo-api}"
+API_CONTAINER="${API_CONTAINER:-flori-api}"
 
 docker exec -e PURGE_STATUS="$STATUS" -e PURGE_DAYS="$DAYS" -e PURGE_APPLY="$APPLY" -i \
   "$API_CONTAINER" python3 - <<'PY'

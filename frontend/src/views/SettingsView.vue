@@ -97,7 +97,7 @@ onMounted(loadAuth)
       <div class="row" style="cursor:pointer" @click="$router.push('/about')">
         <span class="type-pill" style="background:var(--brand-50);color:var(--brand-600)"><BookOpen :size="17" /></span>
         <div class="body">
-          <div class="title">关于 Mnemo</div>
+          <div class="title">关于 Flori</div>
           <div class="meta"><span>这个项目在做什么、如何使用</span></div>
         </div>
         <ChevronRight :size="16" class="dim" />

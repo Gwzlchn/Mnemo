@@ -9,7 +9,7 @@
 # 配置(环境变量,或写入 gitignored .env):
 #   EDGE_HOST          边缘机 ssh 主机(IP 或域名)
 #   EDGE_SSH_KEY       ssh 私钥路径(相对仓库根或绝对)
-#   EDGE_COMPOSE_DIR   边缘 compose 目录(默认 /opt/mnemo-edge)
+#   EDGE_COMPOSE_DIR   边缘 compose 目录(默认 /opt/flori-edge)
 #   IMAGE_OWNER        镜像仓库前缀(默认 ghcr.io/gwzlchn)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -26,7 +26,7 @@ _load() {
 
 EDGE_HOST="$(_load EDGE_HOST)"
 EDGE_SSH_KEY="$(_load EDGE_SSH_KEY)"
-EDGE_COMPOSE_DIR="$(_load EDGE_COMPOSE_DIR)"; EDGE_COMPOSE_DIR="${EDGE_COMPOSE_DIR:-/opt/mnemo-edge}"
+EDGE_COMPOSE_DIR="$(_load EDGE_COMPOSE_DIR)"; EDGE_COMPOSE_DIR="${EDGE_COMPOSE_DIR:-/opt/flori-edge}"
 IMAGE_OWNER="$(_load IMAGE_OWNER)"; IMAGE_OWNER="${IMAGE_OWNER:-ghcr.io/gwzlchn}"
 TARGET="${1:-}"
 
@@ -50,8 +50,8 @@ recreate() {  # $1=compose 文件  $2..=服务名
   $SSH "cd $EDGE_COMPOSE_DIR && docker compose -f $file up -d --force-recreate $*"
 }
 
-do_frontend() { push_image "$IMAGE_OWNER/mnemo-frontend:latest"; recreate docker-compose.yml frontend; }
-do_worker()   { push_image "$IMAGE_OWNER/mnemo:latest";          recreate worker.yml worker-cpu worker-ai; }
+do_frontend() { push_image "$IMAGE_OWNER/flori-frontend:latest"; recreate docker-compose.yml frontend; }
+do_worker()   { push_image "$IMAGE_OWNER/flori:latest";          recreate worker.yml worker-cpu worker-ai; }
 
 case "$TARGET" in
   frontend) do_frontend ;;

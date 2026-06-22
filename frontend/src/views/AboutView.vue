@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 关于 Mnemo（原型 #about）：纯静态，三层心智模型 + 真实能力概览。无数据请求。
+// 关于 Flori（原型 #about）：纯静态，三层心智模型 + 真实能力概览。无数据请求。
 import {
   BookOpen, Info, GitBranch, RefreshCw, FileText, Check, Send,
   Search, Layers, Cpu, Play, Newspaper, Headphones, ChevronRight,
@@ -9,14 +9,14 @@ import {
 
 <template>
   <section class="page">
-    <div class="h1"><BookOpen :size="18" />关于 Mnemo</div>
+    <div class="h1"><BookOpen :size="18" />关于 Flori</div>
     <div class="lead">自托管的 AI 学习知识库 —— 把视频 / 论文 / 文章 / 播客自动炼成带截图与时间戳的结构化笔记，沉淀为按领域分桶、可检索、互相关联的个人知识体系。</div>
 
     <!-- 这是什么 -->
     <div class="card pad" style="margin-top:18px">
       <div class="card-h"><Info :size="15" />这是什么</div>
       <p style="color:var(--ink-700)">
-        投递一条链接 / 一篇 PDF / 一个网页，Mnemo 在后台自动下载、转写、截图、OCR，再用 AI 整理成笔记。每篇内容产出<b>两份笔记</b>：
+        投递一条链接 / 一篇 PDF / 一个网页，Flori 在后台自动下载、转写、截图、OCR，再用 AI 整理成笔记。每篇内容产出<b>两份笔记</b>：
       </p>
       <div class="grid2" style="margin-top:11px">
         <div class="metric">

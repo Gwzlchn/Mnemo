@@ -13,11 +13,11 @@ jobs:
     strategy:
       matrix:
         include:
-          - image: mnemo-step-base
+          - image: flori-step-base
             dockerfile: docker/step-base.Dockerfile
-          - image: mnemo-step-heavy
+          - image: flori-step-heavy
             dockerfile: docker/step-heavy.Dockerfile
-          - image: mnemo-step-gpu
+          - image: flori-step-gpu
             dockerfile: docker/step-gpu.Dockerfile
     steps:
       - uses: actions/checkout@v6

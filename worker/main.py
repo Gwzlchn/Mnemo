@@ -64,7 +64,7 @@ async def main() -> None:
 
     if gateway_url:
         # 产物经网关中转:token_getter 绑定 transport,用 register 拿到的 per-worker token。
-        work_dir = Path(os.environ.get("WORK_DIR", "/tmp/mnemo-work"))
+        work_dir = Path(os.environ.get("WORK_DIR", "/tmp/flori-work"))
         storage = GatewayStorage(
             gateway_url,
             token_getter=lambda: transport.worker_token,

@@ -743,8 +743,8 @@ class TestAppCredentials:
         assert db.get_credential("never-existed") is None
 
     def test_plaintext_when_no_key(self, db, monkeypatch):
-        # 无 MNEMO_SECRET_KEY 时保持明文行为：底层存的就是原文。
-        monkeypatch.delenv("MNEMO_SECRET_KEY", raising=False)
+        # 无 FLORI_SECRET_KEY 时保持明文行为：底层存的就是原文。
+        monkeypatch.delenv("FLORI_SECRET_KEY", raising=False)
         import shared.db as dbmod
         dbmod._fernet.cache_clear()
         db.set_credential("k_plain", "sessdata-plain")
@@ -756,7 +756,7 @@ class TestAppCredentials:
 
 
 class TestAppCredentialsEncryption:
-    """at-rest 加密：设了 MNEMO_SECRET_KEY → Fernet 加密落库 + round-trip；
+    """at-rest 加密：设了 FLORI_SECRET_KEY → Fernet 加密落库 + round-trip；
     历史明文行透传；无 key 退回明文。容器当前未装 cryptography,故整类 importorskip。"""
 
     @pytest.fixture
@@ -764,7 +764,7 @@ class TestAppCredentialsEncryption:
         crypto = pytest.importorskip("cryptography")  # 缺库则跳过整个用例
         from cryptography.fernet import Fernet
         key = Fernet.generate_key().decode()
-        monkeypatch.setenv("MNEMO_SECRET_KEY", key)
+        monkeypatch.setenv("FLORI_SECRET_KEY", key)
         import shared.db as dbmod
         dbmod._fernet.cache_clear()           # 清掉按旧 env 缓存的实例
         yield key
@@ -809,7 +809,7 @@ class TestAppCredentialsEncryption:
     def test_get_with_no_key_returns_raw(self, db, fernet_key, monkeypatch):
         # 先用 key 加密存,再清掉 key:无 fernet 时返回原始(密文)串而非崩。
         db.set_credential("k", "value-x")
-        monkeypatch.delenv("MNEMO_SECRET_KEY", raising=False)
+        monkeypatch.delenv("FLORI_SECRET_KEY", raising=False)
         import shared.db as dbmod
         dbmod._fernet.cache_clear()
         raw = db._conn.execute(

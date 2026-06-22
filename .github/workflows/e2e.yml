@@ -141,12 +141,12 @@ jobs:
       - name: Dump stack logs on failure
         if: failure()
         run: |
-          docker compose -p mnemo-ci-paper -f docker-compose.integration.yml \
+          docker compose -p flori-ci-paper -f docker-compose.integration.yml \
             logs --tail 200 api scheduler worker-cpu worker-ai || true
 
       - name: Tear down (safety net)
         # 脚本自带 trap 拆栈;此步是兜底(若脚本在 trap 前被强杀)。KEEP_STACK 未设即正常拆。
         if: always()
         run: |
-          docker compose -p mnemo-ci-paper -f docker-compose.integration.yml \
+          docker compose -p flori-ci-paper -f docker-compose.integration.yml \
             down -v --remove-orphans || true

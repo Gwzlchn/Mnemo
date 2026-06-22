@@ -252,7 +252,7 @@ describe('WorkersView', () => {
     await flushPromises()
     const t = w.text()
     expect(t).toContain('接入新 Worker')
-    expect(t).toContain('mnemo:latest')
+    expect(t).toContain('flori:latest')
     expect(t).toContain('GATEWAY_URL')
     expect(t).toContain('生成接入 token')
   })

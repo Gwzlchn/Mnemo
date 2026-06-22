@@ -43,7 +43,7 @@ class StepContext:
     exec_id: str
     step_cfg: dict
     module: str
-    image: str = "mnemo/step-base"
+    image: str = "flori/step-base"
     timeout_sec: int = 600
     pool: str = ""
     use_gpu: bool = False
@@ -166,7 +166,7 @@ class DockerStepRunner:
         self._worker_id = worker_id
         # DooD：bind-mount 必须用宿主路径，非 worker 容器内路径。None 时退化为原路径。
         self._host_work_root = host_work_root
-        # 镜像仓库前缀:把 pipelines 里的逻辑名 mnemo/step-X 解析成实仓名。
+        # 镜像仓库前缀:把 pipelines 里的逻辑名 flori/step-X 解析成实仓名。
         self._registry = (registry or "").rstrip("/")
 
     def _host_path(self, work_dir: Path) -> str:
@@ -179,9 +179,9 @@ class DockerStepRunner:
         return str(Path(self._host_work_root) / work_dir.name)
 
     def _resolve_image(self, image: str) -> str:
-        # 逻辑名 mnemo/step-X → {registry}/mnemo-step-X(ghcr 扁平命名);
+        # 逻辑名 flori/step-X → {registry}/flori-step-X(ghcr 扁平命名);
         # 未设 registry 或已是带 host 的全名则原样用(本机自建镜像直接命中)。
-        if self._registry and image.startswith("mnemo/"):
+        if self._registry and image.startswith("flori/"):
             return f"{self._registry}/{image.replace('/', '-')}"
         return image
 
@@ -232,9 +232,9 @@ class DockerStepRunner:
             device_requests = [DeviceRequest(count=-1, capabilities=[["gpu"]])]
 
         labels = {
-            "mnemo.job": ctx.job_id,
-            "mnemo.step": step,
-            "mnemo.worker": self._worker_id,
+            "flori.job": ctx.job_id,
+            "flori.step": step,
+            "flori.worker": self._worker_id,
         }
 
         def _create_start():
@@ -338,7 +338,7 @@ class DockerStepRunner:
     def reap_orphans(self) -> None:
         """清理本 worker 上一进程残留的步骤容器(按 label 过滤)。"""
         for c in self._client.containers.list(
-            all=True, filters={"label": f"mnemo.worker={self._worker_id}"},
+            all=True, filters={"label": f"flori.worker={self._worker_id}"},
         ):
             try:
                 c.remove(force=True)
@@ -408,6 +408,6 @@ def create_step_runner(worker_id: str) -> StepRunner:
         return DockerStepRunner(
             worker_id,
             host_work_root=os.environ.get("HOST_WORK_DIR"),
-            registry=os.environ.get("MNEMO_STEP_REGISTRY"),
+            registry=os.environ.get("FLORI_STEP_REGISTRY"),
         )
     return SubprocessStepRunner()

@@ -354,7 +354,7 @@ def make_gateway(redis, db, tmp_path, *, registration_token="mnw-tok"):
     """构造 GatewayTransport,并注入 mock httpx client(不建真实连接)。"""
     id_file = tmp_path / ".worker_id"
     gw = GatewayTransport(
-        "https://mnemo.example",
+        "https://flori.example",
         registration_token=registration_token,
         id_file=str(id_file),
         inner=RedisTransport(redis, db),
@@ -370,7 +370,7 @@ def make_pure_gateway(tmp_path, *, registration_token="mnw-tok"):
     """纯网关模式:inner=None(无 redis/db),只出站 HTTPS。"""
     id_file = tmp_path / ".worker_id"
     gw = GatewayTransport(
-        "https://mnemo.example",
+        "https://flori.example",
         registration_token=registration_token,
         id_file=str(id_file),
         inner=None,
@@ -1037,9 +1037,9 @@ class TestCreateTransport:
     ):
         from worker.transport import create_transport
 
-        monkeypatch.setenv("GATEWAY_URL", "https://mnemo.example")
+        monkeypatch.setenv("GATEWAY_URL", "https://flori.example")
         monkeypatch.setenv("WORKER_REGISTRATION_TOKEN", "tok-1")
-        monkeypatch.setenv("WORKER_ID_FILE", "/tmp/.mnemo_worker_id_test")
+        monkeypatch.setenv("WORKER_ID_FILE", "/tmp/.flori_worker_id_test")
 
         t = create_transport(redis, db)
 
@@ -1051,9 +1051,9 @@ class TestCreateTransport:
     def test_gateway_url_with_none_redis_has_no_inner(self, monkeypatch):
         from worker.transport import create_transport
 
-        monkeypatch.setenv("GATEWAY_URL", "https://mnemo.example")
+        monkeypatch.setenv("GATEWAY_URL", "https://flori.example")
         monkeypatch.delenv("WORKER_REGISTRATION_TOKEN", raising=False)
-        monkeypatch.setenv("WORKER_ID_FILE", "/tmp/.mnemo_worker_id_test")
+        monkeypatch.setenv("WORKER_ID_FILE", "/tmp/.flori_worker_id_test")
 
         # 纯网关零隧道:redis/db 均 None → inner=None
         t = create_transport(None, None)

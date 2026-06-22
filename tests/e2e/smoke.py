@@ -20,7 +20,7 @@ import urllib.request
 
 from playwright.sync_api import sync_playwright
 
-BASE = os.environ.get("BASE", "http://mnemo-fe-lan").rstrip("/")
+BASE = os.environ.get("BASE", "http://flori-fe-lan").rstrip("/")
 OUT = os.environ.get("OUT", "/work/output")
 BASIC_USER = os.environ.get("E2E_BASIC_USER", "")
 BASIC_PASS = os.environ.get("E2E_BASIC_PASS", "")

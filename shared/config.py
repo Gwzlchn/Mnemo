@@ -157,7 +157,7 @@ def _normalize_job(name: str, job: dict) -> dict:
 
     step["name"] = name
     step.setdefault("depends_on", [])
-    step.setdefault("image", "mnemo/step-base")
+    step.setdefault("image", "flori/step-base")
 
     # retry 可为 int 或 {max, when}；归一化为旧的 retries 整数（worker/scheduler 只读次数）。
     retry = step.get("retries")
@@ -186,7 +186,7 @@ def normalize_pipeline(raw_pipeline: dict, *, default: dict | None = None,
         steps = []
         for s in raw_pipeline["steps"]:
             step = dict(s)
-            step.setdefault("image", "mnemo/step-base")
+            step.setdefault("image", "flori/step-base")
             step.setdefault("depends_on", [])
             steps.append(step)
         return {"steps": steps}
