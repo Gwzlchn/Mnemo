@@ -18,18 +18,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from shared.config import AppConfig
 from shared.db import Database
-from api.deps import get_config, get_db, verify_token
+from api.deps import get_config, get_db, validate_path_segment, verify_token
 from api.schemas import DomainCreateRequest, GlossaryTermResponse
 
 router = APIRouter(prefix="/api/domains", tags=["domains"], dependencies=[Depends(verify_token)])
 
 # 知识库展示元数据持久化在 prompts/profiles/{domain}.yaml(领域无独立表,profile 即其元数据)。
 _META_KEYS = ("display_name", "icon", "color", "description", "role")
-
-
-def _validate(domain: str) -> None:
-    if not domain or ".." in domain or "/" in domain or "\x00" in domain:
-        raise HTTPException(400, "invalid domain")
 
 
 def _profile_meta(config: AppConfig) -> dict[str, dict]:
@@ -88,7 +83,9 @@ async def create_domain(
 ):
     """新建知识库:把展示元数据写进 profiles/{domain}.yaml(领域随即出现在总览,即使暂无内容)。"""
     domain = (req.domain or "").strip()
-    _validate(domain)
+    if not domain:
+        raise HTTPException(400, "invalid domain")
+    validate_path_segment(domain, "domain")
     if domain == "general":
         raise HTTPException(400, "general 是默认领域，无需新建")
     pdir = config.prompts_dir / "profiles"
@@ -115,7 +112,7 @@ async def domain_workspace(
     config: AppConfig = Depends(get_config),
 ):
     """领域工作台：情景层(集合+最近内容) + 语义层(术语+主题)。"""
-    _validate(domain)
+    validate_path_segment(domain, "domain")
     overview = await _overview_map(db, config)
     if domain not in overview:
         raise HTTPException(404, "domain not found")
@@ -148,7 +145,7 @@ async def topic_concepts(
     db: Database = Depends(get_db),
 ):
     """域内被标为主题的概念列表（is_topic=1），按出现数降序；空则 []。"""
-    _validate(domain)
+    validate_path_segment(domain, "domain")
     return await asyncio.to_thread(db.list_topic_concepts, domain)
 
 
@@ -159,7 +156,7 @@ async def concept_timeline(
     db: Database = Depends(get_db),
 ):
     """概念时间线：各概念 occurrences 经 job 创建时间分桶计数(day/week/month)。空领域返回空序列。"""
-    _validate(domain)
+    validate_path_segment(domain, "domain")
     return await asyncio.to_thread(db.concept_timeline, domain, granularity)
 
 
@@ -169,7 +166,7 @@ async def term_detail(
     db: Database = Depends(get_db),
 ):
     """术语详情：定义 + 关联 + 类型化出现处。形态与 /api/glossary/{d}/{t} 完全一致(共用 from_row)。"""
-    _validate(domain)
+    validate_path_segment(domain, "domain")
     t = await asyncio.to_thread(db.get_glossary_term, domain, term)
     if not t:
         raise HTTPException(404, "term not found")
@@ -183,7 +180,7 @@ async def topic_page(
     db: Database = Depends(get_db),
 ):
     """主题页：域内带该标签(style_tags)的内容(跨集合/跨来源聚合)。"""
-    _validate(domain)
+    validate_path_segment(domain, "domain")
     _, jobs = await asyncio.to_thread(db.list_jobs, None, None, 500, 0, domain)
     matched = []
     for j in jobs:

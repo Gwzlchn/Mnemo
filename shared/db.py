@@ -262,9 +262,11 @@ class Database:
         # api/scheduler/worker 三进程各开连接写同一文件,撞 SQLITE_BUSY 时等待而非立刻报错。
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.row_factory = sqlite3.Row
-        # RLock(可重入):写方法持锁 execute+commit;读方法亦持锁,序列化对【单一共享连接】的 Python 层
-        # 访问,避免读游标迭代与另一线程 commit 交错见到半提交态。WAL+busy_timeout 已缓解跨连接竞争,
-        # 此锁负责同连接的线程安全。可重入以便将来读方法内部调用其他读方法不自死锁。
+        # RLock(可重入):写方法持锁 execute+commit,序列化对【单一共享连接】的写访问。
+        # 读方法多数直接走单一共享连接(check_same_thread=False),依赖 C 层(GIL + SQLite
+        # 单条语句)的原子性而【不额外持锁】;少数"多条读+组装"的复合读(如 get_job/list_jobs)
+        # 持锁,序列化读游标迭代与另一线程 commit,避免见到半提交态。WAL+busy_timeout 负责
+        # 跨连接竞争。可重入以便持锁方法内部再调其它持锁读不自死锁。
         self._lock = threading.RLock()
 
     def init_schema(self) -> None:
@@ -484,19 +486,11 @@ class Database:
                 )
             self._conn.commit()
 
-    def delete_job_cascade(self, job_id: str, collection_id: str | None = None) -> None:
-        """原子删 job：jobs 行 + FTS 索引 + 集合计数 -1 + 摘除 glossary.occurrences 里的 job_id。
-        全部在单事务内,避免两次 commit 之间崩溃留孤儿 FTS 行 / 计数错位。
-        job_steps 经 FK ON DELETE CASCADE 连带删除。"""
-        with self._lock:
-            self._conn.execute("DELETE FROM notes_fts5 WHERE job_id=?", (job_id,))
-            self._conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
-            if collection_id:
-                self._conn.execute(
-                    "UPDATE collections SET job_count = MAX(0, job_count - 1) WHERE id=?",
-                    (collection_id,),
-                )
-            # glossary.occurrences=[{job_id,...}]，摘掉指向已删 job 的出现(保留概念与定义,§1.10-7)。
+    def _strip_occurrences_for_jobs(self, job_ids: list[str]) -> None:
+        """从 glossary.occurrences 摘除指向这些 job 的出现(保留概念与定义,§1.10-7)。
+        调用方须【已持锁且在同一事务内】;本方法只 execute,不 commit。"""
+        for job_id in job_ids:
+            # glossary.occurrences=[{job_id,...}]，摘掉指向已删 job 的出现。
             rows = self._conn.execute(
                 "SELECT domain, term, occurrences FROM glossary WHERE occurrences LIKE ?",
                 (f'%"{job_id}"%',),
@@ -512,6 +506,20 @@ class Database:
                         "UPDATE glossary SET occurrences=? WHERE domain=? AND term=?",
                         (json.dumps(kept, ensure_ascii=False), r["domain"], r["term"]),
                     )
+
+    def delete_job_cascade(self, job_id: str, collection_id: str | None = None) -> None:
+        """原子删 job：jobs 行 + FTS 索引 + 集合计数 -1 + 摘除 glossary.occurrences 里的 job_id。
+        全部在单事务内,避免两次 commit 之间崩溃留孤儿 FTS 行 / 计数错位。
+        job_steps 经 FK ON DELETE CASCADE 连带删除。"""
+        with self._lock:
+            self._conn.execute("DELETE FROM notes_fts5 WHERE job_id=?", (job_id,))
+            self._conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+            if collection_id:
+                self._conn.execute(
+                    "UPDATE collections SET job_count = MAX(0, job_count - 1) WHERE id=?",
+                    (collection_id,),
+                )
+            self._strip_occurrences_for_jobs([job_id])
             self._conn.commit()
 
     # ── Step ──
@@ -1016,10 +1024,16 @@ class Database:
 
     def delete_collection(self, collection_id: str, purge: bool = False) -> None:
         """删集合两模式。默认解绑:名下 job 的 collection_id 置 NULL(保留 job)。
-        purge=True:连名下 job 一起删(jobs 行 + FTS 行;注:产物/MinIO 清理走既有 job 删除路径)。
+        purge=True:连名下 job 一起删(jobs 行 + FTS 行 + 摘除各 job 的 glossary.occurrences;
+        注:产物/MinIO 清理走既有 job 删除路径)。
         两种都清该集合 ingested_items(便于重订阅重新入库)。FTS 索引行同步处理,避免悬空行。"""
         with self._lock:
             if purge:
+                # 先摘除名下 job 的 glossary 出现记录,避免删 job 后留悬空 job_id(与 delete_job_cascade 一致)。
+                job_rows = self._conn.execute(
+                    "SELECT id FROM jobs WHERE collection_id=?", (collection_id,)
+                ).fetchall()
+                self._strip_occurrences_for_jobs([r["id"] for r in job_rows])
                 self._conn.execute(
                     "DELETE FROM notes_fts5 WHERE collection_id=?", (collection_id,)
                 )

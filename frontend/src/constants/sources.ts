@@ -52,6 +52,16 @@ const GROUP_BADGE: Record<string, { text: string; icon: Icon; cls: string }> = {
   local: { text: 'local', icon: Folder, cls: 'b-mut' },
 }
 
+// job.source(后端 detect_source 返回值)→ 人类标签。JobList / JobDetail 共用,
+// 注意这是「内容检测来源」枚举,与上面订阅的 source_type 是两套取值。
+export const JOB_SOURCE_LABELS: Record<string, string> = {
+  bilibili: 'Bilibili', youtube: 'YouTube', arxiv: 'arXiv',
+  http_article: '公众号', podcast: '播客', upload: '本地', other: '其它',
+}
+export function jobSourceLabel(s: string | null | undefined): string {
+  return s ? (JOB_SOURCE_LABELS[s] || s) : '—'
+}
+
 // 给订阅集合取来源标签(优先后端 source_label,回退按 source_type 派生)。
 export function sourceLabelOf(sub: { source_type: string; source_label?: string } | null | undefined): string {
   if (!sub) return ''

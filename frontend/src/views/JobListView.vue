@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, inject } from 'vue'
 import { useRouter } from 'vue-router'
 import { useJobStore } from '../stores/jobs'
 import { useDomainStore } from '../stores/domains'
 import StatusBadge from '../components/common/StatusBadge.vue'
 import { fmtDateTime } from '../utils/datetime'
+import { contentTypeIcon, contentTypePill } from '../utils/contentType'
+import { jobSourceLabel } from '../constants/sources'
 import type { JobSummary, JobFacets } from '../types'
-import {
-  Inbox, Play, FileText, Newspaper, Headphones, ChevronRight, X, RotateCcw,
-} from 'lucide-vue-next'
+import { Inbox, ChevronRight, X, RotateCcw } from 'lucide-vue-next'
+
+const showToast = inject<(m: string, t?: 'success' | 'error' | 'info') => void>('showToast', () => {})
 
 // 所有来源(原型 #content)：跨知识库的全部投递。三组筛选(状态/来源/知识库)，
 // 组内多选、跨组取交集、各组可单独清除 + 清除全部。
@@ -127,19 +129,7 @@ const fbarText = computed(() => {
 
 const hasMore = computed(() => jobStore.list.length < jobStore.total)
 
-const SOURCE_LABELS: Record<string, string> = {
-  bilibili: 'Bilibili', youtube: 'YouTube', arxiv: 'arXiv',
-  http_article: '公众号', podcast: '播客', upload: '本地', other: '其它',
-}
-function sourceLabel(s: string | null): string {
-  return s ? (SOURCE_LABELS[s] || s) : '—'
-}
-const typeIcon: Record<string, any> = {
-  video: Play, paper: FileText, article: Newspaper, audio: Headphones,
-}
-function typeClass(t: string): string {
-  return ({ video: 't-video', paper: 't-paper', article: 't-article', audio: 't-audio' } as Record<string, string>)[t] || 't-video'
-}
+// 来源标签 / 内容类型图标·配色:统一走共享单一来源(constants/sources、utils/contentType)。
 
 // 拉一次后端聚合分面(供 chip 计数 + 知识库可选项)。
 async function loadFacets() {
@@ -182,13 +172,16 @@ async function loadMore() {
   }
 }
 
-// 失败行的快捷重试(列表内，不跳详情)。
+// 失败行的快捷重试(列表内，不跳详情)。乐观置「处理中」,失败给出可见提示(不再静默)。
 async function retry(jobId: string) {
   try {
     await jobStore.retryJob(jobId)
     const j = jobStore.list.find(x => x.job_id === jobId)
     if (j) j.status = 'processing'
-  } catch { /* 静默：详情页可见错误 */ }
+    showToast('已提交重试', 'success')
+  } catch (e: any) {
+    showToast(e?.message || '重试失败', 'error')
+  }
 }
 
 // 滚动到底自动加载(原型 .load-hint 行为)。监听窗口滚动。
@@ -301,14 +294,14 @@ const isInitialLoading = computed(() => jobStore.loading && jobStore.list.length
           class="row" :style="j.status === 'failed' ? 'cursor:default' : ''"
           @click="j.status !== 'failed' ? goDetail(j.job_id) : null"
         >
-          <span class="type-pill" :class="typeClass(j.content_type)">
-            <component :is="typeIcon[j.content_type] || FileText" />
+          <span class="type-pill" :class="contentTypePill(j.content_type)">
+            <component :is="contentTypeIcon(j.content_type)" />
           </span>
           <div class="body">
             <div class="title">{{ j.title || j.job_id }}</div>
             <div class="meta">
               <StatusBadge :status="j.status" />
-              <span>{{ sourceLabel(j.source) }}</span>
+              <span>{{ jobSourceLabel(j.source) }}</span>
               <template v-if="j.domain">
                 <span class="sep">·</span><span>{{ domainLabel(j.domain) }}</span>
               </template>

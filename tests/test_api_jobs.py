@@ -180,6 +180,18 @@ class TestDeleteJob:
         resp2 = await client.get(f"/api/jobs/{job_id}")
         assert resp2.status_code == 404
 
+    @pytest.mark.asyncio
+    async def test_delete_purges_artifacts(self, client, app):
+        # 删 job 必须经 storage 清产物(本地删目录 / MinIO 删 {job_id}/ 前缀),否则对象存储留孤儿(I-H1)。
+        create_resp = await client.post("/api/jobs", json={"url": "BV1xx411c7mD"})
+        job_id = create_resp.json()["job_id"]
+        storage = app.state.storage
+        await storage.write_file(job_id, "output/notes.md", b"note")
+        assert await storage.read_file(job_id, "output/notes.md") == b"note"
+        resp = await client.delete(f"/api/jobs/{job_id}")
+        assert resp.status_code == 204
+        assert await storage.read_file(job_id, "output/notes.md") is None  # 产物已清
+
 
 class TestPathTraversal:
     @pytest.mark.asyncio

@@ -80,12 +80,18 @@ function render() {
   })
 }
 
-// 下钻：选中桶内各概念计数（降序），来自 concepts[].buckets[selected]
+// 下钻：选中桶内各概念计数（降序），来自 concepts[].buckets[selected]。
+// 圆点配色按该 term 在 topConcepts(堆叠柱系列)中的下标取,与柱色一致;不在 Top8 给中性色。
 const inBucket = computed(() => {
   if (!selected.value || !data.value) return []
   const b = selected.value
+  const topIdx = new Map(topConcepts.value.map((c, i) => [c.term, i]))
   return data.value.concepts
-    .map((c, i) => ({ term: c.term, n: c.buckets[b] ?? 0, i }))
+    .map((c) => ({
+      term: c.term,
+      n: c.buckets[b] ?? 0,
+      color: topIdx.has(c.term) ? PALETTE[topIdx.get(c.term)! % PALETTE.length] : 'var(--ink-300)',
+    }))
     .filter(x => x.n > 0)
     .sort((a, b2) => b2.n - a.n)
 })
@@ -127,7 +133,7 @@ onBeforeUnmount(() => { if (chart) chart.destroy() })
       </div>
       <div class="list">
         <div v-for="o in inBucket" :key="o.term" class="row" style="cursor:pointer" @click="openConcept(o.term)">
-          <span class="ci-dot" :style="{ background: PALETTE[o.i % PALETTE.length] }" />
+          <span class="ci-dot" :style="{ background: o.color }" />
           <div class="body">
             <div class="title">{{ o.term }}</div>
             <div class="meta"><span>本区间出现 {{ o.n }} 次</span></div>

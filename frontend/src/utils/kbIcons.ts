@@ -23,6 +23,9 @@ export const ICON_NAMES: string[] = [
   'code', 'database', 'globe', 'network', 'briefcase', 'line-chart', 'microscope', 'landmark',
 ]
 
+// 知识库配色候选(存 #hex 入 profile.color)。HomeView/ProfileEditor 共用,避免各写一份。
+export const KB_COLORS: string[] = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#64748b']
+
 // 解析图标名(兼容 PascalCase / kebab / 下划线 / 空格);未命中返回 null,调用方给回退。
 export function resolveIcon(name?: string | null): Component | null {
   if (!name) return null

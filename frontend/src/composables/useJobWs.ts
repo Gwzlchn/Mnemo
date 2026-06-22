@@ -1,39 +1,19 @@
 import { ref, watch, onUnmounted, type Ref } from 'vue'
 import type { StepInfo, WsEvent } from '../types'
+import { createWsReconnect } from './useWsReconnect'
 
 export function useJobWs(jobId: Ref<string>) {
   const steps = ref<StepInfo[]>([])
   const jobStatus = ref('processing')
-  const connected = ref(false)
-  let ws: WebSocket | null = null
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  let retryDelay = 1000
 
-  function connect() {
-    if (!jobId.value) return
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    ws = new WebSocket(`${protocol}//${location.host}/api/ws/jobs/${jobId.value}`)
-
-    ws.onopen = () => {
-      connected.value = true
-      retryDelay = 1000
-    }
-
-    ws.onmessage = (e) => {
-      const event: WsEvent = JSON.parse(e.data)
-      handleEvent(event)
-    }
-
-    ws.onclose = () => {
-      connected.value = false
-      if (jobStatus.value === 'processing' || jobStatus.value === 'pending') {
-        reconnectTimer = setTimeout(connect, retryDelay)
-        retryDelay = Math.min(retryDelay * 2, 30000)
-      }
-    }
-
-    ws.onerror = () => ws?.close()
-  }
+  // 与 global 共用 createWsReconnect 脚手架(退避 / 清理一致);job 端点在终态(done/failed)
+  // 自然停连,故不设 maxRetries。
+  const conn = createWsReconnect({
+    url: () => (jobId.value ? `/api/ws/jobs/${jobId.value}` : null),
+    withToken: true,
+    shouldReconnect: () => jobStatus.value === 'processing' || jobStatus.value === 'pending',
+    onMessage: (data) => handleEvent(JSON.parse(data) as WsEvent),
+  })
 
   function handleEvent(event: WsEvent) {
     const step = steps.value.find(s => s.name === event.step)
@@ -83,18 +63,12 @@ export function useJobWs(jobId: Ref<string>) {
     steps.value = initialSteps
   }
 
-  function disconnect() {
-    if (reconnectTimer) clearTimeout(reconnectTimer)
-    ws?.close()
-    ws = null
-  }
-
   watch(jobId, (newId, oldId) => {
-    if (oldId) disconnect()
-    if (newId) connect()
+    if (oldId) conn.disconnect()
+    if (newId) conn.connect()
   }, { immediate: true })
 
-  onUnmounted(disconnect)
+  onUnmounted(conn.disconnect)
 
-  return { steps, jobStatus, connected, setInitialSteps }
+  return { steps, jobStatus, connected: conn.connected, setInitialSteps }
 }

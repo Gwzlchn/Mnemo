@@ -15,7 +15,7 @@ source_id = 被扫描目录的【绝对路径】。source_title = 目录 basenam
 扩展名 → content_type(决定 pipeline):
   .pdf                          -> paper
   .mp4/.mkv/.webm/.mov          -> video
-  .mp3/.m4a/.wav/.flac          -> audio
+  source_detect.AUDIO_SUFFIXES  -> audio
   .md/.txt/.html                -> article
 其它扩展名忽略(不枚举),避免把无关文件灌进 pipeline。
 """
@@ -25,22 +25,21 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from shared.source_detect import AUDIO_SUFFIXES
 from shared.subscriptions.base import SourceContext, SourceItem, register
 
 # 扩展名(小写,含点)-> content_type。键集合即"支持的扩展名"。
+# 音频扩展名从 source_detect.AUDIO_SUFFIXES 派生,与 detect_source/rss 单一事实源对齐。
 EXT_CONTENT_TYPE: dict[str, str] = {
     ".pdf": "paper",
     ".mp4": "video",
     ".mkv": "video",
     ".webm": "video",
     ".mov": "video",
-    ".mp3": "audio",
-    ".m4a": "audio",
-    ".wav": "audio",
-    ".flac": "audio",
     ".md": "article",
     ".txt": "article",
     ".html": "article",
+    **{ext: "audio" for ext in AUDIO_SUFFIXES},
 }
 
 

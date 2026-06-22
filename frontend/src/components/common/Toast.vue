@@ -1,19 +1,23 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onBeforeUnmount } from 'vue'
 import { CheckCircle, XCircle, Info } from 'lucide-vue-next'
 
 const props = defineProps<{ message: string; type?: 'success' | 'error' | 'info'; duration?: number }>()
 const emit = defineEmits<{ close: [] }>()
 
 const visible = ref(true)
+let timer: ReturnType<typeof setTimeout> | null = null
 
 watch(() => props.message, () => {
+  if (timer) clearTimeout(timer)
   visible.value = true
-  setTimeout(() => {
+  timer = setTimeout(() => {
     visible.value = false
     emit('close')
   }, props.duration ?? 3000)
 }, { immediate: true })
+
+onBeforeUnmount(() => { if (timer) clearTimeout(timer) })
 
 const icons = { success: CheckCircle, error: XCircle, info: Info }
 const colors = {

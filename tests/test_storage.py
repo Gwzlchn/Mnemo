@@ -90,6 +90,27 @@ class TestLocalStorage:
         assert await storage.list_files("nope") == []
 
     @pytest.mark.asyncio
+    async def test_delete_removes_job_dir(self, storage, tmp_path):
+        job = tmp_path / "j_del"
+        (job / "output").mkdir(parents=True)
+        (job / "output" / "notes.md").write_text("n")
+        await storage.delete("j_del")
+        assert not job.exists()
+
+    @pytest.mark.asyncio
+    async def test_delete_missing_is_noop(self, storage):
+        await storage.delete("nope")  # 幂等:目录不存在不报错
+
+    @pytest.mark.asyncio
+    async def test_delete_traversal_blocked(self, storage, tmp_path):
+        # job_id 含 ".." 不得逃出 jobs_dir 删外部数据
+        outside = tmp_path.parent / "keep.txt"
+        outside.write_text("keep")
+        with pytest.raises(ValueError):
+            await storage.delete("..")
+        assert outside.read_text() == "keep"
+
+    @pytest.mark.asyncio
     async def test_traversal_via_job_id_blocked(self, storage, tmp_path):
         # job_id 含 ".." 逃出 jobs_dir → 拒绝(兜底防穿越,挡持 token 者读写中心数据)
         outside = tmp_path.parent / "outside.txt"
@@ -136,6 +157,32 @@ class TestRemoteListFiles:
         files = await rs.list_files("j1")
         assert files == ["job.json", "output/notes.md"]
         client.list_objects.assert_called_once_with("b", prefix="j1/", recursive=True)
+
+    @pytest.mark.asyncio
+    async def test_delete_removes_prefix_objects(self, tmp_path):
+        # 删 job:列 {job_id}/ 前缀全部对象 → remove_objects 批量删(否则 MinIO 留孤儿,I-H1)。
+        rs = RemoteStorage("h:9000", "k", "s", "b", False, tmp_root=tmp_path)
+        objs = [MagicMock(object_name="j1/job.json"), MagicMock(object_name="j1/out/n.md")]
+        client = MagicMock()
+        client.list_objects.return_value = objs
+        client.remove_objects.return_value = []  # 无删除错误
+        rs._client = lambda: client
+
+        await rs.delete("j1")
+
+        client.list_objects.assert_called_once_with("b", prefix="j1/", recursive=True)
+        bucket, deletes = client.remove_objects.call_args.args
+        assert bucket == "b"
+        assert len(list(deletes)) == 2  # 每个对象键一个 DeleteObject
+
+    @pytest.mark.asyncio
+    async def test_delete_no_objects_is_noop(self, tmp_path):
+        rs = RemoteStorage("h:9000", "k", "s", "b", False, tmp_root=tmp_path)
+        client = MagicMock()
+        client.list_objects.return_value = []
+        rs._client = lambda: client
+        await rs.delete("none")  # 幂等:无对象不调 remove_objects
+        client.remove_objects.assert_not_called()
 
 
 class _GatewayStorageHelpers:
@@ -250,6 +297,19 @@ class TestGatewayStorage(_GatewayStorageHelpers):
         gw._snapshots[str(work_dir)] = {"f": (1, 1.0)}
 
         await gw.cleanup("j1", "01", work_dir)
+        assert not work_dir.exists()
+        assert str(work_dir) not in gw._snapshots
+
+    @pytest.mark.asyncio
+    async def test_delete_removes_workdir(self, tmp_path):
+        # gateway 侧不删中心产物(API 端 Local/Remote 负责),仅清本机留存的 job 工作目录+快照。
+        gw, _ = self._gw(tmp_path)
+        work_dir = tmp_path / "work" / "j1"
+        work_dir.mkdir(parents=True)
+        (work_dir / "f").write_text("x")
+        gw._snapshots[str(work_dir)] = {"f": (1, 1.0)}
+
+        await gw.delete("j1")
         assert not work_dir.exists()
         assert str(work_dir) not in gw._snapshots
 

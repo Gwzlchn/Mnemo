@@ -6,7 +6,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
 import { useWorkerStore } from '../stores/workers'
 import { useGlobalStore } from '../stores/global'
-import { fmtDateTime } from '../utils/datetime'
+import { fmtDateTime, fmtDuration, fmtRelative } from '../utils/datetime'
+import { workerDotClass, workerComputeDesc } from '../utils/worker'
 import StatusBadge from '../components/common/StatusBadge.vue'
 import type { Worker, WorkerJob } from '../types'
 import {
@@ -59,53 +60,17 @@ const successRate = computed(() => {
   return `${((completed.value / total) * 100).toFixed(1)}%`
 })
 
-// dot 颜色跟随 worker 状态。
-const dotClass = computed(() => {
-  switch (worker.value?.status) {
-    case 'online-idle': return 'd-ok'
-    case 'online-busy': return 'd-info'
-    case 'draining': return 'd-warn'
-    case 'stale': return 'd-bad'
-    default: return 'd-mut'
-  }
-})
+// dot 颜色 / 算力描述统一走 utils/worker(与 WorkersView 单一来源)。
+const dotClass = computed(() => workerDotClass(worker.value?.status))
 
 // 类型徽章文案。
 const typeLabel = computed(() => (worker.value?.type || '').toUpperCase())
 
-// 时长（秒 → Nh Nm）。
-function fmtDuration(sec: number | null | undefined): string {
-  if (sec == null || sec < 0) return '—'
-  const s = Math.floor(sec)
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  if (h > 0) return `${h}h${String(m).padStart(2, '0')}m`
-  if (m > 0) return `${m}m${String(s % 60).padStart(2, '0')}s`
-  return `${s}s`
-}
+// 时长走 utils/datetime.fmtDuration;相对时间(心跳/完成时间)用 fmtRelative(中文单位,超 1 天回退绝对时间)。
+const ago = (v: string | null | undefined) => fmtRelative(v, { style: 'cn', absoluteAfterDay: true })
 
-// 相对时间（心跳）。
-function ago(v: string | null | undefined): string {
-  if (!v) return '—'
-  const diff = Date.now() - new Date(v).getTime()
-  if (isNaN(diff)) return '—'
-  const sec = Math.floor(diff / 1000)
-  if (sec < 60) return `${sec} 秒前`
-  const min = Math.floor(sec / 60)
-  if (min < 60) return `${min} 分钟前`
-  const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr} 小时前`
-  return fmtDateTime(v)
-}
-
-// 算力描述：GPU 名优先，否则按类型给默认描述。
-const computeDesc = computed(() => {
-  if (worker.value?.gpu_name) {
-    const mem = worker.value.gpu_memory_mb
-    return mem ? `${worker.value.gpu_name} · ${Math.round(mem / 1024)}GB` : worker.value.gpu_name
-  }
-  return worker.value?.type === 'ai' ? 'AI（Claude / API）' : '—'
-})
+// 算力描述：GPU 名优先，否则按类型;无 worker 时回退 —。
+const computeDesc = computed(() => (worker.value ? workerComputeDesc(worker.value) : '—'))
 
 // 任务历史 type-pill（按 step 无内容类型，统一用中性图标兜底）。
 const STEP_ICON: Record<string, any> = { download: Play, transcribe: Headphones }
@@ -289,7 +254,7 @@ onBeforeUnmount(() => global.setCrumbs(null))
             <div class="title mono" style="font-size:13.5px">{{ t.job_id }}</div>
             <div class="meta">
               <span class="mono">{{ t.step }}</span>
-              <StatusBadge :status="t.status" kind="step" />
+              <StatusBadge :status="t.status" />
               <span>{{ fmtDuration(t.duration_sec) }}</span>
               <span class="sep">·</span>
               <span>{{ ago(t.finished_at) }}</span>

@@ -101,8 +101,9 @@ class Collection:
     tags: list[str] = field(default_factory=list)
     job_count: int = 0
     # 订阅属性（手动集合为 None/默认）
-    source_type: str | None = None      # 目前: bilibili_up
-    source_id: str | None = None        # B站 mid
+    # 支持: bilibili_up/bilibili_fav/bilibili_collection/youtube_channel/rss/local_dir(见 shared/sources.py)
+    source_type: str | None = None
+    source_id: str | None = None        # 来源标识(B站 mid / 收藏夹 id / 频道URL / feed URL / 目录路径)
     sync_enabled: bool = True           # 自动追更开关（仅订阅集合有意义）
     last_synced_at: datetime | None = None
     created_at: datetime = field(default_factory=_utcnow)

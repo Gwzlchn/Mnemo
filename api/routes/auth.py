@@ -41,6 +41,12 @@ async def upload_platform_cookies(platform: str, file: UploadFile = File(...)):
     if fname is None:
         raise HTTPException(400, f"unsupported platform: {platform}")
     COOKIES_DIR.mkdir(parents=True, exist_ok=True)
-    content = await file.read()
-    (COOKIES_DIR / fname).write_bytes(content)
+    # cookie 文件本应几 KB,流式累加设小上限,避免已认证用户误传大文件全量读进内存(对齐 jobs 上传)。
+    MAX_COOKIE_SIZE = 1024 * 1024  # 1 MiB
+    buf = bytearray()
+    while chunk := await file.read(64 * 1024):
+        buf.extend(chunk)
+        if len(buf) > MAX_COOKIE_SIZE:
+            raise HTTPException(413, f"cookie file too large (max {MAX_COOKIE_SIZE})")
+    (COOKIES_DIR / fname).write_bytes(bytes(buf))
     return {"status": "ok", "message": f"{platform} cookies 已保存"}

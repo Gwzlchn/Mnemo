@@ -23,8 +23,9 @@ _ARXIV_PATTERNS = [
     re.compile(r"arxiv\.org"),
 ]
 
-# 单集音频后缀：URL 以此结尾视作播客单集音频。
-_AUDIO_SUFFIXES = (".mp3", ".m4a", ".wav", ".aac")
+# 音频后缀（含点，小写）单一事实源：URL/enclosure/本地文件以此结尾视作音频。
+# rss.py、subscriptions/local_dir.py 均从此导入，避免各写一份导致集合漂移。
+AUDIO_SUFFIXES = (".mp3", ".m4a", ".wav", ".aac", ".flac")
 
 
 def detect_source(url: str) -> str:
@@ -45,7 +46,7 @@ def detect_source(url: str) -> str:
             return "arxiv"
 
     # 音频后缀优先于通用文章:同为 http(s) 链接,音频走播客单集。
-    if url.lower().split("?")[0].endswith(_AUDIO_SUFFIXES):
+    if url.lower().split("?")[0].endswith(AUDIO_SUFFIXES):
         return "podcast"
 
     # http(s) 且非已知视频/arxiv/音频 → 通用网页文章。
@@ -61,7 +62,16 @@ def extract_bilibili_bvid(url: str) -> str | None:
     return m.group(1) if m else None
 
 
+# arXiv ID：新式 2301.00001(可带 vN 版本)或旧式 hep-th/9901001 / math.AG/0601001。
+# abs/pdf 路径段可选,裸 ID / 无 abs|pdf 的链接也能提取(保留版本号)。
+_ARXIV_ID_RE = re.compile(
+    r"(?:arxiv\.org/(?:abs|pdf)/)?"
+    r"(\d+\.\d+(?:v\d+)?|[a-z-]+(?:\.[A-Za-z]{2})?/\d{7}(?:v\d+)?)",
+    re.I,
+)
+
+
 def extract_arxiv_id(url: str) -> str | None:
-    """从 arXiv URL 提取论文 ID（如 2301.00001）。"""
-    m = re.search(r"arxiv\.org/(?:abs|pdf)/(\d+\.\d+)", url)
+    """从 arXiv URL / 裸 ID 提取论文 ID（新式 2301.00001[vN] 或旧式 hep-th/9901001[vN]）。"""
+    m = _ARXIV_ID_RE.search(url or "")
     return m.group(1) if m else None

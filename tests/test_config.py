@@ -7,6 +7,7 @@ import pytest
 
 from shared.config import (
     AppConfig,
+    _coerce_scalar,
     build_step_config,
     load_config,
     load_domain_profile,
@@ -17,6 +18,17 @@ from shared.config import (
     resolve_env_vars,
     sanitize_providers,
 )
+
+
+class TestCoerceScalar:
+    def test_int(self):
+        assert _coerce_scalar("1800") == 1800 and isinstance(_coerce_scalar("1800"), int)
+
+    def test_float(self):
+        assert _coerce_scalar("1.5") == 1.5 and isinstance(_coerce_scalar("1.5"), float)
+
+    def test_non_numeric_stays_str(self):
+        assert _coerce_scalar("auto") == "auto"
 
 
 class TestResolveEnvVars:

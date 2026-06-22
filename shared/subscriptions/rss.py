@@ -8,7 +8,7 @@ content_type 判定(决定走哪条 pipeline):
   - link 含 arxiv.org                          -> paper
   - link 含 youtube.com / youtu.be             -> video
   - entry 带 audio enclosure(type 含 audio,
-    或 href 后缀是 .mp3/.m4a/.wav/.aac)         -> audio
+    或 href 后缀属 source_detect.AUDIO_SUFFIXES)  -> audio
   - 否则(普通网页/公众号文章)                  -> article
 
 去重键 item_id:优先 entry.id(RSS guid / Atom id,最稳定),回退到 link。
@@ -18,15 +18,13 @@ source_title:feed.feed.title(频道/公众号名),拿不到返回 None(命名层
 from __future__ import annotations
 
 from shared import rss_fetch
+from shared.source_detect import AUDIO_SUFFIXES
 from shared.subscriptions.base import SourceContext, SourceItem, register
-
-# entry enclosure 视作音频的后缀(href 以此结尾 → audio)。
-_AUDIO_SUFFIXES = (".mp3", ".m4a", ".wav", ".aac")
 
 
 def _is_audio_enclosure(enc: object) -> bool:
     """一个 enclosure(feedparser 的 link/enclosure dict)是否为音频:
-    type 含 'audio'(如 audio/mpeg),或 href 后缀属 _AUDIO_SUFFIXES。"""
+    type 含 'audio'(如 audio/mpeg),或 href 后缀属 AUDIO_SUFFIXES。"""
     get = getattr(enc, "get", None)
     if not callable(get):
         return False
@@ -34,7 +32,7 @@ def _is_audio_enclosure(enc: object) -> bool:
     if "audio" in etype:
         return True
     href = (get("href") or get("url") or "").lower().split("?")[0]
-    return href.endswith(_AUDIO_SUFFIXES)
+    return href.endswith(AUDIO_SUFFIXES)
 
 
 def _entry_has_audio(entry: object) -> bool:

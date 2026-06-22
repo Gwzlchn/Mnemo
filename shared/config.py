@@ -52,9 +52,14 @@ def resolve_env_vars(text: str) -> str:
 
 
 def _coerce_scalar(text: str):
-    """把整段就是一个数字的字符串还原为 int，使 $VAR 注入的数值保持原类型。"""
+    """把整段就是一个数字的字符串还原为数值，使 $VAR 注入的数值保持原类型。
+    先试 int（timeout/retry 等），再试 float（如 1.5），都不是则保留原字符串。"""
     try:
         return int(text)
+    except ValueError:
+        pass
+    try:
+        return float(text)
     except ValueError:
         return text
 

@@ -8,15 +8,10 @@ import yaml
 from fastapi import APIRouter, Depends, HTTPException
 
 from shared.config import AppConfig
-from api.deps import get_config, verify_token
+from api.deps import get_config, validate_path_segment, verify_token
 from api.schemas import ProfileUpdateRequest, TermAddRequest
 
 router = APIRouter(prefix="/api/profiles", tags=["profiles"], dependencies=[Depends(verify_token)])
-
-
-def _validate_domain(domain: str) -> None:
-    if ".." in domain or "/" in domain or "\x00" in domain:
-        raise HTTPException(400, "invalid domain name")
 
 
 def _profiles_dir(config: AppConfig) -> Path:
@@ -28,7 +23,7 @@ def sync_term_to_profile(
 ) -> None:
     """把一条术语写进该 domain 的 Profile.terminology（供术语采纳时复用）。
     Profile 不存在则新建；条目格式 "术语: 定义"，按裸 term 前缀去重，幂等。"""
-    _validate_domain(domain)
+    validate_path_segment(domain, "domain")
     pdir = _profiles_dir(config)
     pdir.mkdir(parents=True, exist_ok=True)
     path = pdir / f"{domain}.yaml"
@@ -69,7 +64,7 @@ async def list_profiles(config: AppConfig = Depends(get_config)):
 
 @router.get("/{domain}")
 async def get_profile(domain: str, config: AppConfig = Depends(get_config)):
-    _validate_domain(domain)
+    validate_path_segment(domain, "domain")
     path = _profiles_dir(config) / f"{domain}.yaml"
     if not path.exists():
         raise HTTPException(404, f"profile '{domain}' not found")
@@ -78,7 +73,7 @@ async def get_profile(domain: str, config: AppConfig = Depends(get_config)):
 
 @router.put("/{domain}")
 async def update_profile(domain: str, req: ProfileUpdateRequest, config: AppConfig = Depends(get_config)):
-    _validate_domain(domain)
+    validate_path_segment(domain, "domain")
     pdir = _profiles_dir(config)
     pdir.mkdir(parents=True, exist_ok=True)
     path = pdir / f"{domain}.yaml"
@@ -109,7 +104,7 @@ async def update_profile(domain: str, req: ProfileUpdateRequest, config: AppConf
 
 @router.post("/{domain}/terms")
 async def add_term(domain: str, req: TermAddRequest, config: AppConfig = Depends(get_config)):
-    _validate_domain(domain)
+    validate_path_segment(domain, "domain")
     path = _profiles_dir(config) / f"{domain}.yaml"
     if not path.exists():
         raise HTTPException(404, f"profile '{domain}' not found")
@@ -126,7 +121,7 @@ async def add_term(domain: str, req: TermAddRequest, config: AppConfig = Depends
 
 @router.delete("/{domain}/terms/{term}")
 async def delete_term(domain: str, term: str, config: AppConfig = Depends(get_config)):
-    _validate_domain(domain)
+    validate_path_segment(domain, "domain")
     path = _profiles_dir(config) / f"{domain}.yaml"
     if not path.exists():
         raise HTTPException(404, f"profile '{domain}' not found")

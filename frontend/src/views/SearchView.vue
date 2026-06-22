@@ -2,12 +2,12 @@
 // 搜索（原型 #search）：q≥3 字符才查；可按 内容类型 / 知识库(domain) / 集合(collection_id) 收窄。
 // 结果跳 /content/:id。snippet 含服务端 <mark> 高亮——但 sqlite snippet() 不转义正文，
 // 故这里仍做防御式转义（先整段转义、再仅还原 <mark>），杜绝任何可执行标签注入。
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
-import { CONTENT_TYPE_LABELS } from '../types'
+import { contentTypeIcon, contentTypePill, contentTypeLabel, noteTypeLabel } from '../utils/contentType'
 import type { SearchResponse, SearchResultItem } from '../types'
-import { Search, Play, FileText, Newspaper, Headphones } from 'lucide-vue-next'
+import { Search } from 'lucide-vue-next'
 
 const api = useApi()
 const router = useRouter()
@@ -25,20 +25,18 @@ const result = ref<SearchResponse>({ total: 0, items: [] })
 const term = computed(() => q.value.trim())
 const tooShort = computed(() => term.value.length > 0 && term.value.length < 3)
 
-// 笔记类型徽章：与后端 note_type 取值对齐（smart|mechanical|transcript）。
-const NOTE_TYPE_LABELS: Record<string, string> = {
-  smart: '智能笔记',
-  mechanical: '机械稿',
-  transcript: '逐字稿',
-}
+// 笔记类型徽章 / 内容类型图标·配色·文案:统一走 utils/contentType(与 TopBar 共用单一来源)。
 
-// 内容类型 → type-pill 配色类 + 图标。
-const PILL_CLASS: Record<string, string> = {
-  video: 't-video', paper: 't-paper', article: 't-article', audio: 't-audio',
+// ⌘K / Ctrl-K 聚焦搜索框(与右侧 kbd 提示对应)。
+const searchInput = ref<HTMLInputElement | null>(null)
+function onKeydown(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+    e.preventDefault()
+    searchInput.value?.focus()
+  }
 }
-const PILL_ICON: Record<string, any> = {
-  video: Play, paper: FileText, article: Newspaper, audio: Headphones,
-}
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
 // snippet 安全渲染：整段先转义，再仅还原 <mark> 高亮，确保 v-html 不注入。
 function safeSnippet(raw: string): string {
@@ -101,7 +99,7 @@ function open(item: SearchResultItem) {
     <!-- 搜索框 -->
     <div class="search" style="width:100%;padding:11px 14px;cursor:text">
       <Search :size="17" />
-      <input v-model="q" placeholder="搜索笔记内容（至少 3 个字符）" style="font-size:14px" />
+      <input ref="searchInput" v-model="q" placeholder="搜索笔记内容（至少 3 个字符）" style="font-size:14px" />
       <span class="kbd">⌘K</span>
     </div>
 
@@ -155,20 +153,20 @@ function open(item: SearchResultItem) {
           style="cursor:pointer;display:flex;align-items:flex-start;gap:13px"
           @click="open(item)"
         >
-          <span class="type-pill" :class="PILL_CLASS[item.content_type] || 't-article'" style="margin-top:1px">
-            <component :is="PILL_ICON[item.content_type] || Newspaper" :size="17" />
+          <span class="type-pill" :class="contentTypePill(item.content_type)" style="margin-top:1px">
+            <component :is="contentTypeIcon(item.content_type)" :size="17" />
           </span>
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:8px">
               <div class="title" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
                 {{ item.title || item.job_id }}
               </div>
-              <span class="badge b-mut">{{ NOTE_TYPE_LABELS[item.note_type] || item.note_type }}</span>
+              <span class="badge b-mut">{{ noteTypeLabel(item.note_type) }}</span>
             </div>
             <!-- snippet 经 safeSnippet 转义，仅保留 <mark> 高亮，杜绝注入。 -->
             <p class="search-snippet" style="font-size:13px;color:var(--ink-600);margin:6px 0 0" v-html="safeSnippet(item.snippet)"></p>
             <div class="meta" style="margin-top:7px">
-              <span>{{ CONTENT_TYPE_LABELS[item.content_type] || item.content_type }}</span>
+              <span>{{ contentTypeLabel(item.content_type) }}</span>
               <template v-if="item.domain && item.domain !== 'general'">
                 <span class="sep">·</span><span>{{ item.domain }}</span>
               </template>

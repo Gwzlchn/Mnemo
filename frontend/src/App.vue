@@ -7,10 +7,12 @@ import { ref, provide } from 'vue'
 
 useGlobalWs()
 
-const toast = ref<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
+// id 自增并作 Toast 的 :key:同一文案连续提示也强制重建组件,确保每次都重新弹出/计时。
+const toast = ref<{ id: number; message: string; type: 'success' | 'error' | 'info' } | null>(null)
+let toastSeq = 0
 
 function showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
-  toast.value = { message, type }
+  toast.value = { id: ++toastSeq, message, type }
 }
 
 provide('showToast', showToast)
@@ -19,5 +21,5 @@ provide('showToast', showToast)
 <template>
   <AppShell />
   <SubmitDialog />
-  <Toast v-if="toast" :message="toast.message" :type="toast.type" @close="toast = null" />
+  <Toast v-if="toast" :key="toast.id" :message="toast.message" :type="toast.type" @close="toast = null" />
 </template>

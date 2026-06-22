@@ -35,48 +35,41 @@ export function clearToken() {
   localStorage.removeItem('auth_token')
 }
 
-export function useAuth() {
-  return { authToken, setToken, clearToken }
+// 供 WS composable 拼 ?token= 用(契约要求 WS 经 query 传 token)。
+export function getAuthToken(): string {
+  return authToken.value
 }
 
 export function useApi() {
-  async function request<T>(method: string, path: string, body?: any): Promise<T> {
+  // 鉴权头 + 401 处理为 request/getText 共用,换 header 名只改一处。
+  function buildHeaders(body?: any): Record<string, string> {
     const headers: Record<string, string> = {}
-    if (authToken.value) {
-      headers['Authorization'] = `Bearer ${authToken.value}`
-    }
-    if (body && !(body instanceof FormData)) {
-      headers['Content-Type'] = 'application/json'
-    }
-
-    const resp = await fetch(path, {
-      method,
-      headers,
-      body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
-    })
-
-    if (resp.status === 401) {
-      clearToken()
-      throw new ApiError(401, 'unauthorized')
-    }
-    if (!resp.ok) {
-      throw new ApiError(resp.status, await resp.text())
-    }
-    if (resp.status === 204) return null as T
-    return resp.json()
+    if (authToken.value) headers['Authorization'] = `Bearer ${authToken.value}`
+    if (body && !(body instanceof FormData)) headers['Content-Type'] = 'application/json'
+    return headers
   }
-
-  async function getText(path: string): Promise<string> {
-    const headers: Record<string, string> = {}
-    if (authToken.value) {
-      headers['Authorization'] = `Bearer ${authToken.value}`
-    }
-    const resp = await fetch(path, { headers })
+  async function checkResp(resp: Response): Promise<void> {
     if (resp.status === 401) {
       clearToken()
       throw new ApiError(401, 'unauthorized')
     }
     if (!resp.ok) throw new ApiError(resp.status, await resp.text())
+  }
+
+  async function request<T>(method: string, path: string, body?: any): Promise<T> {
+    const resp = await fetch(path, {
+      method,
+      headers: buildHeaders(body),
+      body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
+    })
+    await checkResp(resp)
+    if (resp.status === 204) return null as T
+    return resp.json()
+  }
+
+  async function getText(path: string): Promise<string> {
+    const resp = await fetch(path, { headers: buildHeaders() })
+    await checkResp(resp)
     return resp.text()
   }
 

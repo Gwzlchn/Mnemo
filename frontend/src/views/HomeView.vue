@@ -3,9 +3,10 @@ import { ref, computed, onMounted, watch, inject } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useDomainStore } from '../stores/domains'
-import { fmtDateTime } from '../utils/datetime'
+import { fmtRelative } from '../utils/datetime'
 import type { DomainOverview } from '../types'
-import { resolveIcon, ICON_NAMES } from '../utils/kbIcons'
+import { resolveIcon, ICON_NAMES, KB_COLORS } from '../utils/kbIcons'
+import IconPicker from '../components/common/IconPicker.vue'
 import {
   BookMarked, Plus, Inbox, Folder, FileText, Lightbulb,
   Rss, X, Check,
@@ -72,29 +73,16 @@ function openDomain(d: DomainOverview) {
   router.push(`/kb/${encodeURIComponent(d.domain)}`)
 }
 
-// 活跃时间相对展示（last_active_at 可能为 null）。
-function activeAgo(v: string | null): string {
-  if (!v) return '从未活跃'
-  const diff = Date.now() - new Date(v).getTime()
-  if (isNaN(diff)) return '从未活跃'
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return '刚刚活跃'
-  if (mins < 60) return `${mins} 分钟前活跃`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours} 小时前活跃`
-  const days = Math.floor(hours / 24)
-  if (days < 30) return `${days} 天前活跃`
-  return `${fmtDateTime(v)} 活跃`
-}
+// 活跃时间相对展示走 utils/datetime.fmtRelative(中文单位 + 「活跃」后缀;last_active_at 可能为 null）。
+const activeAgo = (v: string | null) => fmtRelative(v, { style: 'cn', suffix: '活跃', fallback: '从未活跃' })
 
 // ── 新建知识库内联弹窗（参考原型 #home 的 m-domain）：提交真正调 domainStore.create ──
-// 可选图标（存 lucide 名字符串入 profile.icon）与配色（存 #hex 入 profile.color）。
-const COLORS = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#64748b']
+// 可选图标（存 lucide 名字符串入 profile.icon）与配色（KB_COLORS,存 #hex 入 profile.color）。
 const showCreate = ref(false)
 const draftDomain = ref('')   // 英文 slug → payload.domain（URL/过滤标识，必填）
 const draftName = ref('')     // 显示名 → payload.display_name
 const draftIcon = ref(ICON_NAMES[0])
-const draftColor = ref(COLORS[0])
+const draftColor = ref(KB_COLORS[0])
 const draftRole = ref('')
 const draftIntro = ref('')
 const submitting = ref(false)
@@ -103,7 +91,7 @@ function openCreate() {
   draftDomain.value = ''
   draftName.value = ''
   draftIcon.value = ICON_NAMES[0]
-  draftColor.value = COLORS[0]
+  draftColor.value = KB_COLORS[0]
   draftRole.value = ''
   draftIntro.value = ''
   showCreate.value = true
@@ -238,18 +226,13 @@ onMounted(() => {
           </div>
           <div class="field">
             <label>图标</label>
-            <div class="icon-grid">
-              <button v-for="name in ICON_NAMES" :key="name" class="icon-pick"
-                :class="{ on: draftIcon === name }" @click="draftIcon = name">
-                <component :is="resolveIcon(name) || Lightbulb" :size="18" />
-              </button>
-            </div>
+            <IconPicker v-model="draftIcon" />
             <div class="note-tip">从图标库挑一个，配色见下。</div>
           </div>
           <div class="field">
             <label>颜色</label>
             <div class="color-row">
-              <button v-for="c in COLORS" :key="c" class="swatch"
+              <button v-for="c in KB_COLORS" :key="c" class="swatch"
                 :class="{ on: draftColor === c }" :style="{ background: c }"
                 @click="draftColor = c" />
             </div>

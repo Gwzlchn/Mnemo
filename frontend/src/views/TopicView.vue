@@ -4,11 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDomainStore } from '../stores/domains'
 import StatusBadge from '../components/common/StatusBadge.vue'
 import { fmtDateTime } from '../utils/datetime'
-import { CONTENT_TYPE_LABELS } from '../types'
+import { contentTypeIcon, contentTypePill, contentTypeLabel } from '../utils/contentType'
 import type { JobSummary } from '../types'
-import {
-  Hash, Lightbulb, LayoutList, ChevronRight, Play, FileText, Newspaper, Headphones,
-} from 'lucide-vue-next'
+import { Hash, Lightbulb, LayoutList, ChevronRight } from 'lucide-vue-next'
 
 // 主题页（原型 #topic）：把某个主题(is_topic 概念)下跨集合/跨来源的内容聚到一处。
 // 后端形状: {domain, topic, jobs:[JobResponse], total}
@@ -23,11 +21,6 @@ const jobs = ref<JobSummary[]>([])
 const total = ref(0)
 const loading = ref(false)
 const error = ref('')
-
-const typeIcon = (t: string) =>
-  t === 'video' ? Play : t === 'paper' ? FileText : t === 'audio' ? Headphones : Newspaper
-const typePillClass = (t: string) =>
-  t === 'video' ? 't-video' : t === 'paper' ? 't-paper' : t === 'audio' ? 't-audio' : 't-article'
 
 // 防御性归一：后端 job 子集字段与 JobSummary 对齐，缺字段给安全默认。
 function normalizeJob(raw: any): JobSummary {
@@ -106,14 +99,14 @@ watch(() => [route.params.domain, route.params.topic], load)
       <div class="seclabel" style="margin:22px 0 12px"><LayoutList :size="14" />关联内容 · {{ total }}</div>
       <div class="list">
         <div v-for="j in jobs" :key="j.job_id" class="row" @click="openJob(j)">
-          <span class="type-pill" :class="typePillClass(j.content_type)">
-            <component :is="typeIcon(j.content_type)" :size="17" />
+          <span class="type-pill" :class="contentTypePill(j.content_type)">
+            <component :is="contentTypeIcon(j.content_type)" :size="17" />
           </span>
           <div class="body">
             <div class="title">{{ j.title || j.job_id }}</div>
             <div class="meta">
               <StatusBadge :status="j.status" />
-              <span>{{ CONTENT_TYPE_LABELS[j.content_type] || j.content_type }}</span>
+              <span>{{ contentTypeLabel(j.content_type) }}</span>
               <template v-if="j.source"><span class="sep">·</span><span>{{ j.source }}</span></template>
               <span class="sep">·</span>
               <span class="dim">{{ fmtDateTime(j.created_at) }}</span>
