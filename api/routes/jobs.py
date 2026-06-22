@@ -224,6 +224,7 @@ async def list_jobs(
     collection_id: str | None = None,
     domain: str | None = None,
     source: str | None = None,
+    uncategorized: bool = False,   # true=只列无所属集合的内容(侧栏「未归类」)
     limit: int = Query(20, ge=1, le=200),
     offset: int = Query(0, ge=0, le=2_147_483_647),  # int32 max,远低于 SQLite int64 溢出点;挡住超大 offset → 500
     db: Database = Depends(get_db),
@@ -231,6 +232,7 @@ async def list_jobs(
     total, jobs = await asyncio.to_thread(
         db.list_jobs, status=status, collection_id=collection_id,
         limit=limit, offset=offset, domain=domain, source=source,
+        uncategorized=uncategorized,
     )
     return JobListResponse(
         total=total,
@@ -311,11 +313,13 @@ async def get_job(
                     media["word_count"] = wc
         except Exception:
             pass
-    # 产物路径(元信息"产物路径"):绝对路径(job 数据根 = $DATA_DIR/jobs/<job_id>);
-    # 列可见产物文件(隐藏内部点文件/job.json)。
+    # 产物路径(元信息"产物路径"):NAS 宿主绝对路径。job 产物实际落在对象存储/本地盘,
+    # 其在 NAS 上的根由 JOB_ARTIFACT_HOST_ROOT 指定(MinIO 部署=<NAS>/minio/<bucket>;
+    # 本地盘部署=<NAS>/jobs)。未配置则回退容器内 $DATA_DIR/jobs。列可见产物(隐藏点文件/job.json)。
     artifacts: list[str] = []
     try:
-        root = f"{os.environ.get('DATA_DIR', '/data')}/jobs/{job_id}"
+        host_root = os.environ.get("JOB_ARTIFACT_HOST_ROOT") or f"{os.environ.get('DATA_DIR', '/data')}/jobs"
+        root = f"{host_root.rstrip('/')}/{job_id}"
         artifacts = sorted(
             f"{root}/{f}" for f in await storage.list_files(job_id)
             if not (f.rsplit("/", 1)[-1].startswith(".") or f == "job.json")

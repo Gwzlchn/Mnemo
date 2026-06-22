@@ -29,16 +29,28 @@ const expandedKb = reactive<Record<string, boolean>>({})
 const expandedCol = reactive<Record<string, boolean>>({})
 const kbCols = reactive<Record<string, any[]>>({})
 const colItems = reactive<Record<string, any[]>>({})
+// 未归类(无所属集合)内容,按知识库懒加载
+const expandedUncat = reactive<Record<string, boolean>>({})
+const uncatItems = reactive<Record<string, any[]>>({})
 
 onMounted(() => { if (!domainStore.domains.length) domainStore.fetchAll() })
 
 async function loadCols(d: string) {
+  loadUncat(d)   // 同时拉该域未归类内容(独立、不阻塞集合)
   if (kbCols[d]) return
   try {
     const r: any = await api.get(`/api/collections?domain=${encodeURIComponent(d)}`)
     kbCols[d] = r.collections ?? r ?? []
   } catch { kbCols[d] = [] }
 }
+async function loadUncat(d: string) {
+  if (uncatItems[d]) return
+  try {
+    const r: any = await api.get(`/api/jobs?domain=${encodeURIComponent(d)}&uncategorized=true&limit=50`)
+    uncatItems[d] = r.items ?? r ?? []
+  } catch { uncatItems[d] = [] }
+}
+function toggleUncat(d: string) { expandedUncat[d] = !expandedUncat[d] }
 async function loadItems(id: string) {
   if (colItems[id]) return
   try {
@@ -178,7 +190,26 @@ function moveKb(i: number, dir: number) {
                 <div class="content-item more" v-if="expandedCol[c.id] && !(colItems[c.id] || []).length">空</div>
               </div>
             </div>
-            <div class="src-item" v-if="expandedKb[d.domain] && !(kbCols[d.domain] || []).length"
+            <!-- 未归类:该知识库下无所属集合的内容(YouTube 等手动投递) -->
+            <div class="src-group" v-if="(uncatItems[d.domain] || []).length">
+              <div class="src-item">
+                <span class="src-caret" :class="{ open: expandedUncat[d.domain] }" @click.stop="toggleUncat(d.domain)">
+                  <ChevronRight :size="14" />
+                </span>
+                <Inbox :size="14" />
+                <span class="nb-name" @click.stop="toggleUncat(d.domain)">未归类 · {{ (uncatItems[d.domain] || []).length }}</span>
+              </div>
+              <div class="src-content" :class="{ open: expandedUncat[d.domain] }">
+                <div class="content-item" v-for="j in (uncatItems[d.domain] || [])" :key="j.job_id"
+                     :class="{ on: isContentActive(j.job_id) }"
+                     @click="nav(`/content/${j.job_id}`)">
+                  <span class="ci-dot" :style="{ background: kbColor(d.domain) }" />
+                  <span>{{ j.title || j.job_id }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="src-item" v-if="expandedKb[d.domain] && !(kbCols[d.domain] || []).length && !(uncatItems[d.domain] || []).length"
                  style="color:var(--ink-400);padding-left:24px">暂无集合</div>
           </div>
         </div>

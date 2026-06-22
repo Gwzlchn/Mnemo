@@ -380,13 +380,16 @@ class Database:
         offset: int = 0,
         domain: str | None = None,
         source: str | None = None,
+        uncategorized: bool = False,
     ) -> tuple[int, list[Job]]:
         where_parts: list[str] = []
         params: list = []
         if status:
             where_parts.append("status=?")
             params.append(status)
-        if collection_id:
+        if uncategorized:           # 未归类:无所属集合(侧栏「未归类」分组)
+            where_parts.append("collection_id IS NULL")
+        elif collection_id:
             where_parts.append("collection_id=?")
             params.append(collection_id)
         if domain:
