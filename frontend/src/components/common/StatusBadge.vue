@@ -11,7 +11,7 @@ const COLOR: Record<string, string> = {
   pending: 'b-mut', downloading: 'b-info', processing: 'b-run', done: 'b-ok', failed: 'b-bad',
   waiting: 'b-mut', ready: 'b-mut', running: 'b-run', skipped: 'b-mut',
   idle: 'b-ok', busy: 'b-info',
-  'online-idle': 'b-ok', 'online-busy': 'b-info', draining: 'b-warn', offline: 'b-mut', stale: 'b-bad',
+  'online-idle': 'b-ok', 'online-busy': 'b-info', paused: 'b-warn', offline: 'b-mut', stale: 'b-bad',
   suggested: 'b-warn', accepted: 'b-ok',
 }
 

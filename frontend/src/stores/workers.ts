@@ -17,13 +17,13 @@ export const useWorkerStore = defineStore('workers', () => {
     }
   }
 
-  async function drain(workerId: string) {
-    await api.put(`/api/workers/${workerId}`, { status: 'draining' })
+  async function pause(workerId: string) {
+    await api.put(`/api/workers/${workerId}`, { status: 'paused' })
     await fetchAll()
   }
 
-  async function undrain(workerId: string) {
-    await api.put(`/api/workers/${workerId}`, { status: 'idle' })
+  async function resume(workerId: string) {
+    await api.put(`/api/workers/${workerId}`, { status: 'active' })
     await fetchAll()
   }
 
@@ -52,7 +52,7 @@ export const useWorkerStore = defineStore('workers', () => {
   }
 
   return {
-    workers, loading, fetchAll, drain, undrain,
+    workers, loading, fetchAll, pause, resume,
     updateNote, updateTags, remove, mintToken, fetchJobs,
   }
 })

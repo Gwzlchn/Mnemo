@@ -27,8 +27,9 @@ from worker.transport import WorkerTransport
 logger = structlog.get_logger(component="worker")
 
 # worker 类型 → 订阅的池(拓扑权威,不在 pools.yaml;新增/重命名池在此维护)。
+# "io" 类型 = 纯下载/出网 worker(只订 io 池);类型名即其唯一订阅的池,语义诚实。
 WORKER_POOLS: dict[str, list[str]] = {
-    "download": ["io"],
+    "io": ["io"],
     "cpu": ["scene", "cpu", "io"],
     "ai": ["ai", "io"],
     "gpu": ["gpu", "scene", "cpu", "io"],
@@ -87,6 +88,7 @@ class Worker:
         pools: list[str],
         tags: set[str],
         reject_tags: set[str],
+        concurrency: int = 1,
     ):
         self.transport = transport
         self.config = config
@@ -99,6 +101,9 @@ class Worker:
         self.tags = tags
         self.reject_tags = reject_tags
         self.idle_timeout = int(os.environ.get("IDLE_TIMEOUT", "0"))
+        # 本机并发度:同时在跑几个 step。异构机器据此自报容量(强机调大,弱机=1)。
+        # 全局每池槽位(pools.yaml limit)仍是系统级天花板,本数只决定单 worker 的并行上限。
+        self.concurrency = max(1, concurrency)
         self._shutdown = False
         self.runner = create_step_runner(self.worker_id)
 
@@ -120,13 +125,13 @@ class Worker:
                 logger.warning("reap_orphans_failed", worker_id=self.worker_id, exc_info=True)
         logger.info(
             "worker_start", worker_id=self.worker_id,
-            type=self.worker_type, pools=self.pools,
+            type=self.worker_type, pools=self.pools, concurrency=self.concurrency,
             tags=sorted(self.tags), reject_tags=sorted(self.reject_tags),
         )
         try:
             await asyncio.gather(
                 self.heartbeat_loop(),
-                self.main_loop(),
+                *[self._claim_loop(i) for i in range(self.concurrency)],
             )
         except asyncio.CancelledError:
             pass
@@ -164,7 +169,10 @@ class Worker:
 
     # ── 主循环 ──
 
-    async def main_loop(self) -> None:
+    async def _claim_loop(self, slot: int = 0) -> None:
+        """单条"认领→执行"循环。并发度>1 时 run() 起多条,共享 transport/storage/runner;
+        各条独立认领+执行一个 step(全局每池槽位仍是系统级上限,本循环只占其中一个)。
+        idle_timeout 由各条独立计时,全部超时退出 → worker 退出。"""
         last_task_time = time.time()
         while not self._shutdown:
             task = await self.transport.request_step(
@@ -176,7 +184,7 @@ class Worker:
                 await self.execute(task)
             else:
                 if self.idle_timeout and time.time() - last_task_time > self.idle_timeout:
-                    logger.info("idle_timeout_exit", worker_id=self.worker_id)
+                    logger.info("idle_timeout_exit", worker_id=self.worker_id, slot=slot)
                     break
                 await asyncio.sleep(1)
 

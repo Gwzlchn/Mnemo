@@ -104,7 +104,7 @@ async def build_system_status(db, redis, config) -> dict:
         wtype = w.type
         if wtype not in worker_summary:
             worker_summary[wtype] = {"online": 0, "busy": 0}
-        if w.status.startswith("online") or w.status == "draining":
+        if w.status.startswith("online") or w.status == "paused":
             worker_summary[wtype]["online"] += 1
         if w.status == "online-busy":
             worker_summary[wtype]["busy"] += 1

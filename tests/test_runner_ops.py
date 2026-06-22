@@ -93,9 +93,9 @@ class TestClaimStep:
         assert await redis.is_pool_frozen("cpu") is True
 
     @pytest.mark.asyncio
-    async def test_draining_returns_none(self, redis, db):
+    async def test_paused_returns_none(self, redis, db):
         await _register_worker(redis, db)
-        await redis.set_worker_field(WORKER_ID, "status", "draining")
+        await redis.set_worker_field(WORKER_ID, "admin_status", "paused")
         await redis.enqueue_step("cpu", "j1", "A", [], priority=0)
         await redis.set_step_status("j1", "A", "ready")
 
@@ -103,6 +103,21 @@ class TestClaimStep:
             redis, db, WORKER_ID, ["cpu"], POOL_LIMITS, {"vision"}, set(),
         )
         assert claim is None
+
+    @pytest.mark.asyncio
+    async def test_pause_survives_runtime_status_write(self, redis, db):
+        """暂停态(admin_status)与运行时 status 解耦:写 status(busy/idle)不清暂停。
+        旧实现 draining 复用 status 字段 → claim/release/gateway心跳会覆盖暂停;本测试钉死分离后行为。"""
+        await _register_worker(redis, db)
+        await redis.set_worker_field(WORKER_ID, "admin_status", "paused")
+        # 模拟在跑 worker 释放任务(等价 release_step 的 _set_status idle)
+        await redis.set_worker_field(WORKER_ID, "status", "idle")
+        await redis.enqueue_step("cpu", "j1", "A", [], priority=0)
+        await redis.set_step_status("j1", "A", "ready")
+        claim = await runner_ops.claim_step(
+            redis, db, WORKER_ID, ["cpu"], POOL_LIMITS, {"vision"}, set(),
+        )
+        assert claim is None  # 仍暂停,运行时 status 写入未清掉 admin_status
 
     @pytest.mark.asyncio
     async def test_tag_mismatch_returns_to_queue_and_releases_slot(self, redis, db):

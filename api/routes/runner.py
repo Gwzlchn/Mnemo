@@ -116,6 +116,7 @@ async def register(
         "reject_tags": ",".join(sorted(req.reject_tags)),
         "hostname": req.hostname or "",
         "status": "idle",
+        "admin_status": "",
         "started_at": now.isoformat(),
         "last_heartbeat": now.isoformat(),
     }
@@ -162,7 +163,8 @@ async def heartbeat(
         current_step=req.current_step,
     )
     info = await redis.get_worker_info(worker_id) or {}
-    return {"draining": info.get("status") == "draining"}
+    # 回发暂停控制位(信息性):暂停态存独立 admin_status,认领由服务端 claim_step 据此拦截。
+    return {"paused": info.get("admin_status") == "paused"}
 
 
 @router.post("/offline")

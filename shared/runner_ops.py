@@ -92,9 +92,10 @@ async def claim_step(
     pools, pool_limits, tags, reject_tags,
 ) -> dict | None:
     """从池队列认领一步,返回最小 claim {job_id, step, pool, exec_id} 或 None。"""
-    # draining 的 worker 不再认领新任务。
+    # 暂停(paused)的 worker 不再认领新任务。读独立的 admin_status 叠加位,
+    # 与运行时 status(idle/busy) 解耦——claim/release 写 status 不会覆盖暂停态。
     info = await redis.get_worker_info(worker_id)
-    if (info.get("status") if info else None) == "draining":
+    if (info.get("admin_status") if info else None) == "paused":
         return None
 
     for pool in pools:

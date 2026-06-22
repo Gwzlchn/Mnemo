@@ -235,11 +235,11 @@ class TestCAS:
         assert count == 0
 
 
-class TestDraining:
+class TestPaused:
     @pytest.mark.asyncio
-    async def test_draining_returns_none(self, worker, redis):
+    async def test_paused_returns_none(self, worker, redis):
         await worker.register()
-        await redis.set_worker_field(worker.worker_id, "status", "draining")
+        await redis.set_worker_field(worker.worker_id, "admin_status", "paused")
         await setup_task_in_queue(redis)
 
         claim = await request_step(worker)
@@ -361,7 +361,7 @@ class TestIdleTimeout:
             return None
 
         worker.transport.request_step = empty_request
-        await worker.main_loop()
+        await worker._claim_loop()
         elapsed = time.time() - start
         assert elapsed >= 1.0
 
@@ -398,7 +398,7 @@ class TestWorkerPools:
         assert "scene" in WORKER_POOLS["gpu"]
         assert "cpu" in WORKER_POOLS["gpu"]
         # All types should exist
-        assert set(WORKER_POOLS.keys()) >= {"download", "cpu", "ai", "gpu"}
+        assert set(WORKER_POOLS.keys()) >= {"io", "cpu", "ai", "gpu"}
 
 
 class TestUpdateWorkerStatus:
@@ -736,7 +736,7 @@ class TestStoragePullFailure:
 class TestShutdown:
     @pytest.mark.asyncio
     async def test_shutdown_stops_main_loop(self, worker, redis):
-        """shutdown() sets _shutdown flag, main_loop should exit."""
+        """shutdown() sets _shutdown flag, _claim_loop should exit."""
         await worker.register()
         worker.idle_timeout = 999  # Don't exit from idle
 
@@ -745,5 +745,39 @@ class TestShutdown:
             worker.shutdown()
 
         asyncio.create_task(schedule_shutdown())
-        await asyncio.wait_for(worker.main_loop(), timeout=2.0)
-        # If we reach here, main_loop exited due to shutdown
+        await asyncio.wait_for(worker._claim_loop(), timeout=2.0)
+        # If we reach here, _claim_loop exited due to shutdown
+
+
+class TestConcurrency:
+    def test_default_is_one(self, worker):
+        assert worker.concurrency == 1
+
+    def test_clamped_to_min_one(self, redis, db, config, storage):
+        w = Worker(
+            transport=RedisTransport(redis, db), config=config, storage=storage,
+            worker_type="cpu", pools=["cpu", "io"], tags=set(), reject_tags=set(),
+            concurrency=0,
+        )
+        assert w.concurrency == 1
+
+    @pytest.mark.asyncio
+    async def test_run_starts_n_claim_loops(self, redis, db, config, storage):
+        """concurrency=N → run() 起 N 条认领循环(各带 slot 序号)。全局每池槽位仍是系统级上限。"""
+        w = Worker(
+            transport=RedisTransport(redis, db), config=config, storage=storage,
+            worker_type="cpu", pools=["cpu", "io"], tags=set(), reject_tags=set(),
+            concurrency=3,
+        )
+        slots: list[int] = []
+
+        async def fake_loop(slot=0):
+            slots.append(slot)
+
+        async def fake_hb():
+            return
+
+        w._claim_loop = fake_loop
+        w.heartbeat_loop = fake_hb
+        await w.run()
+        assert sorted(slots) == [0, 1, 2]

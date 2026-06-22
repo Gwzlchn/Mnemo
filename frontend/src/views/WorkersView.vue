@@ -50,12 +50,12 @@ async function refreshAll() {
 
 // ── Worker 列表派生 ──
 const STATUS_ORDER: Record<string, number> = {
-  'online-busy': 0, 'online-idle': 1, draining: 2, stale: 3, offline: 4,
+  'online-busy': 0, 'online-idle': 1, paused: 2, stale: 3, offline: 4,
 }
 const sortedWorkers = computed(() =>
   [...workerStore.workers].sort((a, b) => (STATUS_ORDER[a.status] ?? 5) - (STATUS_ORDER[b.status] ?? 5))
 )
-const onlineCount = computed(() => workerStore.workers.filter(w => w.status.startsWith('online') || w.status === 'draining').length)
+const onlineCount = computed(() => workerStore.workers.filter(w => w.status.startsWith('online') || w.status === 'paused').length)
 const busyCount = computed(() => workerStore.workers.filter(w => w.status === 'online-busy').length)
 // jobs.done 优先用实时推送，回退到拉取的全量。
 const doneCount = computed(() => systemStatus.value?.jobs?.done ?? status.value?.jobs?.done ?? 0)
@@ -66,20 +66,20 @@ const pools = computed(() => Object.entries(status.value?.pools ?? {}))
 const dotClass = workerDotClass
 const computeDesc = workerComputeDesc
 function isOnline(w: Worker): boolean {
-  return w.status.startsWith('online') || w.status === 'draining'
+  return w.status.startsWith('online') || w.status === 'paused'
 }
 
-// ── 行内 drain / undrain / 移除 ──
+// ── 行内 暂停 / 恢复 / 移除 ──
 const rowBusy = ref<string | null>(null)
-async function toggleDrain(w: Worker) {
+async function togglePause(w: Worker) {
   rowBusy.value = w.id
   try {
-    if (w.status === 'draining') {
-      await workerStore.undrain(w.id)
-      showToast('已取消排空', 'success')
+    if (w.status === 'paused') {
+      await workerStore.resume(w.id)
+      showToast('已恢复', 'success')
     } else {
-      await workerStore.drain(w.id)
-      showToast('已置为排空中', 'success')
+      await workerStore.pause(w.id)
+      showToast('已暂停', 'success')
     }
   } catch {
     showToast('操作失败', 'error')
@@ -103,7 +103,7 @@ async function removeWorker(w: Worker) {
 // ── 接入新 Worker：mintToken + docker 命令 ──
 // 镜像 owner/tag 不写死:优先构建期注入(VITE_WORKER_IMAGE),回退默认值。
 const IMAGE = import.meta.env.VITE_WORKER_IMAGE || 'ghcr.io/gwzlchn/flori:latest'
-const WORKER_TYPES = ['cpu', 'gpu', 'ai', 'download']
+const WORKER_TYPES = ['cpu', 'gpu', 'ai', 'io']
 const TABS = [
   { id: 'gateway', label: '分布式' },
   { id: 'docker', label: 'docker run' },
@@ -290,10 +290,10 @@ onMounted(refreshAll)
             <span class="sep">·</span><span>心跳 {{ fmtRelative(w.last_heartbeat) }}</span>
           </div>
         </div>
-        <!-- 在线/排空中：排空/取消 + 备注入口（备注跳详情编辑）；离线：移除 -->
+        <!-- 在线/已暂停：暂停/恢复 + 备注入口（备注跳详情编辑）；离线：移除 -->
         <template v-if="isOnline(w)">
-          <button class="btn sm" :disabled="rowBusy === w.id" @click.stop="toggleDrain(w)">
-            <Loader :size="13" />{{ w.status === 'draining' ? '取消排空' : '排空' }}
+          <button class="btn sm" :disabled="rowBusy === w.id" @click.stop="togglePause(w)">
+            <Loader :size="13" />{{ w.status === 'paused' ? '恢复' : '暂停' }}
           </button>
           <button class="btn sm" @click.stop="router.push(`/system/workers/${encodeURIComponent(w.id)}`)">
             <MessageSquare :size="13" />备注

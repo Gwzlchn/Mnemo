@@ -70,7 +70,7 @@ export type WorkerStatus =
   | 'online-idle'
   | 'online-busy'
   | 'offline'
-  | 'draining'
+  | 'paused'
   | 'stale'
 
 export interface Worker {

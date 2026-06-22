@@ -16,7 +16,7 @@ ONLINE_IDLE = "online-idle"
 ONLINE_BUSY = "online-busy"
 OFFLINE = "offline"
 STALE = "stale"
-DRAINING = "draining"
+PAUSED = "paused"
 
 
 def compute_worker_status(
@@ -29,7 +29,7 @@ def compute_worker_status(
 ) -> str:
     """把存量字段折算成对外公共状态。
 
-    判定优先级：draining(管理员叠加，仍在线才生效) → offline → stale → online-busy → online-idle。
+    判定优先级：paused(管理员叠加，仍在线才生效) → offline → stale → online-busy → online-idle。
     心跳缺失或超过 online_window 即视作不在线；超过 stale_window 进一步判 stale（GC 信号）。
     """
     if now is None:
@@ -43,10 +43,10 @@ def compute_worker_status(
 
     online = age is not None and age <= online_window_sec
 
-    if admin_status == DRAINING:
-        # 管理员置位 draining：仍在线显示 draining；已离线则按离线/失联归类。
+    if admin_status == PAUSED:
+        # 管理员置位 paused：仍在线显示 paused；已离线则按离线/失联归类。
         if online:
-            return DRAINING
+            return PAUSED
 
     if not online:
         if age is None or age > stale_window_sec:

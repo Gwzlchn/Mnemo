@@ -38,21 +38,21 @@ describe('useWorkerStore', () => {
     expect(store.loading).toBe(false)
   })
 
-  it('drain: PUT status=draining 后刷新', async () => {
+  it('pause: PUT status=paused 后刷新', async () => {
     put.mockResolvedValueOnce(undefined)
     get.mockResolvedValueOnce([])
     const store = useWorkerStore()
-    await store.drain('w1')
-    expect(put).toHaveBeenCalledWith('/api/workers/w1', { status: 'draining' })
+    await store.pause('w1')
+    expect(put).toHaveBeenCalledWith('/api/workers/w1', { status: 'paused' })
     expect(get).toHaveBeenCalledWith('/api/workers')
   })
 
-  it('undrain: PUT status=idle 后刷新', async () => {
+  it('resume: PUT status=active 后刷新', async () => {
     put.mockResolvedValueOnce(undefined)
     get.mockResolvedValueOnce([])
     const store = useWorkerStore()
-    await store.undrain('w1')
-    expect(put).toHaveBeenCalledWith('/api/workers/w1', { status: 'idle' })
+    await store.resume('w1')
+    expect(put).toHaveBeenCalledWith('/api/workers/w1', { status: 'active' })
     expect(get).toHaveBeenCalledWith('/api/workers')
   })
 

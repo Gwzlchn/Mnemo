@@ -251,23 +251,23 @@ class TestWorkerCRUD:
         ).fetchone()
         assert row["status"] == "stale"
 
-    def test_list_workers_draining_overlay(self, db):
-        """draining 是管理员叠加位：仍在线显示 draining，离线后回落到失联归类。"""
+    def test_list_workers_paused_overlay(self, db):
+        """paused 是管理员叠加位(独立 admin_status 列)：仍在线显示 paused，离线后回落到失联归类。"""
         from datetime import datetime, timedelta, timezone
 
         fresh = datetime.now(timezone.utc)
         old = datetime.now(timezone.utc) - timedelta(minutes=30)
         db.upsert_worker(
-            Worker(id="cpu-drain-on", type="cpu", status="draining",
+            Worker(id="cpu-paused-on", type="cpu", admin_status="paused",
                    first_seen=fresh, last_heartbeat=fresh)
         )
         db.upsert_worker(
-            Worker(id="cpu-drain-dead", type="cpu", status="draining",
+            Worker(id="cpu-paused-dead", type="cpu", admin_status="paused",
                    first_seen=old, last_heartbeat=old)
         )
         workers = {w.id: w for w in db.list_workers()}
-        assert workers["cpu-drain-on"].status == "draining"
-        assert workers["cpu-drain-dead"].status == "stale"
+        assert workers["cpu-paused-on"].status == "paused"
+        assert workers["cpu-paused-dead"].status == "stale"
 
     def test_set_worker_status_does_not_touch_heartbeat(self, db):
         from datetime import datetime, timedelta, timezone

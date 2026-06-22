@@ -33,6 +33,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tags", nargs="*", default=None, help="Capability tags")
     parser.add_argument("--reject-tags", nargs="*", default=None, help="Reject tags")
     parser.add_argument("--pools", nargs="*", default=None, help="Override default pools")
+    parser.add_argument(
+        "--concurrency", type=int, default=None,
+        help="同时执行的 step 数(本机容量;默认 1,或 env WORKER_CONCURRENCY)。"
+             "全局每池上限仍是系统级天花板。",
+    )
     return parser.parse_args()
 
 
@@ -79,11 +84,15 @@ async def main() -> None:
     pools = args.pools or WORKER_POOLS[args.type]
     tags = set(args.tags) if args.tags else auto_discover_tags()
     reject_tags = set(args.reject_tags) if args.reject_tags else set()
+    concurrency = (
+        args.concurrency if args.concurrency is not None
+        else int(os.environ.get("WORKER_CONCURRENCY", "1"))
+    )
 
     worker = Worker(
         transport=transport, config=config, storage=storage,
         worker_type=args.type, pools=pools,
-        tags=tags, reject_tags=reject_tags,
+        tags=tags, reject_tags=reject_tags, concurrency=concurrency,
     )
 
     loop = asyncio.get_running_loop()

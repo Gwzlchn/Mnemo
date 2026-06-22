@@ -55,9 +55,9 @@ services:
       - redis
     restart: unless-stopped
 
-  worker-download:
+  worker-io:
     build: ./worker
-    command: python3 worker.py --type download
+    command: python3 worker.py --type io
     volumes:
       - ${DATA_DIR:-./data}:/data
     environment:

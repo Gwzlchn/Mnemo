@@ -6,7 +6,7 @@ export function workerDotClass(status: string | null | undefined): string {
   switch (status) {
     case 'online-idle': return 'd-ok'
     case 'online-busy': return 'd-info'
-    case 'draining': return 'd-warn'
+    case 'paused': return 'd-warn'
     case 'stale': return 'd-bad'
     default: return 'd-mut'
   }

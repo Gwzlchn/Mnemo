@@ -262,7 +262,7 @@ GET /api/jobs/{id}/notes/transcript     → text/markdown (逐字稿)
 ```json
 {
   "workers": {
-    "download": {"online": 1, "busy": 0},
+    "io":       {"online": 1, "busy": 0},
     "cpu":      {"online": 1, "busy": 1},
     "ai":      {"online": 2, "busy": 1},
     "gpu":      {"online": 0, "busy": 0}
@@ -295,7 +295,7 @@ GET /api/jobs/{id}/notes/transcript     → text/markdown (逐字稿)
 
 ### 1.4 Worker 管理
 
-`GET /api/workers` 返回的 `status` 是后端按心跳新鲜度+是否在跑+管理员叠加位读时派生的公共态（`online-idle` / `online-busy` / `offline` / `stale` / `draining`，见 §3.4）；下文示例中的 `idle`/`busy` 是历史字段示意，实际响应为派生态。
+`GET /api/workers` 返回的 `status` 是后端按心跳新鲜度+是否在跑+管理员叠加位读时派生的公共态（`online-idle` / `online-busy` / `offline` / `stale` / `paused`，见 §3.4）；下文示例中的 `idle`/`busy` 是历史字段示意，实际响应为派生态。
 
 #### POST /api/workers/registration-token — 铸接入 token
 
@@ -377,9 +377,14 @@ Response `200`:
 #### PUT /api/workers/{id} — 更新 Worker 配置
 
 ```bash
-# 设置 Worker 为排空状态（完成当前任务后不再接新任务）
+# 暂停 Worker（停止认领新任务，跑完当前步后等待；服务端写独立 admin_status 叠加位，
+# 与运行时 busy/idle 解耦 → busy worker 暂停后跑完当前步不会丢暂停态）
 curl -X PUT http://localhost:8000/api/workers/ai-a1b2c3d4 \
-  -d '{"status": "draining"}'
+  -d '{"status": "paused"}'
+
+# 恢复 Worker（status 传 active / idle / resume 均视为恢复）
+curl -X PUT http://localhost:8000/api/workers/ai-a1b2c3d4 \
+  -d '{"status": "active"}'
 
 # 添加运维备注
 curl -X PUT http://localhost:8000/api/workers/ai-a1b2c3d4 \
@@ -452,7 +457,7 @@ GET  /api/config/styles                → 可用风格标签列表
 
 ```
 POST   /api/runner/register                                → 换发 per-worker token
-POST   /api/runner/heartbeat                               → 刷新存活，回发 draining 控制位
+POST   /api/runner/heartbeat                               → 刷新存活，回发 paused 控制位（{"paused": bool}）
 POST   /api/runner/offline                                 → 主动下线
 POST   /api/runner/jobs/request                            → 长轮询认领一步（认到即返回 enrich 后的 claim）
 POST   /api/runner/jobs/{id}/steps/{step}/complete         → 上报完成
@@ -1112,12 +1117,13 @@ Fields: 每个 running 步骤 → 执行它的 Worker ID
 Key:    worker:{worker_id}
 Type:   HASH
 Fields:
-  type:           "cpu" | "gpu" | "ai" | "download"
+  type:           "cpu" | "gpu" | "ai" | "io"
   pools:          "scene,cpu,io"
   tags:           "vision,claude-cli"              ← 能力标签
   reject_tags:    "private,confidential"              ← 排斥标签（可选）
   hostname:       "gpu-server" | ""
-  status:         "idle" | "busy" | "draining" | "offline"   ← 存量字段，非对外公共态
+  status:         "idle" | "busy" | "offline"        ← 运行时态(busy/idle，非对外公共态)
+  admin_status:   "" | "paused"                       ← 管理员暂停叠加位，与运行时 status 解耦
   current_job:    "j_xxx" | ""
   current_step:   "03_scene" | ""
   gpu_name:       "RTX 4090" | ""
@@ -1128,17 +1134,19 @@ TTL:    30 秒（心跳续期）
 Redis 为实时状态；持久记录（统计/历史/备注）存 SQLite workers 表。
 ```
 
-**公共状态是读时派生，不直接存。** SQLite/Redis 里 `status` 存的是存量态（`idle` / `busy` / `stale` / `draining` / `offline`，worker 自报或管理员置位）；`GET /api/workers` 不信任该字段，而是按 `shared/status.py` 的 `compute_worker_status()` 用 `last_heartbeat` 新鲜度 + `current_job` + 管理员 `draining` 叠加位现算出对外公共态：
+**公共状态是读时派生，不直接存。** 运行时 `status`（`idle` / `busy` / `offline`，worker 自报）与管理员暂停态 `admin_status`（`"" / "paused"`，仅 API 写）是**两个独立字段**；`GET /api/workers` 不信任运行时 `status`，而是按 `shared/status.py` 的 `compute_worker_status()` 用 `last_heartbeat` 新鲜度 + `current_job` + 管理员 `admin_status` 叠加位现算出对外公共态。拆成两字段是为了让 `claim/release/心跳` 写运行时 `status` 时**不会覆盖暂停态**（旧实现 draining 复用 `status` 字段会被覆盖）：
 
 | 公共态 | 含义 |
 |--------|------|
 | `online-busy` | 心跳新鲜且有在跑任务 |
 | `online-idle` | 心跳新鲜且空闲 |
-| `draining` | 管理员置 draining 且仍在线（完成当前任务后不再接新任务） |
+| `paused` | 管理员置 `admin_status=paused` 且仍在线（停止认领新任务，跑完当前步后等待，恢复前不接新活） |
 | `offline` | 心跳超 `online_window`（默认 30s）但未到 `stale_window` |
 | `stale` | 心跳缺失或超 `stale_window`（默认 900s），GC 信号 |
 
-判定优先级：`draining`（仅在线生效）→ `offline` → `stale` → `online-busy` → `online-idle`。窗口阈值取自 `configs/pools.yaml` 的 `worker_status` 段，缺省回退内置默认。容器跑 UTC，故由后端统一派生，前端只渲染、不再用本地时区自算。
+判定优先级：`paused`（仅在线生效）→ `offline` → `stale` → `online-busy` → `online-idle`。窗口阈值取自 `configs/pools.yaml` 的 `worker_status` 段，缺省回退内置默认。容器跑 UTC，故由后端统一派生，前端只渲染、不再用本地时区自算。
+
+> 暂停态的调度交互：被暂停的 worker 在 `scheduler._pool_has_workers` 里算「无可用 worker」，故只剩暂停 worker 服务的池里、已就绪的步会等待，超 `NO_WORKER_GRACE_SEC`（默认 12h）才被 fail-fast。配合「夜间只跑 io worker / 白天暂停某类 worker」的运维窗口。
 
 ### 3.5 事件发布
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Worker 详情（原型 #wdetail）：单个 worker 完整统计 + 基本信息 + 任务历史(recent_tasks)
-// + 备注编辑 + 排空/移除。worker 主体走 GET /api/workers/{id}；历史走 store.fetchJobs(id)。
+// + 备注编辑 + 暂停/移除。worker 主体走 GET /api/workers/{id}；历史走 store.fetchJobs(id)。
 import { ref, computed, onMounted, onBeforeUnmount, inject } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
@@ -79,17 +79,17 @@ function stepIcon(step: string): any {
   return STEP_ICON[key] || FileText
 }
 
-// ── 操作：排空 / 取消排空 / 移除 / 备注 ──
-async function toggleDrain() {
+// ── 操作：暂停 / 恢复 / 移除 / 备注 ──
+async function togglePause() {
   if (!worker.value) return
   busy.value = true
   try {
-    if (worker.value.status === 'draining') {
-      await workerStore.undrain(workerId.value)
-      showToast('已取消排空', 'success')
+    if (worker.value.status === 'paused') {
+      await workerStore.resume(workerId.value)
+      showToast('已恢复', 'success')
     } else {
-      await workerStore.drain(workerId.value)
-      showToast('已置为排空中', 'success')
+      await workerStore.pause(workerId.value)
+      showToast('已暂停', 'success')
     }
     await load()
   } catch {
@@ -167,8 +167,8 @@ onBeforeUnmount(() => global.setCrumbs(null))
         </span>
         <div style="margin-left:auto;display:flex;gap:8px">
           <button class="btn sm" @click="load"><RefreshCw :size="13" />刷新</button>
-          <button v-if="isOnline || worker.status === 'draining'" class="btn sm" :disabled="busy" @click="toggleDrain">
-            <Loader :size="13" />{{ worker.status === 'draining' ? '取消排空' : '排空' }}
+          <button v-if="isOnline || worker.status === 'paused'" class="btn sm" :disabled="busy" @click="togglePause">
+            <Loader :size="13" />{{ worker.status === 'paused' ? '恢复' : '暂停' }}
           </button>
           <button class="btn sm danger" :disabled="busy" @click="removeWorker"><X :size="13" />移除</button>
         </div>

@@ -135,7 +135,7 @@ describe('WorkersView', () => {
     })
     await flushPromises()
     const metrics = w.findAll('.metric .v').map(n => n.text())
-    // 在线(online* + draining)=2 / 共 3；忙碌=1
+    // 在线(online* + paused)=2 / 共 3；忙碌=1
     expect(metrics[0]).toBe('2 / 3')
     expect(metrics[1]).toBe('1')
   })
@@ -148,34 +148,34 @@ describe('WorkersView', () => {
     expect(metrics[2]).toBe('42')
   })
 
-  it('在线 worker 显示“排空”按钮，点击调用 store.drain', async () => {
+  it('在线 worker 显示“暂停”按钮，点击调用 store.pause', async () => {
     const w = mountView({
-      workers: [makeWorker({ id: 'w-drain', status: 'online-idle' })],
+      workers: [makeWorker({ id: 'w-pause', status: 'online-idle' })],
     })
     await flushPromises()
     const store = useWorkerStore()
-    expect(w.text()).toContain('排空')
-    // 第一个 .btn.sm 是行内 drain 按钮
-    const drainBtn = w.findAll('.wcard .btn.sm').find(b => b.text().includes('排空'))
-    expect(drainBtn).toBeTruthy()
-    await drainBtn!.trigger('click')
+    expect(w.text()).toContain('暂停')
+    // 第一个 .btn.sm 是行内 暂停 按钮
+    const pauseBtn = w.findAll('.wcard .btn.sm').find(b => b.text().includes('暂停'))
+    expect(pauseBtn).toBeTruthy()
+    await pauseBtn!.trigger('click')
     await flushPromises()
-    expect(store.drain).toHaveBeenCalledWith('w-drain')
-    expect(store.undrain).not.toHaveBeenCalled()
+    expect(store.pause).toHaveBeenCalledWith('w-pause')
+    expect(store.resume).not.toHaveBeenCalled()
   })
 
-  it('draining worker 显示“取消排空”，点击调用 store.undrain', async () => {
+  it('paused worker 显示“恢复”，点击调用 store.resume', async () => {
     const w = mountView({
-      workers: [makeWorker({ id: 'w-undrain', status: 'draining' })],
+      workers: [makeWorker({ id: 'w-resume', status: 'paused' })],
     })
     await flushPromises()
     const store = useWorkerStore()
-    const btn = w.findAll('.wcard .btn.sm').find(b => b.text().includes('取消排空'))
+    const btn = w.findAll('.wcard .btn.sm').find(b => b.text().includes('恢复'))
     expect(btn).toBeTruthy()
     await btn!.trigger('click')
     await flushPromises()
-    expect(store.undrain).toHaveBeenCalledWith('w-undrain')
-    expect(store.drain).not.toHaveBeenCalled()
+    expect(store.resume).toHaveBeenCalledWith('w-resume')
+    expect(store.pause).not.toHaveBeenCalled()
   })
 
   it('离线 worker 显示“移除”，确认后调用 store.remove', async () => {

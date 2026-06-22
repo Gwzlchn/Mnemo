@@ -42,7 +42,7 @@
 - [x] 领域 Profile + 风格标签
 - [x] 视频分析步骤（16 个步骤 + StepBase 改造）
 - [x] 论文分析步骤（PDF 解析 + 章节/图表提取 + AI 笔记）
-- [x] Worker 管理（注册/心跳/持久记录/draining）
+- [x] Worker 管理（注册/心跳/持久记录/暂停恢复/per-worker 并发）
 - [x] FastAPI 服务（任务管理 + 文件服务 + Worker API）
 - [x] 前端：投递 + 进度 + 笔记阅读 + Worker 管理（手机版）
 - [x] 单元测试 423 pass（容器内 docker compose test 实跑）

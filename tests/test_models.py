@@ -66,7 +66,7 @@ class TestWorkerId:
         assert re.match(r"^cpu-[0-9a-f]{8}$", wid)
 
     def test_type_prefix(self):
-        for t in ["download", "cpu", "gpu", "ai"]:
+        for t in ["io", "cpu", "gpu", "ai"]:
             wid = generate_worker_id(t)
             assert wid.startswith(f"{t}-")
 

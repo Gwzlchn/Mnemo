@@ -114,9 +114,9 @@ class TestRequestStep:
         assert await redis.is_pool_frozen("cpu") is True
 
     @pytest.mark.asyncio
-    async def test_draining_returns_none(self, redis, db):
+    async def test_paused_returns_none(self, redis, db):
         t = await _registered(redis, db)
-        await redis.set_worker_field(WORKER_ID, "status", "draining")
+        await redis.set_worker_field(WORKER_ID, "admin_status", "paused")
         await redis.enqueue_step("cpu", "j1", "A", [], priority=0)
         await redis.set_step_status("j1", "A", "ready")
         await redis.init_job("j1", "test", {"domain": "general", "style_tags": "[]"})
@@ -754,9 +754,9 @@ class TestRedisTransportLifecycle:
     @pytest.mark.asyncio
     async def test_get_worker_status_reads_redis(self, redis, db):
         t = await _registered(redis, db)
-        await redis.set_worker_field(WORKER_ID, "status", "draining")
+        await redis.set_worker_field(WORKER_ID, "status", "busy")
 
-        assert await t.get_worker_status(WORKER_ID) == "draining"
+        assert await t.get_worker_status(WORKER_ID) == "busy"
 
     @pytest.mark.asyncio
     async def test_get_worker_status_missing_returns_none(self, redis, db):

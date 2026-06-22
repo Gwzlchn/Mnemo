@@ -67,11 +67,11 @@ services:
     depends_on:
       - redis
 
-  worker-download:
+  worker-io:
     build:
       context: .
       dockerfile: docker/base.Dockerfile
-    command: python -m worker.main --type download
+    command: python -m worker.main --type io
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

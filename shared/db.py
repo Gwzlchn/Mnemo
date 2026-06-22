@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS workers (
     gpu_name TEXT,
     gpu_memory_mb INTEGER,
     status TEXT NOT NULL DEFAULT 'offline',
+    admin_status TEXT NOT NULL DEFAULT '',
     current_job TEXT,
     current_step TEXT,
     tasks_completed INTEGER DEFAULT 0,
@@ -297,6 +298,7 @@ class Database:
         "workers": {
             "reject_tags": "reject_tags TEXT NOT NULL DEFAULT '[]'",
             "admin_note": "admin_note TEXT",
+            "admin_status": "admin_status TEXT NOT NULL DEFAULT ''",
         },
         "collections": {
             "source_type": "source_type TEXT",
@@ -592,10 +594,10 @@ class Database:
             self._conn.execute(
                 """INSERT OR REPLACE INTO workers
                    (id, type, pools, tags, reject_tags, hostname, gpu_name,
-                    gpu_memory_mb, status, current_job, current_step,
+                    gpu_memory_mb, status, admin_status, current_job, current_step,
                     tasks_completed, tasks_failed, total_duration_sec,
                     first_seen, started_at, last_heartbeat, admin_note)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     worker.id,
                     worker.type,
@@ -606,6 +608,7 @@ class Database:
                     worker.gpu_name,
                     worker.gpu_memory_mb,
                     worker.status,
+                    worker.admin_status,
                     worker.current_job,
                     worker.current_step,
                     worker.tasks_completed,
@@ -640,7 +643,7 @@ class Database:
         stale_window_sec: int = DEFAULT_STALE_WINDOW_SEC,
     ) -> list[Worker]:
         """列出所有 worker，状态由后端按心跳新鲜度统一算出（online-idle/busy、
-        offline、stale，draining 为管理员叠加）。越过 stale 窗口的持久化为信号，
+        offline、stale，paused 为管理员叠加）。越过 stale 窗口的持久化为信号，
         供 GC 回收僵尸 worker。"""
         rows = self._conn.execute("SELECT * FROM workers").fetchall()
         workers = [self._row_to_worker(r) for r in rows]
@@ -657,11 +660,11 @@ class Database:
         now: datetime | None = None,
     ) -> None:
         """把 worker 的存量字段折算成对外公共状态，并对 stale 持久化（不动心跳）。
-        存量 status 列只作管理员叠加位(draining)的来源。"""
+        管理员叠加位(paused)来自独立的 admin_status 列；运行时 status 列只供 busy/idle + GC。"""
         public = compute_worker_status(
             last_heartbeat=w.last_heartbeat,
             current_job=w.current_job,
-            admin_status=w.status,
+            admin_status=w.admin_status,
             now=now,
             online_window_sec=online_window_sec,
             stale_window_sec=stale_window_sec,
@@ -675,6 +678,15 @@ class Database:
         with self._lock:
             self._conn.execute(
                 "UPDATE workers SET status=? WHERE id=?", (status, worker_id),
+            )
+            self._conn.commit()
+
+    def set_worker_admin_status(self, worker_id: str, admin_status: str) -> None:
+        """仅更新管理员暂停叠加位("" / "paused")，不触碰运行时 status / 心跳。"""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE workers SET admin_status=? WHERE id=?",
+                (admin_status, worker_id),
             )
             self._conn.commit()
 
@@ -1546,6 +1558,7 @@ class Database:
             gpu_name=row["gpu_name"],
             gpu_memory_mb=row["gpu_memory_mb"],
             status=row["status"],
+            admin_status=row["admin_status"] if "admin_status" in row.keys() else "",
             current_job=row["current_job"],
             current_step=row["current_step"],
             tasks_completed=row["tasks_completed"],

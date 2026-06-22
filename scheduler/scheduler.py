@@ -755,15 +755,16 @@ class Scheduler:
         await self._check_downstream(job_id)
 
     async def _pool_has_workers(self, pool: str) -> bool:
-        """检查某个 pool 是否有可认领新任务的 worker。排除 draining/offline:claim_step 对
-        draining 直接拒认领,若 pool 只剩 draining,no-worker 判定/死锁打破器会误判为可推进 →
-        ready 步既无人认领又不被 fail-fast/skip,永久卡 ready。"""
+        """检查某个 pool 是否有可认领新任务的 worker。排除 paused/offline:claim_step 对
+        paused 直接拒认领,若 pool 只剩 paused,no-worker 判定/死锁打破器会误判为可推进 →
+        ready 步既无人认领又不被 fail-fast/skip,永久卡 ready。
+        暂停态算"无可用 worker":暂停期下载好的 job 进到该池会等候,超 NO_WORKER_GRACE_SEC 才 fail。"""
         workers = await self.redis.list_worker_ids()
         for wid in workers:
             info = await self.redis.get_worker_info(wid)
             if not info:
                 continue
-            if info.get("status") in ("draining", "offline"):
+            if info.get("admin_status") == "paused" or info.get("status") == "offline":
                 continue
             if pool in info.get("pools", "").split(","):
                 return True

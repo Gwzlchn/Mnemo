@@ -140,14 +140,14 @@ describe('WorkerDetailView', () => {
     expect(api.get).toHaveBeenCalledWith('/api/workers/w1')
   })
 
-  it('排空操作：PUT status=draining（worker store drain 走 mock api）', async () => {
+  it('暂停操作：PUT status=paused（worker store pause 走 mock api）', async () => {
     const w = factory()
     await flushPromises()
-    const drainBtn = w.findAll('button').find((b) => b.text().includes('排空') && !b.text().includes('取消'))
-    expect(drainBtn).toBeTruthy()
-    await drainBtn!.trigger('click')
+    const pauseBtn = w.findAll('button').find((b) => b.text().includes('暂停'))
+    expect(pauseBtn).toBeTruthy()
+    await pauseBtn!.trigger('click')
     await flushPromises()
-    expect(api.put).toHaveBeenCalledWith('/api/workers/w1', { status: 'draining' })
+    expect(api.put).toHaveBeenCalledWith('/api/workers/w1', { status: 'paused' })
   })
 
   it('移除操作：confirm 通过后 force=true 删除并跳转 /system', async () => {

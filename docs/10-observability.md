@@ -72,7 +72,7 @@ GET /api/health
     "db": "ok",
     "disk_free_gb": 600.0,
     "workers_online": 4,
-    "workers_by_type": {"download": 1, "cpu": 1, "ai": 2, "gpu": 0}
+    "workers_by_type": {"io": 1, "cpu": 1, "ai": 2, "gpu": 0}
   }
 }
 ```

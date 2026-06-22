@@ -76,6 +76,9 @@ class Worker:
     tags: set[str] = field(default_factory=set)
     reject_tags: set[str] = field(default_factory=set)
     status: str = "offline"
+    # 管理员暂停叠加位（"" / "paused"），与运行时 status(idle/busy) 解耦：
+    # 暂停态只由 API 写，worker 认领/心跳永不覆盖，故 busy worker 暂停后跑完当前步不会丢暂停。
+    admin_status: str = ""
     hostname: str | None = None
     gpu_name: str | None = None
     gpu_memory_mb: int | None = None

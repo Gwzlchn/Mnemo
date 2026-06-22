@@ -118,6 +118,7 @@ class RedisTransport:
             "reject_tags": ",".join(sorted(reject_tags)),
             "hostname": hostname,
             "status": "idle",
+            "admin_status": "",
             "started_at": now.isoformat(),
             "last_heartbeat": now.isoformat(),
         }

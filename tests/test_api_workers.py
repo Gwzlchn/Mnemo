@@ -74,14 +74,14 @@ class TestWorkers:
     @pytest.mark.asyncio
     async def test_update_worker(self, client, db):
         _make_worker(db)
-        resp = await client.put("/api/workers/cpu-test001", json={"status": "draining"})
+        resp = await client.put("/api/workers/cpu-test001", json={"status": "paused"})
         assert resp.status_code == 200
-        # 存量 status 列写入 draining；公共状态(在线+draining)也是 draining
+        # admin_status 列写入 paused；公共状态(在线+paused)也是 paused
         row = db._conn.execute(
-            "SELECT status FROM workers WHERE id=?", ("cpu-test001",)
+            "SELECT admin_status FROM workers WHERE id=?", ("cpu-test001",)
         ).fetchone()
-        assert row["status"] == "draining"
-        assert db.get_worker("cpu-test001").status == "draining"
+        assert row["admin_status"] == "paused"
+        assert db.get_worker("cpu-test001").status == "paused"
 
     @pytest.mark.asyncio
     async def test_delete_offline_worker(self, client, db):
@@ -169,10 +169,10 @@ class TestStatusSemantics:
         assert body["status"] == "stale"
 
     @pytest.mark.asyncio
-    async def test_online_draining_overlay(self, client, db):
-        _make_worker(db, id="w-drain", status="draining")
-        body = (await client.get("/api/workers/w-drain")).json()
-        assert body["status"] == "draining"
+    async def test_online_paused_overlay(self, client, db):
+        _make_worker(db, id="w-paused", admin_status="paused")
+        body = (await client.get("/api/workers/w-paused")).json()
+        assert body["status"] == "paused"
 
     @pytest.mark.asyncio
     async def test_list_online_count(self, client, db):
@@ -186,15 +186,15 @@ class TestStatusSemantics:
         assert by_id["w3"]["status"] == "stale"
 
 
-class TestDrainWritesRedis:
-    """drain 真生效：PUT status 必须同步写 Redis 字段(worker 读 Redis 判 draining)。"""
+class TestPauseWritesRedis:
+    """暂停真生效：PUT status=paused 必须同步写 Redis admin_status(worker 认领读 Redis 判暂停)。"""
 
     @pytest.mark.asyncio
     async def test_put_status_writes_redis(self, client, db, redis_mock):
         _make_worker(db, id="w-d")
-        resp = await client.put("/api/workers/w-d", json={"status": "draining"})
+        resp = await client.put("/api/workers/w-d", json={"status": "paused"})
         assert resp.status_code == 200
-        redis_mock.set_worker_field.assert_any_call("w-d", "status", "draining")
+        redis_mock.set_worker_field.assert_any_call("w-d", "admin_status", "paused")
 
     @pytest.mark.asyncio
     async def test_put_tags_writes_db_and_redis(self, client, db, redis_mock):

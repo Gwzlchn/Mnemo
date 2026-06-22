@@ -16,6 +16,7 @@ from shared.status import (
     DEFAULT_ONLINE_WINDOW_SEC,
     DEFAULT_STALE_WINDOW_SEC,
     OFFLINE,
+    PAUSED,
     STALE,
     compute_worker_status,
 )
@@ -115,7 +116,7 @@ async def list_workers(
         status = compute_worker_status(
             last_heartbeat=_parse_iso(info.get("last_heartbeat")),
             current_job=info.get("current_job") or None,
-            admin_status=info.get("status"),
+            admin_status=info.get("admin_status"),
             now=now,
             online_window_sec=online_window,
             stale_window_sec=stale_window,
@@ -198,8 +199,17 @@ async def update_worker(
     w = await asyncio.to_thread(db.get_worker, worker_id)
     if not w:
         raise HTTPException(404, "worker not found")
+    # status 入参解释为暂停/恢复指令 → 写独立的 admin_status 叠加位(不碰运行时 status)。
+    # 这样 busy worker 暂停后跑完当前步不会被 idle 覆盖,gateway 心跳自报 idle 也不覆盖。
+    admin_status: str | None = None
     if req.status is not None:
-        w.status = req.status
+        if req.status == PAUSED:
+            admin_status = PAUSED
+        elif req.status in ("active", "resume", "idle", "online-idle", ""):
+            admin_status = ""
+        else:
+            raise HTTPException(400, f"无效 status '{req.status}'(仅支持 'paused' / 'active')")
+        w.admin_status = admin_status
     if req.admin_note is not None:
         w.admin_note = req.admin_note
     if req.tags is not None:
@@ -207,10 +217,10 @@ async def update_worker(
     if req.reject_tags is not None:
         w.reject_tags = set(req.reject_tags)
     await asyncio.to_thread(db.upsert_worker, w)
-    # drain 真生效：worker 读 Redis 的 status 判 draining，只写 SQLite 不顶用，
-    # 必须把 status 同步进 Redis 字段。tags 同理透传给在跑的 worker 认领逻辑。
-    if req.status is not None:
-        await redis.set_worker_field(worker_id, "status", req.status)
+    # 暂停真生效：worker 认领读 Redis 的 admin_status,只写 SQLite 不顶用,必须同步进 Redis。
+    # tags 同理透传给在跑的 worker 认领逻辑。
+    if admin_status is not None:
+        await redis.set_worker_field(worker_id, "admin_status", admin_status)
     if req.tags is not None:
         await redis.set_worker_field(worker_id, "tags", ",".join(sorted(req.tags)))
     if req.reject_tags is not None:
@@ -243,7 +253,7 @@ async def delete_worker(
         status = compute_worker_status(
             last_heartbeat=_parse_iso(info.get("last_heartbeat")),
             current_job=info.get("current_job") or None,
-            admin_status=info.get("status"),
+            admin_status=info.get("admin_status"),
             online_window_sec=online_window,
             stale_window_sec=stale_window,
         )

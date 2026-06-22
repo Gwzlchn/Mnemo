@@ -9,12 +9,14 @@
 
 | 类型 | 运行位置 | 消费池 | 负责步骤（video 示例） |
 |------|---------|--------|---------|
-| download | 主机 | io | 01_download |
+| io | 主机 | io | 01_download（纯下载/出网，类型名即其唯一订阅的池） |
 | cpu | 主机 / GPU机器 | scene, cpu, io | 03_scene / 04_frames / 05_dedup / 06_ocr / 07_danmaku / 09_mechanical |
 | ai | 主机 | ai, io | 08_punctuate / 10_smart / 11_review |
 | gpu | GPU 机器 | gpu, scene, cpu, io | 02_whisper / 03_scene(GPU) / 06_ocr(GPU) |
 
 Worker 类型决定了它消费哪些池的队列。一个 Worker 可以消费多个池。
+
+**并发度（本机容量）**：`--concurrency N`（或 env `WORKER_CONCURRENCY`，默认 1）让一个 worker 进程并发跑 N 个 step（起 N 条认领循环）。异构机器据此自报容量（强机调大、弱机=1）；**全局每池槽位（`pools.yaml` 的 `limit`）仍是系统级天花板**，并发度只决定单 worker 的并行上限。接多台同类机器（如多台 GPU 机）= 各起一个 worker，要跨机并行需相应调大对应池的 `limit`。
 
 ## 2. 自取主循环
 
@@ -49,9 +51,9 @@ class Worker:
 
     async def fetch_task(self) -> dict | None:
         """从多个池队列中取最高优先级任务（带 tag 亲和性）"""
-        # 检查是否 draining
-        status = await self.redis.hget(f"worker:{self.worker_id}", "status")
-        if status == "draining":
+        # 检查是否被管理员暂停（独立的 admin_status 叠加位，与运行时 status 解耦）
+        admin_status = await self.redis.hget(f"worker:{self.worker_id}", "admin_status")
+        if admin_status == "paused":
             return None
 
         for pool in self.pool_names:
@@ -277,9 +279,11 @@ task["tags"] = list(set(step_tags + job_tags))        # 合并：["vision", "dee
 
 这样声明了 `reject_tags: {"private"}` 的 Worker 就能过滤掉所有标记为内部数据的任务。
 
-### draining 状态（安全下线）
+### paused 状态（暂停 / 恢复）
 
-管理员通过 `PUT /api/workers/{id}` 设置 Worker 为 draining → Worker 的 `fetch_task()` 检测到 draining → 不再接新任务 → 当前任务完成后自动退出。
+管理员通过 `PUT /api/workers/{id}` 传 `{"status":"paused"}` 暂停、`{"status":"active"}` 恢复。服务端把暂停态写进**独立的 `admin_status` 字段**（Redis hash + DB 列），认领时 `claim_step` 读它 → 暂停则不再认领新任务（已在跑的步跑完为止，进程留存、几乎不耗资源，恢复前不接新活）。
+
+与运行时 `status`(busy/idle) 解耦是关键：旧的 draining 复用 `status` 字段，会被 claim/release 的 busy/idle 写入、以及 gateway 心跳自报的 idle 覆盖（三个 bug）；拆成 `admin_status` 后暂停态稳定。对本地与远程（网关）worker 一致生效，无需 docker.sock。前端「暂停/恢复」按钮即调此接口（见 ADR-0011）。
 
 ## 4. 统一存储接口（StorageBackend）
 

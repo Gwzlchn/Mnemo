@@ -162,10 +162,10 @@
 └──────────────────────────────────────────────────────────┘
 ```
 
-**状态灯**（公共态后端权威派生，前端只渲染）：🟢 online-idle / 🟡 online-busy / 🟠 draining / ⚪ offline / 🔴 stale
+**状态灯**（公共态后端权威派生，前端只渲染）：🟢 online-idle / 🟡 online-busy / 🟠 paused / ⚪ offline / 🔴 stale
 
 **操作**：
-- 排空（draining）：完成当前任务后不再接新任务，用于安全下线
+- 暂停 / 恢复（paused）：停止认领新任务，跑完当前步后等待；恢复前不接新活（PUT status=paused/active）
 - 备注：给 Worker 加人工备注（如"内网机器，有 Claude 订阅"）
 - 移除：清理已下线 Worker 的历史记录
 
