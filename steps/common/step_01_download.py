@@ -361,25 +361,35 @@ class DownloadStep(StepBase):
         input_dir = self.job_dir / "input"
         metadata: dict = {"source": source, "content_type": content_type}
 
+        def _set_size(p: Path) -> None:
+            # 原始文件大小:存精确字节(前端转 KB/MB/GB)+ 兼容旧 file_size_mb。
+            b = p.stat().st_size
+            metadata["file_size_bytes"] = b
+            metadata["file_size_mb"] = round(b / 1048576, 1)
+
         video_file = input_dir / "source.mp4"
         if video_file.exists():
             metadata["duration_sec"] = self._get_video_duration(video_file)
-            metadata["file_size_mb"] = round(video_file.stat().st_size / 1048576, 1)
+            _set_size(video_file)
+            w, h = self._get_video_resolution(video_file)
+            if w and h:
+                metadata["width"], metadata["height"] = w, h
+                metadata["resolution"] = f"{w}x{h}"
 
         pdf_file = input_dir / "source.pdf"
         if pdf_file.exists():
-            metadata["file_size_mb"] = round(pdf_file.stat().st_size / 1048576, 1)
+            _set_size(pdf_file)
 
         html_file = input_dir / "source.html"
         if html_file.exists():
-            metadata["file_size_mb"] = round(html_file.stat().st_size / 1048576, 1)
+            _set_size(html_file)
 
         # 音频:对原始音频文件(非复制出的 source.mp4)取时长与大小。
         for ext in (".mp3", ".m4a", ".wav", ".aac"):
             audio_file = input_dir / f"source{ext}"
             if audio_file.exists():
                 metadata["duration_sec"] = self._get_video_duration(audio_file)
-                metadata["file_size_mb"] = round(audio_file.stat().st_size / 1048576, 1)
+                _set_size(audio_file)
                 break
 
         metadata["has_subtitle"] = any(input_dir.glob("*.srt"))
@@ -402,6 +412,27 @@ class DownloadStep(StepBase):
         except (subprocess.TimeoutExpired, ValueError):
             pass
         return None
+
+    def _get_video_resolution(self, video_path: Path) -> tuple[int | None, int | None]:
+        """ffprobe 取视频首个视频流的宽高(像素)。失败返回 (None, None)。"""
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe", "-v", "quiet",
+                    "-select_streams", "v:0",
+                    "-show_entries", "stream=width,height",
+                    "-of", "csv=s=x:p=0",
+                    str(video_path),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            out = result.stdout.strip()
+            if result.returncode == 0 and "x" in out:
+                w, h = out.split("x")[:2]
+                return int(w), int(h)
+        except (subprocess.TimeoutExpired, ValueError):
+            pass
+        return None, None
 
 
 if __name__ == "__main__":

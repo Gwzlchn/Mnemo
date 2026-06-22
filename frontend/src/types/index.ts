@@ -32,11 +32,25 @@ export interface StepInfo {
   error: string | null
 }
 
+export interface JobMedia {
+  resolution?: string           // 视频:如 "1920x1080"
+  width?: number
+  height?: number
+  duration_sec?: number         // 源视频/音频时长
+  file_size_bytes?: number      // 原始文件精确字节(前端转 KB/MB/GB)
+  file_size_mb?: number
+  has_subtitle?: boolean
+  has_danmaku?: boolean
+  word_count?: number           // 文章:字数
+}
+
 export interface JobDetail extends JobSummary {
   url: string | null
   updated_at: string | null
   published_at: string | null   // 源内容发布时间(「上传于」)
   collection_name: string | null // 由 collection_id join 出,无归属/集合已删则 null
+  media: JobMedia               // 源媒体元信息(视频→分辨率/时长/大小、文章→字数),来自 metadata.json/parsed.json
+  artifacts: string[]           // 可见产物文件路径
   meta: Record<string, any>
   steps: StepInfo[]
 }

@@ -77,6 +77,7 @@ class ParseArticleStep(StepBase):
             "url": meta.get("url", ""),
             "sitename": meta.get("sitename", ""),
             "date": date,
+            "word_count": len(text),   # 字数(元信息标签页:文章用字数,视频用分辨率)
             "sections": sections,
             "text": text,
         }

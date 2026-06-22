@@ -70,6 +70,17 @@ function fmtDur(sec: number | null): string {
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60)
   return h ? `${h}h${m}m` : m ? `${m}m${s}s` : `${s}s`
 }
+// 原始文件大小:字节优先(精确,可转 KB);无字节时回退 MB。
+function fmtSize(media: { file_size_bytes?: number; file_size_mb?: number }): string {
+  let b = media.file_size_bytes
+  if (b == null && media.file_size_mb != null) b = media.file_size_mb * 1048576
+  if (b == null) return '—'
+  if (b < 1024) return `${b} B`
+  const u = ['KB', 'MB', 'GB', 'TB']
+  let v = b / 1024, i = 0
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ }
+  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${u[i]}`
+}
 const anyRunning = computed(() => steps.value.some(s => s.status === 'running'))
 const genStart = computed(() => {
   const t = steps.value.map(s => s.started_at).filter(Boolean).map(x => +new Date(x as string))
@@ -602,6 +613,20 @@ watch(job, (j) => {
             <tr><td>标题</td><td>{{ job.title || '—' }}</td></tr>
             <tr><td>类型</td><td>{{ CONTENT_TYPE_LABELS[job.content_type] || job.content_type }}</td></tr>
             <tr><td>来源</td><td>{{ sourceLabel }}</td></tr>
+            <!-- 源媒体元信息(metadata.json/parsed.json):视频→时长+分辨率、文章→字数、通用→原始大小/字幕 -->
+            <tr v-if="job.media?.duration_sec"><td>时长</td><td>{{ fmtDur(job.media.duration_sec) }}</td></tr>
+            <tr v-if="job.media?.resolution"><td>分辨率</td><td class="mono">{{ job.media.resolution }}</td></tr>
+            <tr v-if="job.media?.word_count"><td>字数</td><td>{{ job.media.word_count.toLocaleString() }} 字</td></tr>
+            <tr v-if="job.media && (job.media.file_size_bytes != null || job.media.file_size_mb != null)">
+              <td>原始文件大小</td><td>{{ fmtSize(job.media) }}</td>
+            </tr>
+            <tr v-if="job.media && (job.media.has_subtitle !== undefined || job.media.has_danmaku !== undefined)">
+              <td>字幕/弹幕</td>
+              <td>
+                <span class="badge" :class="job.media.has_subtitle ? 'b-ok' : 'b-mut'">{{ job.media.has_subtitle ? '有字幕' : '无字幕' }}</span>
+                <span v-if="job.media.has_danmaku" class="badge b-info" style="margin-left:5px">有弹幕</span>
+              </td>
+            </tr>
             <tr><td>知识库</td><td>{{ job.domain || '—' }}</td></tr>
             <tr><td>集合</td><td>
               <template v-if="collectionName">
@@ -620,6 +645,15 @@ watch(job, (j) => {
             <tr v-if="job.updated_at"><td>更新于</td><td>{{ fmtDateTime(job.updated_at) }}</td></tr>
             <tr><td>生成耗时</td><td>{{ genEnd ? fmtDur(genDurSec) : (anyRunning ? '进行中' : '—') }}</td></tr>
           </table>
+
+          <!-- 产物路径 -->
+          <div v-if="job.artifacts?.length" class="artifacts">
+            <div class="card-h" style="margin-top:18px"><Info :size="14" />产物路径 · {{ job.artifacts.length }}</div>
+            <ul class="art-list">
+              <li v-for="p in job.artifacts" :key="p" class="mono">{{ p }}</li>
+            </ul>
+          </div>
+
           <div style="margin-top:16px;display:flex;gap:8px">
             <button v-if="jobStatus === 'failed'" class="btn" @click="retryJob"><RotateCcw :size="14" />重新提交</button>
             <button class="btn danger" @click="showDelete = true"><Trash2 :size="14" />删除内容</button>
@@ -644,3 +678,11 @@ watch(job, (j) => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.art-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.art-list li {
+  font-size: 12px; color: var(--ink-600); padding: 3px 8px; border-radius: 5px;
+  background: var(--raised); border: 1px solid var(--line-soft); word-break: break-all;
+}
+</style>

@@ -275,19 +275,55 @@ async def get_job(
         s["name"]: s.get("label")
         for s in config.pipelines.get(job.pipeline, {}).get("steps", [])
     }
-    # 源发布时间(「上传于」)由 01_download 写入 metadata.json;读不到则 None。
+    # 源媒体元信息(发布时间/分辨率/时长/大小/字幕)由 01_download 写入 metadata.json;读不到则空。
     published_at = None
+    media: dict = {}
     try:
         raw = await storage.read_file(job_id, "input/metadata.json")
         if raw:
-            published_at = json.loads(raw.decode("utf-8")).get("published_at")
+            md = json.loads(raw.decode("utf-8"))
+            published_at = md.get("published_at")
+            # 仅透出展示相关字段(元信息标签页用);分辨率优先 resolution,无则由 width×height 拼。
+            res = md.get("resolution")
+            if not res and md.get("width") and md.get("height"):
+                res = f"{md['width']}x{md['height']}"
+            media = {
+                k: v for k, v in {
+                    "resolution": res,
+                    "width": md.get("width"), "height": md.get("height"),
+                    "duration_sec": md.get("duration_sec"),
+                    "file_size_bytes": md.get("file_size_bytes"),
+                    "file_size_mb": md.get("file_size_mb"),
+                    "has_subtitle": md.get("has_subtitle"),
+                    "has_danmaku": md.get("has_danmaku"),
+                }.items() if v is not None
+            }
+    except Exception:
+        pass
+    # 文章:字数(视频是分辨率)——取自 02_parse 写入 parsed.json 的 word_count。
+    if job.content_type == "article":
+        try:
+            raw = await storage.read_file(job_id, "intermediate/parsed.json")
+            if raw:
+                wc = json.loads(raw.decode("utf-8")).get("word_count")
+                if wc is not None:
+                    media["word_count"] = wc
+        except Exception:
+            pass
+    # 产物路径(元信息标签页"产物路径"):列可见产物文件(隐藏内部点文件/job.json)。
+    artifacts: list[str] = []
+    try:
+        artifacts = sorted(
+            f for f in await storage.list_files(job_id)
+            if not (f.rsplit("/", 1)[-1].startswith(".") or f == "job.json")
+        )
     except Exception:
         pass
     return JobDetailResponse(
         job_id=job.id, content_type=job.content_type, status=job.status.value,
         created_at=job.created_at.isoformat(),
         updated_at=job.updated_at.isoformat() if job.updated_at else None,
-        published_at=published_at,
+        published_at=published_at, media=media, artifacts=artifacts,
         title=job.title, url=job.url,
         progress_pct=job.progress_pct, source=job.source, domain=job.domain,
         collection_id=job.collection_id, collection_name=collection_name,

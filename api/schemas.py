@@ -30,6 +30,8 @@ class JobResponse(BaseModel):
 
 class JobDetailResponse(JobResponse):
     collection_name: str | None = None   # 由 collection_id join 出的集合名(无则 null)
+    media: dict = Field(default_factory=dict)  # 源媒体元信息(resolution/duration_sec/file_size_mb/has_subtitle/word_count),来自 metadata.json / parsed.json
+    artifacts: list[str] = Field(default_factory=list)  # 可见产物文件路径(元信息标签页"产物路径")
     meta: dict = Field(default_factory=dict)
     steps: list[StepResponse] = Field(default_factory=list)
 
