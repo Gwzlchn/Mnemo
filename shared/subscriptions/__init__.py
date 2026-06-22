@@ -8,7 +8,7 @@ SourceItem(待入库内容项)。同步逻辑(api/routes/collections.sync_collec
 新增适配器只需:
   1. 在 shared/subscriptions/<source>.py 写 `async def enum(source_id, ctx) -> ...`
   2. 用 `@register("<source_type>")` 装饰它(返回 (source_title, [SourceItem]))
-  3. 在 SOURCE_LABELS 里登记 source_type -> 短标签(用于集合命名 <名>-<来源>)
+  3. 在 shared/sources.py 的 _SUBSCRIPTION 注册表登记 source_type(徽标/集合id标签/slug)
   4. import 该模块以触发注册(见本文件末尾的 eager-import)
 """
 
@@ -16,13 +16,11 @@ from __future__ import annotations
 
 from .base import (  # noqa: F401  (re-export 公共接口)
     SOURCE_ADAPTERS,
-    SOURCE_LABELS,
     SourceContext,
     SourceItem,
     enumerate_source,
     register,
     source_label,
-    subscription_display_name,
 )
 
 # 触发各适配器模块的 @register 副作用(import 即注册)。新增适配器在此加一行 import。

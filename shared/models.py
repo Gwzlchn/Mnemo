@@ -153,29 +153,10 @@ class LLMResponse:
     cached: bool = False
 
 
-# content_type → ID 类别前缀。真实 content_type 取值 video/paper/article/audio
-# (jobs.py 已把 podcast 归一为 audio);'audio':'audio' 与现有落库 jobs_audio_* 一致,
-# 替代此前永不命中的死键 'podcast':'podcast'。
-_CATEGORY = {"video": "video", "article": "article", "paper": "paper", "audio": "audio"}
-# 来源 → ID 前缀(优先于 content_type)。仅对"来源≠content_type 默认前缀"的源覆盖:
-# 视频默认前缀曾一律 bili → YouTube 被误命名 jobs_bili_,故 youtube→yt;bilibili 非 BV 链接→bili。
-# article/paper/audio 不在此(回退 content_type 类别即正确:jobs_article_/paper_/audio_)。
-_SOURCE_PREFIX = {"bilibili": "bili", "youtube": "yt"}
-
-
 def derive_job_id(url: str | None, content_type: str | None = None, source: str | None = None) -> str:
-    """有意义的 Job ID: jobs_{类别}_{inner}。类别按【来源】定(bilibili=bili 用 BV 号、youtube=yt…),
-    来源未知再回退 content_type。无 url(上传)用随机。撞已存在由调用方加随机后缀消歧。"""
-    import hashlib
-
-    m = re.search(r"(BV[0-9A-Za-z]{8,12})", url or "")
-    if m:
-        return f"jobs_bili_{m.group(1)}"
-    from shared.source_detect import detect_source
-    src = source or (detect_source(url) if url else None)
-    cat = _SOURCE_PREFIX.get(src or "") or _CATEGORY.get(content_type or "", content_type or "x")
-    inner = hashlib.sha1(url.encode()).hexdigest()[:8] if url else secrets.token_hex(4)
-    return f"jobs_{cat}_{inner}"
+    """Job ID(统一规则,见 shared.sources):jobs_{前缀}_{原生id}。撞已存在由调用方加随机后缀消歧。"""
+    from shared.sources import content_job_id
+    return content_job_id(url, content_type, source)
 
 
 def generate_worker_id(worker_type: str) -> str:
@@ -185,12 +166,9 @@ def generate_worker_id(worker_type: str) -> str:
 
 
 def collection_id_for_subscription(source_type: str, source_id: str) -> str:
-    """订阅集合用有含义、稳定的 ID(去重友好,一眼看出来源)。
-    B站 UP: col_bili_up_{mid};其余: col_{source_type}_{source_id}(非字母数字归一为 _)。"""
-    if source_type == "bilibili_up":
-        return f"col_bili_up_{source_id}"
-    safe = re.sub(r"[^A-Za-z0-9]+", "_", f"{source_type}_{source_id}").strip("_")
-    return f"col_{safe}"
+    """Collection ID(统一规则,见 shared.sources):col_{标签}_{slug}。"""
+    from shared.sources import subscription_collection_id
+    return subscription_collection_id(source_type, source_id)
 
 
 def generate_collection_id() -> str:

@@ -65,16 +65,8 @@ SourceAdapter = Callable[[str, SourceContext], Awaitable[tuple[Optional[str], li
 # source_type -> 适配器函数。@register 在 import 适配器模块时填充。
 SOURCE_ADAPTERS: dict[str, SourceAdapter] = {}
 
-# source_type -> 集合命名用的短标签(<名>-<来源>,如 "财经说-bilibili")。
-# 同一平台的多种来源(up/fav/collection)收敛到同一个平台标签。
-SOURCE_LABELS: dict[str, str] = {
-    "bilibili_up": "bilibili",
-    "bilibili_fav": "bilibili",
-    "bilibili_collection": "bilibili",
-    "youtube_channel": "youtube",
-    "rss": "rss",
-    "local_dir": "local",
-}
+# 来源徽标/标签:统一来自 shared.sources 注册表(唯一事实源),不在此重复定义。
+from shared.sources import subscription_badge as source_label  # noqa: E402,F401
 
 
 def register(source_type: str) -> Callable[[SourceAdapter], SourceAdapter]:
@@ -84,19 +76,6 @@ def register(source_type: str) -> Callable[[SourceAdapter], SourceAdapter]:
         SOURCE_ADAPTERS[source_type] = fn
         return fn
     return deco
-
-
-def source_label(source_type: str) -> str:
-    """source_type -> 短标签(未登记则回退用 source_type 本身,保证总有标签)。"""
-    return SOURCE_LABELS.get(source_type, source_type)
-
-
-def subscription_display_name(source_title: str | None, source_type: str) -> str:
-    """订阅集合的展示名 <名>-<来源>,如 "财经说-bilibili"。
-    source_title 为空时回退用短标签本身(避免出现 "-bilibili" 这种空前缀)。"""
-    label = source_label(source_type)
-    title = (source_title or "").strip()
-    return f"{title}-{label}" if title else label
 
 
 async def enumerate_source(
