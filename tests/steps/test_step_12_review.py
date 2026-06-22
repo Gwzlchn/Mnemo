@@ -1,8 +1,8 @@
-"""tests for steps/video/step_11_review.py"""
+"""tests for steps/video/step_12_review.py"""
 
 import json
 
-from steps.video.step_11_review import ReviewStep
+from steps.video.step_12_review import ReviewStep
 from tests.steps.conftest import make_step_config
 
 
@@ -22,16 +22,16 @@ class TestReviewStep:
         job_dir = tmp_path / "job"
         job_dir.mkdir()
         (job_dir / "output").mkdir()
-        config = make_step_config(tmp_path, step_name="11_review")
-        step = ReviewStep("11_review", job_dir, config)
+        config = make_step_config(tmp_path, step_name="12_review")
+        step = ReviewStep("12_review", job_dir, config)
         missing = step.validate_inputs()
         assert "output/versions/notes_smart_*.md" in missing
 
     def test_execute_dry_run(self, tmp_path, monkeypatch):
         monkeypatch.setenv("DRY_RUN", "1")
         job_dir = self._setup_job(tmp_path)
-        config = make_step_config(tmp_path, step_name="11_review", pool="ai")
-        step = ReviewStep("11_review", job_dir, config)
+        config = make_step_config(tmp_path, step_name="12_review", pool="ai")
+        step = ReviewStep("12_review", job_dir, config)
         result = step.execute()
         assert (job_dir / "output" / "review.json").exists()
         review = json.loads((job_dir / "output" / "review.json").read_text())
@@ -39,8 +39,8 @@ class TestReviewStep:
 
     def test_parse_fallback(self, tmp_path, monkeypatch):
         job_dir = self._setup_job(tmp_path)
-        config = make_step_config(tmp_path, step_name="11_review", pool="ai")
-        step = ReviewStep("11_review", job_dir, config)
+        config = make_step_config(tmp_path, step_name="12_review", pool="ai")
+        step = ReviewStep("12_review", job_dir, config)
         monkeypatch.setattr(step, "call_ai", lambda *a, **k: "not json at all")
         result = step.execute()
         review = json.loads((job_dir / "output" / "review.json").read_text())

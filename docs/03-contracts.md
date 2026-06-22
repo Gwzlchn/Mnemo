@@ -1464,7 +1464,7 @@ net_routing:
 ```
 
 - `confidence` / `match_confidence` 由**文号 case-match** 派生：抓回正文含 OCR 文号/当事人 → `high`；只对上当事人 → `medium`；对不上或仅二手 → `low`。
-- `source_tier` 标来源层级；笔记引用角标 **`[E#]`** 对应 `id`（smart 集成为后续）。**一手优先，抓不到如实降级，绝不用二手冒充一手。**
+- `source_tier` 标来源层级；笔记引用角标 **`[E#]`** 对应 `id`：`11_smart` 据 evidence 注入来源块并以 `[E#]` 引用一手事实，`12_review` 读 evidence 核 `[E#]` 忠实性（DAG：`09_mechanical → 10_evidence → 11_smart → 12_review`）。**一手优先，抓不到如实降级，绝不用二手冒充一手。**
 - 取证失败：`parse_failed: true` + 空 `evidence`。
 
 ## 5. 错误码

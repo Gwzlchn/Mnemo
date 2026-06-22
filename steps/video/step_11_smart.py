@@ -21,6 +21,9 @@ class SmartStep(StepBase):
             "mechanical": file_hash(self.job_dir / "output" / "notes_mechanical.md"),
         }
         hashes.update(self.prompt_profile_style_hashes())  # prompt(可选覆盖)+ profile + styles
+        # 取证产物(ADR-0012)纳入指纹:evidence 更新→笔记重生成(引用 [E#])。非案例类无 evidence 则空。
+        ev = self.job_dir / "output" / "evidence.json"
+        hashes["evidence"] = file_hash(ev) if ev.exists() else ""
         # provider 覆盖纳入指纹:换 provider 重跑时指纹变化,绕过幂等跳过。
         hashes["provider"] = self.override_provider()
         return hashes
@@ -81,6 +84,28 @@ class SmartStep(StepBase):
             parts.append(f"[{f['n']}] {(self.job_dir / 'assets' / f['filename']).resolve()}\n")
         return "".join(parts)
 
+    def _load_evidence(self) -> dict | None:
+        """取证产物 output/evidence.json(案例类才有);供笔记引 [E#]。无/坏即 None。"""
+        p = self.job_dir / "output" / "evidence.json"
+        if not p.exists():
+            return None
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            return None
+
+    def _evidence_block(self, ev: dict) -> str:
+        """把取证来源转成可注入 prompt 的「权威来源」块,引导笔记用 [E#] 引用一手事实。"""
+        lines = ["\n权威来源（取证所得，可在笔记中用 [E#] 角标引用对应来源；"
+                 "引用的精确数据必须出自下列来源，不得引用列表外的精确数字）："]
+        for s in ev.get("evidence", []):
+            facts = "；".join(f.get("figure", "") for f in (s.get("key_facts") or [])[:3])
+            lines.append(f"[{s.get('id')}] {s.get('type', '')}·{s.get('source_tier', '')} "
+                         f"{s.get('title', '')}（{s.get('ref', '')}）：{facts}")
+        if (ev.get("case_match") or {}).get("confidence") == "low":
+            lines.append("注意：本案取证置信度低/有缺口，存疑精确数据请标〔待核实〕，勿臆造。")
+        return "\n".join(lines) + "\n"
+
     def _build_user_prompt(self, mechanical: str, frame_desc: str = "") -> str:
         profile = self.load_domain_prompt_profile()
         style_hints = self._load_style_hints()
@@ -120,6 +145,9 @@ class SmartStep(StepBase):
                 "**不要写文件名或路径**,描述要写出 OCR 给不出的视觉信息:\n"
                 f"{frame_desc}\n"
             )
+        ev = self._load_evidence()
+        if ev and ev.get("evidence"):
+            parts.append(self._evidence_block(ev))
         parts.append(f"\n---\n\n{mechanical}")
         return "".join(parts)
 
@@ -136,4 +164,4 @@ class SmartStep(StepBase):
 
 
 if __name__ == "__main__":
-    SmartStep.cli_main("10_smart")
+    SmartStep.cli_main("11_smart")

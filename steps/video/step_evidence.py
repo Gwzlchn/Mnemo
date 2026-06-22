@@ -120,4 +120,4 @@ class EvidenceStep(StepBase):
 
 
 if __name__ == "__main__":
-    EvidenceStep.cli_main("12_evidence")
+    EvidenceStep.cli_main("10_evidence")

@@ -41,7 +41,7 @@ _DELAYED_PREFIX = "delayed_enqueue:"
 
 # 笔记产出步 -> note_type。smart 已版本化(取最新版本文件),mechanical 走固定路径。
 _NOTE_STEPS = {
-    "10_smart": "smart",
+    "11_smart": "smart",
     "05_smart_paper": "smart",
     "09_mechanical": "mechanical",
 }
@@ -49,7 +49,7 @@ _NOTE_FILES = {
     "mechanical": "output/notes_mechanical.md",
 }
 # 评审步：完成后读 review.json，把 key_terms(①讲清楚的概念+候选定义)采集为候选术语。
-_REVIEW_STEPS = {"11_review", "06_review", "05_review"}  # video / paper / (article|audio)
+_REVIEW_STEPS = {"12_review", "06_review", "05_review"}  # video / paper / (article|audio)
 
 
 def _markdown_to_text(md: str) -> str:

@@ -153,37 +153,12 @@ video:
       retry: 1
       outputs: ["output/notes_mechanical.md"]
 
-    "10_smart":
-      label: "智能版笔记"
-      extends: .ai-step
-      run: steps.video.step_10_smart
-      needs: ["09_mechanical"]
-      tags: ["vision"]
-      timeout: 1800   # claude-cli 逐张 Read 帧图(最多 20+ 张),与 provider 超时上限对齐
-      ai:
-        primary: {provider: $AI_SMART_PRIMARY_PROVIDER, model: $AI_SMART_PRIMARY_MODEL}
-        fallback: {provider: $AI_SMART_FALLBACK_PROVIDER, model: $AI_SMART_FALLBACK_MODEL}
-        text_fallback: {provider: $AI_SMART_TEXT_PROVIDER, model: $AI_SMART_TEXT_MODEL}
-      outputs: ["output/versions/notes_smart_*"]
-
-    "11_review":
-      label: "评审"
-      extends: .review
-      run: steps.video.step_11_review
-      needs: ["10_smart"]
-      tags: []
-      timeout: 1800   # claude-cli 对大 prompt(笔记+机械稿)生成评审较慢,给足时间
-      ai:
-        primary: {provider: $AI_REVIEW_PRIMARY_PROVIDER, model: $AI_REVIEW_PRIMARY_MODEL}
-        fallback: {provider: $AI_REVIEW_FALLBACK_PROVIDER, model: $AI_REVIEW_FALLBACK_MODEL}
-      outputs: ["output/versions/review_*"]   # 版本化评审(与笔记版本 1:1 配对);笔记页另渲染可读面板
-
-    "12_evidence":
+    "10_evidence":
       label: "权威来源"
       extends: .ai-step
       run: steps.video.step_evidence
       # 案例取证(ADR-0012):仅案例类(domain=finance / style_tags 含 case-study)触发,步内自门控,
-      # 其余写空 skip。依赖机械稿(OCR 锚点来源);为旁路 leaf——smart 暂不消费 evidence,不阻塞主链。
+      # 其余写空 skip(秒返回、不挡 smart)。在 smart 之前跑——11_smart 依赖它以引 [E#] 一手来源。
       needs: ["09_mechanical"]
       tags: []
       timeout: 1800   # claude WebSearch + 直连 curl 多轮 agentic 取证
@@ -192,6 +167,33 @@ video:
         primary: {provider: claude-cli, model: subscription}
         fallback: {provider: claude-cli, model: subscription}
       outputs: ["output/evidence.json", "output/evidence/*"]
+
+    "11_smart":
+      label: "智能版笔记"
+      extends: .ai-step
+      run: steps.video.step_11_smart
+      # 依赖取证:案例类笔记据 evidence.json 引 [E#] 一手来源(非案例类 10_evidence 秒 skip,不挡)。
+      needs: ["09_mechanical", "10_evidence"]
+      tags: ["vision"]
+      timeout: 1800   # claude-cli 逐张 Read 帧图(最多 20+ 张),与 provider 超时上限对齐
+      ai:
+        primary: {provider: $AI_SMART_PRIMARY_PROVIDER, model: $AI_SMART_PRIMARY_MODEL}
+        fallback: {provider: $AI_SMART_FALLBACK_PROVIDER, model: $AI_SMART_FALLBACK_MODEL}
+        text_fallback: {provider: $AI_SMART_TEXT_PROVIDER, model: $AI_SMART_TEXT_MODEL}
+      outputs: ["output/versions/notes_smart_*"]
+
+    "12_review":
+      label: "评审"
+      extends: .review
+      run: steps.video.step_12_review
+      # 评最新版智能笔记;并读 evidence.json 核 [E#] 忠实性(经传递性排在取证之后)。
+      needs: ["11_smart"]
+      tags: []
+      timeout: 1800   # claude-cli 对大 prompt(笔记+机械稿)生成评审较慢,给足时间
+      ai:
+        primary: {provider: $AI_REVIEW_PRIMARY_PROVIDER, model: $AI_REVIEW_PRIMARY_MODEL}
+        fallback: {provider: $AI_REVIEW_FALLBACK_PROVIDER, model: $AI_REVIEW_FALLBACK_MODEL}
+      outputs: ["output/versions/review_*"]   # 版本化评审(与笔记版本 1:1 配对);笔记页另渲染可读面板
 
 paper:
   variables:

@@ -1,4 +1,4 @@
-"""tests for steps/video/step_10_smart.py"""
+"""tests for steps/video/step_11_smart.py"""
 
 import json
 import os
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from steps.video.step_10_smart import SmartStep
+from steps.video.step_11_smart import SmartStep
 from tests.steps.conftest import make_step_config
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -27,15 +27,15 @@ class TestSmartStep:
         job_dir = tmp_path / "job"
         job_dir.mkdir()
         (job_dir / "output").mkdir()
-        config = make_step_config(tmp_path, step_name="10_smart")
-        step = SmartStep("10_smart", job_dir, config)
+        config = make_step_config(tmp_path, step_name="11_smart")
+        step = SmartStep("11_smart", job_dir, config)
         assert step.validate_inputs() == ["output/notes_mechanical.md"]
 
     def test_execute_dry_run(self, tmp_path, monkeypatch):
         monkeypatch.setenv("DRY_RUN", "1")
         job_dir = self._setup_job(tmp_path)
-        config = make_step_config(tmp_path, step_name="10_smart", pool="ai")
-        step = SmartStep("10_smart", job_dir, config)
+        config = make_step_config(tmp_path, step_name="11_smart", pool="ai")
+        step = SmartStep("11_smart", job_dir, config)
         result = step.execute()
         assert result["chars"] > 0
         assert list((job_dir / "output" / "versions").glob("notes_smart_*.md"))
@@ -50,8 +50,8 @@ class TestSmartStep:
               "source": "scene", "keep": True}]))
         (job_dir / "intermediate" / "ocr.json").write_text(json.dumps(
             [{"index": 0, "filename": "frame-0000.jpg", "timestamp_sec": 1.7, "text": "分时跳水"}]))
-        config = make_step_config(tmp_path, step_name="10_smart", pool="ai")
-        step = SmartStep("10_smart", job_dir, config)
+        config = make_step_config(tmp_path, step_name="11_smart", pool="ai")
+        step = SmartStep("11_smart", job_dir, config)
         calls = []
         note = ("# 力盛赛车案复盘\n\n![分时跳水图](img:0)\n\n"
                 + "## 章节\n这是足够长的正文内容用于通过净化长度判废。\n" * 30)
@@ -88,8 +88,8 @@ class TestSmartStep:
     def test_execute_no_images_single_pass(self, tmp_path):
         # 无截图时只一段纯文本调用。
         job_dir = self._setup_job(tmp_path)
-        config = make_step_config(tmp_path, step_name="10_smart", pool="ai")
-        step = SmartStep("10_smart", job_dir, config)
+        config = make_step_config(tmp_path, step_name="11_smart", pool="ai")
+        step = SmartStep("11_smart", job_dir, config)
         calls = []
         note = "# 标题\n\n" + "## 章节\n足够长的正文内容用于通过净化判废。\n" * 30
 
@@ -104,7 +104,7 @@ class TestSmartStep:
         job_dir = self._setup_job(tmp_path)
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir(exist_ok=True)
-        (prompts_dir / "10_smart.md").write_text("system prompt")
+        (prompts_dir / "11_smart.md").write_text("system prompt")
         profiles_dir = prompts_dir / "profiles"
         profiles_dir.mkdir()
         (profiles_dir / "deep-learning.yaml").write_text("role: test\n")
@@ -112,12 +112,12 @@ class TestSmartStep:
         styles_dir.mkdir()
         (styles_dir / "lecture.yaml").write_text("tag: lecture\nhints: ['test']\n")
 
-        config = make_step_config(tmp_path, step_name="10_smart", pool="ai")
+        config = make_step_config(tmp_path, step_name="11_smart", pool="ai")
         config["domain"] = {"name": "deep-learning"}
         config["style_tags"] = ["lecture"]
         config["paths"]["prompts_dir"] = str(prompts_dir)
 
-        step = SmartStep("10_smart", job_dir, config)
+        step = SmartStep("11_smart", job_dir, config)
         hashes = step.input_hashes()
         assert "prompt" in hashes
         assert "profile" in hashes
@@ -137,11 +137,11 @@ class TestSmartStep:
             "do_not:\n  - '不要编造实验数据'\n"
         )
 
-        config = make_step_config(tmp_path, step_name="10_smart")
+        config = make_step_config(tmp_path, step_name="11_smart")
         config["domain"] = {"name": "deep-learning"}
         config["paths"]["prompts_dir"] = str(prompts_dir)
 
-        step = SmartStep("10_smart", job_dir, config)
+        step = SmartStep("11_smart", job_dir, config)
         prompt = step._build_user_prompt("test content")
         assert "模型架构" in prompt
         assert "注意力" in prompt
@@ -163,12 +163,12 @@ class TestP1PromptAssets:
     def test_finance_profile_parses_and_injects(self, tmp_path):
         # 真实 configs/prompts/profiles/finance.yaml：能解析 + domain_context / 数字口径要求注入 prompt
         job_dir = self._job(tmp_path)
-        config = make_step_config(tmp_path, step_name="10_smart")
+        config = make_step_config(tmp_path, step_name="11_smart")
         config["domain"] = {"name": "finance"}
         config["paths"]["prompts_dir"] = str(_REAL_PROMPTS)
-        step = SmartStep("10_smart", job_dir, config)
+        step = SmartStep("11_smart", job_dir, config)
 
-        profile = step.load_domain_profile()
+        profile = step.load_domain_prompt_profile()
         assert profile and profile.get("domain_context")          # 文件存在且解析
         prompt = step._build_user_prompt("正文")
         assert profile["domain_context"] in prompt
@@ -177,10 +177,10 @@ class TestP1PromptAssets:
     def test_case_study_injects_mechanism_hint(self, tmp_path):
         # 真实 case-study.yaml：「机制说明」hint 注入 prompt（治「只列名词不解释」）
         job_dir = self._job(tmp_path)
-        config = make_step_config(tmp_path, step_name="10_smart")
+        config = make_step_config(tmp_path, step_name="11_smart")
         config["style_tags"] = ["case-study"]
         config["paths"]["prompts_dir"] = str(_REAL_PROMPTS)
-        step = SmartStep("10_smart", job_dir, config)
+        step = SmartStep("11_smart", job_dir, config)
 
         prompt = step._build_user_prompt("正文")
         assert "机制说明" in prompt
@@ -193,11 +193,11 @@ class TestP1PromptAssets:
         (prompts / "styles").mkdir(parents=True)
         shutil.copy(_REAL_PROMPTS / "profiles" / "finance.yaml", prompts / "profiles" / "finance.yaml")
         shutil.copy(_REAL_PROMPTS / "styles" / "case-study.yaml", prompts / "styles" / "case-study.yaml")
-        config = make_step_config(tmp_path, step_name="10_smart")
+        config = make_step_config(tmp_path, step_name="11_smart")
         config["domain"] = {"name": "finance"}
         config["style_tags"] = ["case-study"]
         config["paths"]["prompts_dir"] = str(prompts)
-        step = SmartStep("10_smart", job_dir, config)
+        step = SmartStep("11_smart", job_dir, config)
 
         step.mark_done()                                          # 落 .done（当前指纹）
         assert step.should_run() is False                         # 输入未变 → 跳过
@@ -211,10 +211,10 @@ class TestP1PromptAssets:
         job_dir = self._job(tmp_path)
         prompts = tmp_path / "prompts"
         (prompts / "profiles").mkdir(parents=True)
-        config = make_step_config(tmp_path, step_name="10_smart")
+        config = make_step_config(tmp_path, step_name="11_smart")
         config["domain"] = {"name": "finance"}
         config["paths"]["prompts_dir"] = str(prompts)
-        step = SmartStep("10_smart", job_dir, config)
+        step = SmartStep("11_smart", job_dir, config)
 
         assert "profile" not in step.prompt_profile_style_hashes()  # finance.yaml 尚不存在
         step.mark_done()

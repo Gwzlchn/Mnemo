@@ -138,7 +138,7 @@ class TestBuildStepConfig:
 
     def test_ai_config_included(self, configs_dir, tmp_data_dir):
         cfg = load_config(config_dir=configs_dir, data_dir=tmp_data_dir)
-        step_cfg = build_step_config(cfg, "video", "10_smart")
+        step_cfg = build_step_config(cfg, "video", "11_smart")
 
         assert "primary" in step_cfg["ai"]
         assert step_cfg["ai"]["primary"]["provider"] == "claude-cli"  # 无 key,走订阅
@@ -192,7 +192,7 @@ class TestBuildStepConfigNoSecrets:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-LEAK-canary")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deep-canary")
         cfg = load_config(config_dir=configs_dir, data_dir=tmp_data_dir)
-        step_cfg = build_step_config(cfg, "video", "10_smart")
+        step_cfg = build_step_config(cfg, "video", "11_smart")
 
         # 整个 step_cfg 序列化后不得出现任何明文密钥（落盘 + 代理给 gateway 的就是它）。
         import json as _json

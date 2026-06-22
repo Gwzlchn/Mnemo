@@ -459,12 +459,12 @@ async def rerun_smart(
     raw = await storage.read_file(job_id, "job.json")
     doc = json.loads(raw) if raw else {}
     doc.setdefault("ai_overrides", {})
-    doc["ai_overrides"]["10_smart"] = req.provider
-    doc["ai_overrides"]["11_review"] = req.provider
+    doc["ai_overrides"]["11_smart"] = req.provider
+    doc["ai_overrides"]["12_review"] = req.provider
     await storage.write_file(job_id, "job.json",
                              json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"))
     await redis.publish("job_command", {
-        "action": "rerun", "job_id": job_id, "from_step": "10_smart",
+        "action": "rerun", "job_id": job_id, "from_step": "11_smart",
     })
     return {"job_id": job_id, "status": "processing", "provider": req.provider}
 

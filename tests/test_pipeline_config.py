@@ -131,7 +131,7 @@ class TestVariables:
                     "06_ocr": {"extends": ".cpu-step", "run": "steps.video.step_06_ocr",
                                "image": "flori/step-heavy", "needs": ["05_dedup"],
                                "timeout": "$OCR_TIMEOUT", "retry": "$OCR_RETRIES"},
-                    "10_smart": {"run": "m.s", "pool": "ai",
+                    "11_smart": {"run": "m.s", "pool": "ai",
                                  "ai": {"primary": {"provider": "$PROV"}}},
                 },
             },
@@ -150,8 +150,8 @@ class TestVariables:
         assert prod_ocr["timeout_sec"] == int_ocr["timeout_sec"] == 1800
         assert prod_ocr["retries"] == int_ocr["retries"] == 1
         # provider 是两侧唯一差异。
-        prod_smart = next(s for s in prod_norm["video"]["steps"] if s["name"] == "10_smart")
-        int_smart = next(s for s in int_norm["video"]["steps"] if s["name"] == "10_smart")
+        prod_smart = next(s for s in prod_norm["video"]["steps"] if s["name"] == "11_smart")
+        int_smart = next(s for s in int_norm["video"]["steps"] if s["name"] == "11_smart")
         assert prod_smart["ai"]["primary"]["provider"] == "anthropic"
         assert int_smart["ai"]["primary"]["provider"] == "kimi"
 
@@ -263,7 +263,7 @@ class TestNormalizedContractStable:
 
     def test_ai_block_provider_model_dict(self, configs_dir):
         p = load_pipelines(configs_dir / "pipelines.yaml")
-        smart = next(s for s in p["video"]["steps"] if s["name"] == "10_smart")
+        smart = next(s for s in p["video"]["steps"] if s["name"] == "11_smart")
         assert smart["ai"]["primary"]["provider"] == "claude-cli"  # 无 key,走订阅
         assert smart["ai"]["primary"]["model"] == "subscription"
         assert "text_fallback" in smart["ai"]

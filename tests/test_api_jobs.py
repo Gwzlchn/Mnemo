@@ -334,15 +334,15 @@ class TestRetryRerunResubmit:
         job_id = create_resp.json()["job_id"]
         resp = await client.post(
             f"/api/jobs/{job_id}/rerun",
-            json={"from_step": "10_smart"},
+            json={"from_step": "11_smart"},
         )
         assert resp.status_code == 200
-        assert resp.json()["from_step"] == "10_smart"
+        assert resp.json()["from_step"] == "11_smart"
         # 真实副作用:job 以 rerun 命令被重新派发(而非只回显入参)。最后一次 publish 是 rerun。
         ch, payload = mock_redis.publish.call_args[0]
         assert ch == "job_command"
         assert payload["action"] == "rerun" and payload["job_id"] == job_id
-        assert payload["from_step"] == "10_smart"
+        assert payload["from_step"] == "11_smart"
 
     @pytest.mark.asyncio
     async def test_resubmit(self, client, mock_redis):
@@ -399,5 +399,5 @@ class TestProviderVersions:
         assert resp.status_code == 200 and resp.json()["provider"] == "claude-cli"
         import json as _j
         doc = _j.loads((await storage.read_file(jid, "job.json")).decode())
-        assert doc["ai_overrides"]["10_smart"] == "claude-cli"
-        assert doc["ai_overrides"]["11_review"] == "claude-cli"
+        assert doc["ai_overrides"]["11_smart"] == "claude-cli"
+        assert doc["ai_overrides"]["12_review"] == "claude-cli"

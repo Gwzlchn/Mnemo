@@ -79,8 +79,8 @@ class TestEvidenceStep:
     def test_skip_non_case(self, tmp_path):
         # 默认 domain=general、无 case-study → 自门控 skip，不调 AI、不写 evidence.json
         job = self._job(tmp_path)
-        cfg = make_step_config(tmp_path, step_name="12_evidence", pool="ai")
-        step = EvidenceStep("12_evidence", job, cfg)
+        cfg = make_step_config(tmp_path, step_name="10_evidence", pool="ai")
+        step = EvidenceStep("10_evidence", job, cfg)
         called = []
         step.call_ai = lambda *a, **k: called.append(1) or "{}"
         assert step.execute() == {"skipped": "non-case"}
@@ -90,9 +90,9 @@ class TestEvidenceStep:
 
     def test_finance_triggers_and_writes(self, tmp_path):
         job = self._job(tmp_path)
-        cfg = make_step_config(tmp_path, step_name="12_evidence", pool="ai")
+        cfg = make_step_config(tmp_path, step_name="10_evidence", pool="ai")
         cfg["domain"] = {"name": "finance"}
-        step = EvidenceStep("12_evidence", job, cfg)
+        step = EvidenceStep("10_evidence", job, cfg)
         cap = {}
 
         def fake(prompt, **kw):
@@ -112,18 +112,18 @@ class TestEvidenceStep:
     def test_case_study_style_triggers(self, tmp_path):
         # 非 finance 但 style_tags 含 case-study → 同样触发
         job = self._job(tmp_path)
-        cfg = make_step_config(tmp_path, step_name="12_evidence", pool="ai")
+        cfg = make_step_config(tmp_path, step_name="10_evidence", pool="ai")
         cfg["style_tags"] = ["case-study"]
-        step = EvidenceStep("12_evidence", job, cfg)
+        step = EvidenceStep("10_evidence", job, cfg)
         step.call_ai = lambda *a, **k: '{"case_match":{"confidence":"low"},"evidence":[],"notes":""}'
         assert step.execute()["evidence_count"] == 0
         assert (job / "output" / "evidence.json").exists()
 
     def test_parse_failed(self, tmp_path):
         job = self._job(tmp_path)
-        cfg = make_step_config(tmp_path, step_name="12_evidence", pool="ai")
+        cfg = make_step_config(tmp_path, step_name="10_evidence", pool="ai")
         cfg["domain"] = {"name": "finance"}
-        step = EvidenceStep("12_evidence", job, cfg)
+        step = EvidenceStep("10_evidence", job, cfg)
         step.call_ai = lambda *a, **k: "这不是 JSON，只是一段闲聊"
         out = step.execute()
         assert out["parse_failed"] is True
@@ -132,9 +132,9 @@ class TestEvidenceStep:
 
     def test_refs_regex(self, tmp_path):
         job = self._job(tmp_path, mech="马永威〔2018〕88号 又见 (2025)沪刑终60号 与 [2017]5号 末尾")
-        cfg = make_step_config(tmp_path, step_name="12_evidence", pool="ai")
+        cfg = make_step_config(tmp_path, step_name="10_evidence", pool="ai")
         cfg["domain"] = {"name": "finance"}
-        step = EvidenceStep("12_evidence", job, cfg)
+        step = EvidenceStep("10_evidence", job, cfg)
         refs = step._refs((job / "output" / "notes_mechanical.md").read_text(encoding="utf-8"))
         assert "〔2018〕88号" in refs
         assert any("沪刑终60号" in r for r in refs)
