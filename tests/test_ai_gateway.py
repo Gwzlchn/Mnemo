@@ -1,5 +1,6 @@
 """tests for shared/ai_gateway.py"""
 
+import json
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -33,6 +34,22 @@ class TestCalcCost:
     def test_zero_tokens(self):
         cost = calc_cost("anthropic", "claude-sonnet-4-6", 0, 0)
         assert cost == 0.0
+
+    def test_input_output_priced_separately(self):
+        # 不对称用例:input/output 分别计价。test_known_model 用 1M/1M 对称(3+15==15+3),
+        # 抓不到 input/output 价互换;这里分别只给一侧 token 才能钉死方向。
+        c_in = calc_cost("anthropic", "claude-sonnet-4-6", 1_000_000, 0)
+        c_out = calc_cost("anthropic", "claude-sonnet-4-6", 0, 1_000_000)
+        assert c_in == pytest.approx(3.0)       # sonnet input $3/M
+        assert c_out == pytest.approx(15.0)     # sonnet output $15/M
+        assert c_in != c_out
+
+    def test_cost_divides_by_million(self):
+        # 防 /1_000_000 被改:半百万 input 应恰为整百万的一半。
+        full = calc_cost("anthropic", "claude-sonnet-4-6", 1_000_000, 0)
+        half = calc_cost("anthropic", "claude-sonnet-4-6", 500_000, 0)
+        assert full == pytest.approx(3.0)
+        assert half == pytest.approx(full / 2)
 
 
 class TestRetryPolicy:
@@ -270,6 +287,66 @@ class TestUsageFile:
 
     def test_collect_missing_file(self, tmp_path):
         assert collect_usage_from_file(tmp_path, "nonexistent") == []
+
+    def test_collect_full_roundtrip(self, tmp_path):
+        # 每个字段给唯一可区分值,record→collect 后逐字段断言——钉死 collect 的字段映射,
+        # 防 provider↔model、input↔output、cost↔duration 之类互换变异存活。
+        u = AIUsage(
+            exec_id="ai-xyz:42:7",
+            provider="anthropic",
+            model="claude-opus-4-8",
+            job_id="job-777",
+            step="11_review",
+            input_tokens=123,
+            output_tokens=456,
+            cost_usd=0.0789,
+            duration_sec=12.5,
+            cached=True,
+            created_at=datetime(2026, 6, 22, 13, 30, 5),
+        )
+        record_usage_to_file(u, tmp_path)
+        (got,) = collect_usage_from_file(tmp_path, "11_review")
+        assert got.exec_id == "ai-xyz:42:7"
+        assert got.provider == "anthropic"
+        assert got.model == "claude-opus-4-8"
+        assert got.job_id == "job-777"
+        assert got.step == "11_review"
+        assert got.input_tokens == 123
+        assert got.output_tokens == 456
+        assert got.cost_usd == pytest.approx(0.0789)
+        assert got.duration_sec == pytest.approx(12.5)
+        assert got.cached is True
+        assert got.created_at == datetime(2026, 6, 22, 13, 30, 5)
+
+    def test_collect_applies_defaults_for_missing_optional(self, tmp_path):
+        # 历史/精简记录缺可选字段时,collect 应回退到正确默认值——
+        # 钉死 .get(key, DEFAULT) 的默认值(防 0→1、0.0→1.0、False→True、None→"x" 变异)。
+        path = tmp_path / ".09_mechanical.usage.json"
+        path.write_text(json.dumps([{
+            "exec_id": "e1", "provider": "p", "model": "m",
+            "created_at": "2026-06-22T00:00:00",
+        }]))
+        (got,) = collect_usage_from_file(tmp_path, "09_mechanical")
+        assert got.job_id is None
+        assert got.step is None
+        assert got.input_tokens == 0
+        assert got.output_tokens == 0
+        assert got.cost_usd == 0.0
+        assert got.duration_sec == 0.0
+        assert got.cached is False
+
+    def test_record_creates_nested_dir_and_appends(self, tmp_path):
+        # mkdir parents + 文件名 .{step}.usage.json + 追加(非覆盖)+ 保序。
+        sub = tmp_path / "deep" / "logs"
+        record_usage_to_file(
+            AIUsage(exec_id="e1", provider="p", model="m", step="06_ocr"), sub)
+        f = sub / ".06_ocr.usage.json"
+        assert f.exists()
+        assert len(json.loads(f.read_text())) == 1
+        record_usage_to_file(
+            AIUsage(exec_id="e2", provider="p", model="m", step="06_ocr"), sub)
+        data = json.loads(f.read_text())
+        assert [d["exec_id"] for d in data] == ["e1", "e2"]
 
 
 class TestAnthropicProvider:
