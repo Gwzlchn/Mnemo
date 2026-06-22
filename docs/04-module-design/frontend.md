@@ -150,12 +150,12 @@
 │  └────────────────────────────────────────────────────┘  │
 │                                                          │
 │  ── 接入新 Worker ──                                     │
-│  [生成接入 token]  →  mnw-xxxxxxxx  (仅此一次完整展示)    │
+│  [生成接入 token]  →  flw-xxxxxxxx  (仅此一次完整展示)    │
 │  复制以下命令到目标机器执行:                              │
 │  ┌──────────────────────────────────────────────────┐    │
 │  │ docker run -d --restart unless-stopped \         │    │
 │  │   -e GATEWAY_URL=https://<host> \                │    │
-│  │   -e WORKER_REGISTRATION_TOKEN=mnw-xxxxxxxx \    │    │
+│  │   -e WORKER_REGISTRATION_TOKEN=flw-xxxxxxxx \    │    │
 │  │   ghcr.io/<owner>/flori --type gpu               │    │
 │  └──────────────────────────────────────────────────┘    │
 │  [复制命令]  类型: [GPU ▼]                               │

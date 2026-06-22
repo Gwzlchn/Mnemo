@@ -47,7 +47,11 @@ def _resolve_worker_id(worker_type: str) -> str:
        靠缓存文件跨重启稳定。
 
     为何要稳定:重启被当全新 worker → 监控刷幽灵行、docker reap_orphans(label flori.worker={id})
-    无法跨重启命中残留容器。gateway 模式 register 仍可返回另一 id 覆盖(以服务端为准)。"""
+    无法跨重启命中残留容器。gateway 模式 register 仍可返回另一 id 覆盖(以服务端为准)。
+
+    无状态部署:gateway 模式(只设 GATEWAY_URL)+ WORKER_NAME 时,id 确定性派生、不依赖任何
+    本地文件,可【不挂 /data 卷】纯出站 HTTPS 跑(configs 在镜像、work_dir 在 /tmp、产物经网关)。
+    此时缓存文件写不了是预期的,降级为 debug 不报 warning。"""
     id_file = Path(default_worker_id_file())
     name = os.environ.get("WORKER_NAME", "").strip()
     if name:
@@ -64,7 +68,12 @@ def _resolve_worker_id(worker_type: str) -> str:
         id_file.parent.mkdir(parents=True, exist_ok=True)
         id_file.write_text(worker_id)
     except OSError:
-        logger.warning("worker_id_persist_failed", worker_id=worker_id)
+        # WORKER_NAME 下 id 确定性,缓存文件可选——写不了是无状态部署的常态,不算错(debug);
+        # 随机 id 模式写不了才会每次重启换 id,故 warn。
+        if name:
+            logger.debug("worker_id_cache_skipped", worker_id=worker_id)
+        else:
+            logger.warning("worker_id_persist_failed", worker_id=worker_id)
     return worker_id
 
 

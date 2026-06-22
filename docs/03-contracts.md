@@ -303,7 +303,7 @@ GET /api/jobs/{id}/notes/transcript     → text/markdown (逐字稿)
 
 Response `200`:
 ```json
-{"token": "mnw-xxxxxxxx"}
+{"token": "flw-xxxxxxxx"}
 ```
 
 #### GET /api/workers/{id}/jobs — Worker 任务历史
@@ -473,7 +473,7 @@ PUT    /api/runner/jobs/{id}/artifacts/{rel}              → 回传单个产物
 
 `POST /api/runner/register` Response `200`:
 ```json
-{"worker_id": "ai-a1b2c3d4", "worker_token": "mnwt-..."}
+{"worker_id": "ai-a1b2c3d4", "worker_token": "flwt-..."}
 ```
 
 ### 1.8 集合管理

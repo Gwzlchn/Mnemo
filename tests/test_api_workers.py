@@ -268,7 +268,7 @@ class TestRegistrationToken:
         resp = await client.post("/api/workers/registration-token")
         assert resp.status_code == 200
         token = resp.json()["token"]
-        assert token.startswith("mnw-")
+        assert token.startswith("flw-")
         assert resp.json()["expires_in_sec"] == 86400  # 默认 24h 过期
         redis_mock.set_registration_token.assert_awaited_with(token, ttl_sec=86400)
 

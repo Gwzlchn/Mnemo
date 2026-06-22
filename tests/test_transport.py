@@ -347,7 +347,7 @@ class TestRelease:
 # ── GatewayTransport ──
 
 
-def make_gateway(redis, db, tmp_path, *, registration_token="mnw-tok"):
+def make_gateway(redis, db, tmp_path, *, registration_token="flw-tok"):
     """构造 GatewayTransport,并注入 mock httpx client(不建真实连接)。"""
     id_file = tmp_path / ".worker_id"
     gw = GatewayTransport(
@@ -363,7 +363,7 @@ def make_gateway(redis, db, tmp_path, *, registration_token="mnw-tok"):
     return gw, id_file
 
 
-def make_pure_gateway(tmp_path, *, registration_token="mnw-tok"):
+def make_pure_gateway(tmp_path, *, registration_token="flw-tok"):
     """纯网关模式:inner=None(无 redis/db),只出站 HTTPS。"""
     id_file = tmp_path / ".worker_id"
     gw = GatewayTransport(
@@ -394,7 +394,7 @@ class TestGatewayRegister:
         assert returned == "w_srv"
         # 注册 token 通过 Authorization 头下发
         _, kwargs = gw._client.post.call_args
-        assert kwargs["headers"]["Authorization"] == "Bearer mnw-tok"
+        assert kwargs["headers"]["Authorization"] == "Bearer flw-tok"
         assert kwargs["json"]["worker_id"] == "w_local"
         assert kwargs["json"]["tags"] == ["vision"]
         # 服务端回的 worker_token 被记下,供后续心跳鉴权

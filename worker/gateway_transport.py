@@ -69,7 +69,8 @@ class GatewayTransport:
             self._id_file.parent.mkdir(parents=True, exist_ok=True)
             self._id_file.write_text(worker_id)
         except OSError:
-            logger.warning("worker_id_persist_failed", worker_id=worker_id)
+            # 缓存可选:纯网关 id 由服务端返回、WORKER_NAME 下确定性;无状态部署(不挂 /data)写不了无碍。
+            logger.debug("worker_id_cache_skipped", worker_id=worker_id)
 
     # ── 生命周期 / 心跳(走 gateway) ──
 

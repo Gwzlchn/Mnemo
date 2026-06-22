@@ -12,7 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from tests.conftest import make_fakeredis
 from api.main import create_app
 
-REG_TOKEN = "mnw-registration-secret"
+REG_TOKEN = "flw-registration-secret"
 
 
 def _utcnow():
@@ -91,7 +91,7 @@ class TestRegisterAllocates:
         worker_id = body["worker_id"]
         token = body["worker_token"]
         assert worker_id.startswith("cpu-")
-        assert token.startswith("mnwt-")
+        assert token.startswith("flwt-")
 
         # worker_tokens 行写入（仅存 hash）
         token_hash = hashlib.sha256(token.encode()).hexdigest()

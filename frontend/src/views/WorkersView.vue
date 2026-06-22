@@ -127,7 +127,7 @@ const tagsArg = computed(() => {
   return t.length ? ` --tags ${t.join(' ')}` : ''
 })
 const runCmd = computed(() => `python -m worker.main --type ${newType.value}${tagsArg.value}`)
-const tokenLine = computed(() => token.value || 'mnw-<生成后填入>')
+const tokenLine = computed(() => token.value || 'flw-<生成后填入>')
 const gpuFlag = computed(() => (newType.value === 'gpu' ? ' --gpus all' : ''))
 
 const command = computed(() => {

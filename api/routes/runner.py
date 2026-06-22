@@ -92,7 +92,7 @@ async def register(
     await verify_registration_token(_bearer(request), redis)
 
     worker_id = req.worker_id or generate_worker_id(req.type)
-    worker_token = "mnwt-" + secrets.token_urlsafe(48)
+    worker_token = "flwt-" + secrets.token_urlsafe(48)
     token_hash = hashlib.sha256(worker_token.encode()).hexdigest()
     now = datetime.now(timezone.utc)
 
