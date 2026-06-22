@@ -16,7 +16,7 @@ from shared.redis_client import RedisClient
 from shared.storage import StorageBackend
 from shared.subscriptions.base import source_label  # 派生来源短标签(_to_response 用,模块级)
 
-from api.deps import get_db, get_redis, get_storage, verify_token
+from api.deps import get_db, get_redis, get_storage, validate_path_segment, verify_token
 from api.schemas import (
     CollectionCreateRequest,
     CollectionResponse,
@@ -31,11 +31,6 @@ router = APIRouter(
     prefix="/api/collections", tags=["collections"],
     dependencies=[Depends(verify_token)],
 )
-
-
-def _validate_collection_id(collection_id: str) -> None:
-    if ".." in collection_id or "/" in collection_id or "\x00" in collection_id:
-        raise HTTPException(400, "invalid collection_id")
 
 
 def _to_response(c: Collection) -> CollectionResponse:
@@ -62,9 +57,7 @@ async def sync_collection(
     YouTube/RSS/本地目录…),与具体来源解耦。返回 {total, new, skipped}。仅订阅集合可调。"""
     if not coll.is_subscription:
         raise ValueError("not a subscription collection")
-    from shared.subscriptions import (
-        SourceContext, enumerate_source, source_label,
-    )
+    from shared.subscriptions import SourceContext, enumerate_source
     from api.routes.jobs import create_job_core
 
     cookies = await asyncio.to_thread(db.get_credential, "bili_cookies")
@@ -163,7 +156,7 @@ async def get_collection(
     collection_id: str,
     db: Database = Depends(get_db),
 ):
-    _validate_collection_id(collection_id)
+    validate_path_segment(collection_id, "collection_id")
     c = await asyncio.to_thread(db.get_collection, collection_id)
     if not c:
         raise HTTPException(404, "collection not found")
@@ -176,7 +169,7 @@ async def update_collection(
     req: CollectionUpdateRequest,
     db: Database = Depends(get_db),
 ):
-    _validate_collection_id(collection_id)
+    validate_path_segment(collection_id, "collection_id")
     c = await asyncio.to_thread(db.get_collection, collection_id)
     if not c:
         raise HTTPException(404, "collection not found")
@@ -198,7 +191,7 @@ async def trigger_sync(
     storage: StorageBackend = Depends(get_storage),
 ):
     """立即同步订阅集合(拉来源新内容入库)。"""
-    _validate_collection_id(collection_id)
+    validate_path_segment(collection_id, "collection_id")
     c = await asyncio.to_thread(db.get_collection, collection_id)
     if not c:
         raise HTTPException(404, "collection not found")
@@ -218,7 +211,7 @@ async def delete_collection(
 ):
     """删集合两模式:默认解绑(名下 job 的 collection_id 置 NULL、保留内容);
     purge=true 连名下 job 一起删。两种都清该集合的 ingested_items(便于重订阅重新入库)。"""
-    _validate_collection_id(collection_id)
+    validate_path_segment(collection_id, "collection_id")
     c = await asyncio.to_thread(db.get_collection, collection_id)
     if not c:
         raise HTTPException(404, "collection not found")
@@ -233,7 +226,7 @@ async def list_collection_jobs(
     db: Database = Depends(get_db),
 ):
     """集合名下的 job 列表（分页，复用 db.list_jobs 的 collection_id 过滤）。"""
-    _validate_collection_id(collection_id)
+    validate_path_segment(collection_id, "collection_id")
     c = await asyncio.to_thread(db.get_collection, collection_id)
     if not c:
         raise HTTPException(404, "collection not found")

@@ -211,3 +211,19 @@ class TestDomainValidation:
             "/api/glossary?domain=../etc", json={"term": "A"}
         )
         assert resp.status_code in (400, 404, 422)
+
+    @pytest.mark.asyncio
+    async def test_create_backslash_domain_rejected(self, client):
+        """反斜杠现在也被挡(R-M1:统一走 deps.validate_path_segment)。"""
+        resp = await client.post(
+            "/api/glossary", params={"domain": "a\\b"}, json={"term": "A"}
+        )
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_create_empty_domain_rejected(self, client):
+        """空 domain 不再写出空文件名 profile(I-L9)。"""
+        resp = await client.post(
+            "/api/glossary", params={"domain": ""}, json={"term": "A"}
+        )
+        assert resp.status_code in (400, 422)

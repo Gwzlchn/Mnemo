@@ -38,6 +38,18 @@ class TestYoutubeCookies:
         assert resp.status_code == 200
         assert (tmp_path / "cookies" / "youtube.txt").exists()
 
+    @pytest.mark.asyncio
+    async def test_upload_cookies_too_large_rejected(self, client, tmp_path, monkeypatch):
+        """超过 1 MiB 上限的 cookie 上传 → 413,且不落盘(I-L6)。"""
+        monkeypatch.setattr("api.routes.auth.COOKIES_DIR", tmp_path / "cookies")
+        big = b"x" * (1024 * 1024 + 10)
+        resp = await client.post(
+            "/api/auth/youtube/cookies",
+            files={"file": ("cookies.txt", big, "text/plain")},
+        )
+        assert resp.status_code == 413
+        assert not (tmp_path / "cookies" / "youtube.txt").exists()
+
 
 class TestTokenAuth:
     """Test verify_token middleware with API_TOKEN set."""

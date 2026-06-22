@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from shared.config import AppConfig
 from shared.db import Database
-from api.deps import get_config, get_db, verify_token
+from api.deps import get_config, get_db, validate_path_segment, verify_token
 from api.routes.profiles import sync_term_to_profile
 from api.schemas import GlossaryTermRequest, GlossaryTermResponse
 
@@ -21,11 +21,6 @@ router = APIRouter(
     prefix="/api/glossary", tags=["glossary"],
     dependencies=[Depends(verify_token)],
 )
-
-
-def _validate_seg(value: str, label: str) -> None:
-    if ".." in value or "/" in value or "\x00" in value:
-        raise HTTPException(400, f"invalid {label}")
 
 
 def _to_response(row: dict) -> GlossaryTermResponse:
@@ -52,7 +47,10 @@ async def create_term(
     config: AppConfig = Depends(get_config),
 ):
     """手动新增术语：直接落 status='accepted'，并同步进 Profile.terminology。"""
-    _validate_seg(domain, "domain")
+    validate_path_segment(domain, "domain")
+    if not domain.strip():
+        # domain 为空会写出空文件名 profile(.yaml)到不可达领域,与 domains 端点一致挡掉。
+        raise HTTPException(400, "invalid domain")
     term = req.term.strip()
     if not term:
         raise HTTPException(400, "term required")
@@ -69,7 +67,7 @@ async def create_term(
 @router.get("/{domain}/{term}", response_model=GlossaryTermResponse)
 async def get_term(domain: str, term: str, db: Database = Depends(get_db)):
     """术语详情（含 sources 关联的 job 列表）。"""
-    _validate_seg(domain, "domain")
+    validate_path_segment(domain, "domain")
     row = await asyncio.to_thread(db.get_glossary_term, domain, term)
     if row is None:
         raise HTTPException(404, "term not found")
@@ -84,7 +82,7 @@ async def update_term(
     db: Database = Depends(get_db),
 ):
     """改 definition / related（不动 status / occurrences）。"""
-    _validate_seg(domain, "domain")
+    validate_path_segment(domain, "domain")
     row = await asyncio.to_thread(db.get_glossary_term, domain, term)
     if row is None:
         raise HTTPException(404, "term not found")
@@ -106,7 +104,7 @@ async def accept_term(
     config: AppConfig = Depends(get_config),
 ):
     """采纳候选术语：status -> 'accepted' 并同步进 Profile.terminology，让 AI 步骤可用。"""
-    _validate_seg(domain, "domain")
+    validate_path_segment(domain, "domain")
     row = await asyncio.to_thread(db.get_glossary_term, domain, term)
     if row is None:
         raise HTTPException(404, "term not found")
@@ -126,7 +124,7 @@ async def set_topic(
     db: Database = Depends(get_db),
 ):
     """置该词是否为主题概念(is_topic)。term 不存在 -> 404。返回更新后的术语。"""
-    _validate_seg(domain, "domain")
+    validate_path_segment(domain, "domain")
     ok = await asyncio.to_thread(db.set_glossary_topic, domain, term, req.is_topic)
     if not ok:
         raise HTTPException(404, "term not found")
@@ -137,5 +135,5 @@ async def set_topic(
 @router.delete("/{domain}/{term}", status_code=204)
 async def delete_term(domain: str, term: str, db: Database = Depends(get_db)):
     """删一条术语（不动 Profile，避免误删手工维护的条目）。"""
-    _validate_seg(domain, "domain")
+    validate_path_segment(domain, "domain")
     await asyncio.to_thread(db.delete_glossary_term, domain, term)
