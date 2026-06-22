@@ -137,7 +137,7 @@ const command = computed(() => {
   -e GATEWAY_URL=${gatewayUrl.value} \\
   -e GATEWAY_TLS_INSECURE=1 \\
   -e WORKER_REGISTRATION_TOKEN=${tokenLine.value} \\
-  -e WORKER_ID_FILE=/data/.worker_id \\
+  -e WORKER_NAME=${newType.value}-1 \\
   -e DATA_DIR=/data -e CONFIG_DIR=/app/configs -e WORK_DIR=/tmp/flori-work \\
 ${aiLine}  -v flori-data:/data \\
   ${IMAGE} \\

@@ -172,7 +172,7 @@ Worker 信息存两处：
 | Redis HASH | 实时心跳 + 当前状态 | TTL = `online_window_sec`（默认 30s，单一事实源，崩溃自动消失） |
 | SQLite workers 表 | 历史记录 + 统计 + 运维备注 | 持久，Worker 下线后仍保留 |
 
-> **Worker 身份延续**：`worker_id` 不再每次随机。启动时优先读 `WORKER_ID_FILE`（默认 `/data/.worker_id`）缓存的 id，无则生成 `{type}-{8hex}` 并写回——重启复用同一身份（监控不刷幽灵行、docker `reap_orphans` 能跨重启命中残留容器）。gateway 模式以服务端 `register` 返回的 id 为准。多副本 worker 须各挂独立卷或设不同 `WORKER_ID_FILE`，否则争用同一 id。
+> **Worker 身份**：`worker_id` 不再每次随机。① 设 `WORKER_NAME` → **确定性派生** `{type}-sha256(WORKER_NAME)[:8]`，缓存在 `/data/workers/<name>`，重装/删缓存/重注册永远同一 id、不同名不撞(同机多 worker 各给一个唯一名即可)。② 不设 `WORKER_NAME` → 读缓存(默认 `/data/workers/worker.id`)，无则随机 `{type}-{8hex}` 写回，靠缓存文件跨重启稳定。gateway 模式以服务端 `register` 返回的 id 为准。id 文件统一收进 `/data/workers/` 文件夹（不再散在 `/data` 根）。
 > **Redis TTL 单一事实源**：liveness key 的 TTL 由 `configs/pools.yaml` 的 `worker_status.online_window_sec` 驱动（与对外"在线"判定同窗口），不再各处硬编码 30。
 > **并发上限服务端权威**：gateway 认领时以服务端 `pools.yaml` 夹取 worker 自报的 `pool_limits`（`min(client, server)`），worker 报超大值也无法突破全局每池并发。
 

@@ -275,18 +275,18 @@ steps/audio/step_04_smart_podcast.py      # AI 生成播客笔记
 **水平扩展（加副本）**：
 
 > ⚠️ **不要用 `docker compose up -d --scale worker-cpu=3`**。所有副本共用同一服务定义、同一
-> `WORKER_ID_FILE`(默认 `/data/.worker_id`),会注册成**同一个 worker_id** → 监控里互相覆盖、
-> 多数显示离线、心跳/状态错乱。同机多 worker 必须各起**命名服务**并设**独立 `WORKER_ID_FILE`**
-> (+ 独立 `WORK_DIR`),`worker/worker.py:_resolve_worker_id` 据此给每个 worker 稳定且唯一的身份。
+> id 来源,会注册成**同一个 worker_id** → 监控里互相覆盖、多数显示离线、心跳/状态错乱。
+> 同机多 worker 必须各起**命名服务**并设**独立 `WORKER_NAME`**:worker 据此派生确定性、唯一的
+> id(`{type}-sha256(WORKER_NAME)[:8]`,缓存在 `/data/workers/<name>`),重装/删缓存/重注册都不变、不撞。
 
 ```yaml
-# 同机加一个 CPU worker:叠加到一个 override compose,命名服务 + 独立 id 文件
+# 同机加一个 CPU worker:叠加到一个 override compose,命名服务 + 独立 WORKER_NAME
 services:
   worker-cpu-2:
     extends: { file: docker-compose.yml, service: worker-cpu }
     container_name: flori-worker-cpu-2
     environment:
-      WORKER_ID_FILE: /data/.worker_id-cpu-2
+      WORKER_NAME: cpu-2
       WORK_DIR: /tmp/flori-work-cpu-2
 ```
 

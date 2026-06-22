@@ -7,6 +7,7 @@ redis/db。注入 RedisTransport(单机直连)或 GatewayTransport(出站 HTTPS)
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import shutil
@@ -23,7 +24,7 @@ from shared.models import generate_worker_id
 from shared.runner_ops import parse_style_tags
 from shared.storage import StorageBackend
 from worker.step_runner import StepContext, create_step_runner
-from worker.transport import WorkerTransport
+from worker.transport import WorkerTransport, default_worker_id_file
 
 logger = structlog.get_logger(component="worker")
 
@@ -38,24 +39,27 @@ WORKER_POOLS: dict[str, list[str]] = {
 
 
 def _resolve_worker_id(worker_type: str) -> str:
-    """解析 worker 稳定身份:优先读 WORKER_ID_FILE 缓存(重启复用同一 id),无缓存则生成
-    {type}-{8hex} 并写回。
+    """解析 worker 稳定身份。
 
-    为何要稳定:直连(非 gateway)模式此前每次启动随机换 id,重启即被当全新 worker——监控
-    刷一堆幽灵行、docker reap_orphans 按 label flori.worker={id} 也无法跨重启命中残留容器。
-    与 GatewayTransport 同一文件约定(默认 /data/.worker_id);gateway 模式下服务端仍可在
-    register 时返回另一 id 并覆盖该文件(以服务端为准),本函数只负责直连模式的身份延续。
+    1) 设了 WORKER_NAME → 确定性派生 id = {type}-{sha256(WORKER_NAME)[:8]}。重装/删缓存/重注册
+       永远同一 id(不依赖缓存文件),同名同 id、不同名不撞——同机多 worker 各给一个唯一名即可。
+    2) 否则回退缓存:读 id 文件(默认 /data/workers/worker.id),无则随机 {type}-{8hex} 写回,
+       靠缓存文件跨重启稳定。
 
-    ⚠ 多副本 worker(如 claude-worker / claude-worker-2)必须各自挂独立卷或设不同
-    WORKER_ID_FILE,否则会争用同一 id 文件、注册成同一个 worker。"""
-    id_file = Path(os.environ.get("WORKER_ID_FILE", "/data/.worker_id"))
-    try:
-        cached = id_file.read_text().strip()
-        if cached:
-            return cached
-    except OSError:
-        pass
-    worker_id = generate_worker_id(worker_type)
+    为何要稳定:重启被当全新 worker → 监控刷幽灵行、docker reap_orphans(label flori.worker={id})
+    无法跨重启命中残留容器。gateway 模式 register 仍可返回另一 id 覆盖(以服务端为准)。"""
+    id_file = Path(default_worker_id_file())
+    name = os.environ.get("WORKER_NAME", "").strip()
+    if name:
+        worker_id = f"{worker_type}-{hashlib.sha256(name.encode()).hexdigest()[:8]}"
+    else:
+        try:
+            cached = id_file.read_text().strip()
+            if cached:
+                return cached
+        except OSError:
+            pass
+        worker_id = generate_worker_id(worker_type)
     try:
         id_file.parent.mkdir(parents=True, exist_ok=True)
         id_file.write_text(worker_id)

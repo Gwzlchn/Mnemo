@@ -16,7 +16,7 @@ from shared.config import AppConfig
 from shared.db import Database
 from shared.models import Job, Step, StepStatus
 from shared.storage import LocalStorage
-from worker.worker import Worker, WORKER_POOLS, auto_discover_tags
+from worker.worker import Worker, WORKER_POOLS, auto_discover_tags, _resolve_worker_id
 from worker.transport import RedisTransport
 
 
@@ -847,3 +847,40 @@ class TestUploadFaultTolerance:
             input_tokens=1, output_tokens=1, cost_usd=0.0, duration_sec=0.1, cached=False,
         )
         assert await gt.record_ai_usage(usage) is None
+
+
+class TestWorkerIdentity:
+    def test_worker_name_deterministic(self, tmp_path, monkeypatch):
+        """设了 WORKER_NAME → id = {type}-sha256(name)[:8],确定性:重复解析/删缓存都同一 id。"""
+        import hashlib
+        monkeypatch.setenv("WORKER_NAME", "nas-cpu")
+        monkeypatch.setenv("WORKER_ID_FILE", str(tmp_path / "id"))
+        expect = f"cpu-{hashlib.sha256(b'nas-cpu').hexdigest()[:8]}"
+        assert _resolve_worker_id("cpu") == expect
+        (tmp_path / "id").unlink(missing_ok=True)
+        assert _resolve_worker_id("cpu") == expect  # 不依赖缓存
+
+    def test_distinct_names_distinct_ids(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WORKER_ID_FILE", str(tmp_path / "id"))
+        monkeypatch.setenv("WORKER_NAME", "claude-1")
+        a = _resolve_worker_id("ai")
+        monkeypatch.setenv("WORKER_NAME", "claude-2")
+        b = _resolve_worker_id("ai")
+        assert a != b and a.startswith("ai-") and b.startswith("ai-")
+
+    def test_no_name_falls_back_to_cached(self, tmp_path, monkeypatch):
+        """没 WORKER_NAME → 随机 {type}-{8hex} 缓存,二次解析复用同一 id。"""
+        monkeypatch.delenv("WORKER_NAME", raising=False)
+        monkeypatch.setenv("WORKER_ID_FILE", str(tmp_path / "id"))
+        first = _resolve_worker_id("cpu")
+        assert first.startswith("cpu-")
+        assert _resolve_worker_id("cpu") == first
+
+    def test_default_id_file_under_workers_dir(self, monkeypatch):
+        """默认 id 文件收进 /data/workers/,不再散在 /data 根。"""
+        from worker.transport import default_worker_id_file
+        monkeypatch.delenv("WORKER_ID_FILE", raising=False)
+        monkeypatch.delenv("WORKER_NAME", raising=False)
+        assert default_worker_id_file() == "/data/workers/worker.id"
+        monkeypatch.setenv("WORKER_NAME", "claude-1")
+        assert default_worker_id_file() == "/data/workers/claude-1"

@@ -249,6 +249,16 @@ class RedisTransport:
         pass
 
 
+def default_worker_id_file() -> str:
+    """worker id 缓存文件默认位置(直连与 gateway 共用,单一来源):统一收进 /data/workers/ 文件夹,
+    不再散在 /data 根。WORKER_ID_FILE 显式覆盖;否则 WORKER_NAME→/data/workers/<name>,缺省→worker.id。"""
+    explicit = os.environ.get("WORKER_ID_FILE", "").strip()
+    if explicit:
+        return explicit
+    name = os.environ.get("WORKER_NAME", "").strip()
+    return f"/data/workers/{name}" if name else "/data/workers/worker.id"
+
+
 def create_transport(
     redis: RedisClient | None, db: Database | None,
 ) -> WorkerTransport:
@@ -264,7 +274,7 @@ def create_transport(
         return GatewayTransport(
             base_url,
             registration_token=os.environ.get("WORKER_REGISTRATION_TOKEN", ""),
-            id_file=os.environ.get("WORKER_ID_FILE", "/data/.worker_id"),
+            id_file=default_worker_id_file(),
             inner=RedisTransport(redis, db) if redis is not None else None,
         )
     return RedisTransport(redis, db)
