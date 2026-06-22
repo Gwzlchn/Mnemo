@@ -11,6 +11,7 @@ import {
   <section class="page">
     <div class="h1"><BookOpen :size="18" />关于 Flori</div>
     <div class="lead">自托管的 AI 学习知识库 —— 把视频 / 论文 / 文章 / 播客自动炼成带截图与时间戳的结构化笔记，沉淀为按领域分桶、可检索、互相关联的个人知识体系。</div>
+    <div style="margin-top:10px;color:var(--ink-600);font-size:13px">名字来源：Flori 取自拉丁语 <i>florilegium</i>（“采花集”）——中世纪指从群书中采撷精华、汇编成册的选集，正是“把素材摘录、沉淀为知识”的隐喻。</div>
 
     <!-- 这是什么 -->
     <div class="card pad" style="margin-top:18px">
