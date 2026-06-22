@@ -1,0 +1,43 @@
+# Flori ECS 远程 worker:纯算力节点,经反向隧道连 NAS 的 redis/minio。
+# 状态写 Redis(api 合并显示);产物走 MinIO;本地 /data 仅临时 sqlite + 镜像内置 prompts/configs。
+# network_mode host:为了访问隧道暴露在 ECS 回环的 127.0.0.1:6379/9000。
+services:
+  worker-cpu:
+    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/flori:latest
+    container_name: flori-worker-cpu
+    network_mode: host
+    restart: unless-stopped
+    command: sh -c "mkdir -p /data/db && python -m worker.main --type cpu"
+    environment:
+      - REDIS_URL=redis://127.0.0.1:6379/0
+      - DATA_DIR=/data
+      - CONFIG_DIR=/app/configs
+      - MINIO_URL=127.0.0.1:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-flori}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:?set in .env}
+      - MINIO_BUCKET=flori
+      - WORK_DIR=/tmp/flori-work
+      - DRY_RUN=1
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  worker-ai:
+    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/flori:latest
+    container_name: flori-worker-ai
+    network_mode: host
+    restart: unless-stopped
+    command: sh -c "mkdir -p /data/db && python -m worker.main --type ai --tags vision text-only"
+    environment:
+      - REDIS_URL=redis://127.0.0.1:6379/0
+      - DATA_DIR=/data
+      - CONFIG_DIR=/app/configs
+      - MINIO_URL=127.0.0.1:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-flori}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:?set in .env}
+      - MINIO_BUCKET=flori
+      - WORK_DIR=/tmp/flori-work
+      - DRY_RUN=1
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - KIMI_API_KEY=${KIMI_API_KEY:-}
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"

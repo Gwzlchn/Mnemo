@@ -1,15 +1,17 @@
-# 数据
+# 数据 / 运行时产物
 data/
+inbox/
 output/
+backups/
 
 # 敏感
 .env
 cookies/
 
-# 部署胶水(含私钥/构建产物/凭证,不入 git)
-_tunnel/
-_dist/
-_dist_edge/
+# 部署:模板入 git(deploy/),真实密钥/私钥/边缘 .env 不入
+deploy/edge/.env
+deploy/tunnel/ssh/*
+!deploy/tunnel/ssh/.gitkeep
 
 # Python
 __pycache__/

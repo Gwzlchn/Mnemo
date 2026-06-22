@@ -1,15 +1,45 @@
-# 构建上下文排除:本地/部署/数据/历史,缩小上下文并避开权限问题。
-.local/
-_dist/
-_dist_edge/
-_tunnel/
+# 构建上下文排除:应为 .gitignore 的超集(凡 git 不追的本地物,构建也不该看见)+
+# 镜像不需要的 tracked 目录。基础镜像只 COPY shared/ steps/ configs/ pyproject.toml,
+# 故 tests/docs/design/scripts/.github 等可排除,缩小上下文、避免过期产物烤进层。
 .git/
+
+# 本地 / 个人 / 部署(不入镜像构建上下文)
+.local/
+deploy/
+.githooks/
+.claude/
+LOCAL.md
+
+# 数据 / 运行时产物 / 缓存
 data/
-frontend/node_modules/
-frontend/dist/
+inbox/
+output/
+backups/
+cookies/
 **/__pycache__/
 **/*.pyc
 .pytest_cache/
+.hypothesis/
+mutants/
+mutmut-cicd-stats.json
+.coverage
 *.egg-info/
+
+# 密钥
 .env
-LOCAL.md
+
+# Node 构建物
+frontend/node_modules/
+frontend/dist/
+
+# 镜像用不到的 tracked 目录(base/step Dockerfile 不 COPY 这些)
+tests/
+docs/
+design/
+scripts/
+.github/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
