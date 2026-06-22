@@ -5,12 +5,14 @@ import { useCollectionStore } from '../stores/collections'
 import { useGlobalStore } from '../stores/global'
 import { useApi } from '../composables/useApi'
 import StatusBadge from '../components/common/StatusBadge.vue'
+import DeleteCollectionDialog from '../components/collection/DeleteCollectionDialog.vue'
 import { fmtDateTime } from '../utils/datetime'
 import { CONTENT_TYPE_LABELS } from '../types'
 import type { Collection, JobSummary } from '../types'
+import { sourceLabelOf, sourceBadge, sourceMeta, sourceHomeUrl } from '../constants/sources'
 import {
   Rss, Folder, RefreshCw, Info, ExternalLink, LayoutList, ChevronRight,
-  Play, FileText, Newspaper, Headphones, Check,
+  Play, FileText, Newspaper, Headphones, Check, Trash2,
 } from 'lucide-vue-next'
 
 // 集合详情（原型 #collection）：头部信息 + 订阅源（开关/同步） + 名下内容列表。
@@ -31,8 +33,14 @@ const error = ref('')
 
 const syncing = ref(false)
 const togglingSync = ref(false)
+const deleting = ref(false)
+const showDelete = ref(false)
 
-const upHomeUrl = (mid: string) => `https://space.bilibili.com/${mid}`
+// 来源(派生)展示:徽标、图标、人类名、原始链接。
+const srcBadge = computed(() => sourceBadge(sourceLabelOf(collection.value?.subscription)))
+const srcIcon = computed(() => sourceMeta(collection.value?.subscription?.source_type || '')?.icon ?? Rss)
+const srcTypeLabel = computed(() => sourceMeta(collection.value?.subscription?.source_type || '')?.label || '订阅源')
+const srcHome = computed(() => collection.value?.subscription ? sourceHomeUrl(collection.value.subscription) : null)
 
 const typeIcon = (t: string) =>
   t === 'video' ? Play : t === 'paper' ? FileText : t === 'audio' ? Headphones : Newspaper
@@ -98,6 +106,20 @@ function openJob(j: JobSummary) {
   router.push(`/content/${j.job_id}`)
 }
 
+async function onDelete(purge: boolean) {
+  const c = collection.value
+  if (!c) return
+  deleting.value = true
+  try {
+    await store.remove(c.id, purge)
+    showToast(purge ? '集合及内容已删除' : '集合已删除（内容保留）', 'success')
+    router.push('/collections')
+  } catch (e: any) {
+    showToast(e?.message || '删除失败', 'error')
+    deleting.value = false
+  }
+}
+
 const headerSub = computed(() => {
   const c = collection.value
   if (!c) return ''
@@ -139,13 +161,14 @@ onBeforeUnmount(() => global.setCrumbs(null))
           :class="collection.subscription ? 'sub' : 'man'"
           style="width:42px;height:42px;border-radius:11px"
         >
-          <Rss v-if="collection.subscription" :size="18" />
-          <Folder v-else :size="18" />
+          <component :is="collection.subscription ? srcIcon : Folder" :size="18" />
         </span>
         <div style="min-width:0">
           <div class="h1">
             {{ collection.name }}
-            <span v-if="collection.subscription" class="badge b-info" style="margin-left:4px"><Rss :size="12" />订阅</span>
+            <span v-if="collection.subscription" class="badge" :class="srcBadge.cls" style="margin-left:4px">
+              <component :is="srcBadge.icon" :size="12" />{{ srcBadge.text }}
+            </span>
             <span v-else class="badge b-mut" style="margin-left:4px">手动</span>
           </div>
           <div class="lead">{{ headerSub }}</div>
@@ -158,6 +181,13 @@ onBeforeUnmount(() => global.setCrumbs(null))
           @click="syncNow"
         >
           <RefreshCw :size="13" :class="{ spin: syncing }" />{{ syncing ? '同步中…' : '立即同步' }}
+        </button>
+        <button
+          class="btn sm del-btn"
+          :style="{ marginLeft: collection.subscription ? '0' : 'auto' }"
+          @click="showDelete = true"
+        >
+          <Trash2 :size="13" />删除
         </button>
       </div>
 
@@ -185,13 +215,14 @@ onBeforeUnmount(() => global.setCrumbs(null))
         <div v-if="collection.subscription" class="card pad">
           <div class="card-h"><Rss :size="15" />订阅源</div>
           <table class="kv" style="margin-bottom:13px">
-            <tr><td>来源</td><td>B站 UP 主</td></tr>
+            <tr><td>来源</td><td>{{ srcTypeLabel }}</td></tr>
             <tr>
-              <td>UP 主页</td>
+              <td>来源地址</td>
               <td>
-                <a class="ghost" style="color:var(--info)" :href="upHomeUrl(collection.subscription.source_id)" target="_blank" rel="noopener">
-                  space.bilibili.com/{{ collection.subscription.source_id }}<ExternalLink :size="13" />
+                <a v-if="srcHome" class="ghost" style="color:var(--info)" :href="srcHome" target="_blank" rel="noopener">
+                  {{ collection.subscription.source_id }}<ExternalLink :size="13" />
                 </a>
+                <span v-else class="mono" style="word-break:break-all">{{ collection.subscription.source_id }}</span>
               </td>
             </tr>
             <tr><td>已入库</td><td>{{ collection.job_count }}</td></tr>
@@ -250,6 +281,12 @@ onBeforeUnmount(() => global.setCrumbs(null))
         </div>
       </div>
     </template>
+
+    <DeleteCollectionDialog
+      v-if="showDelete && collection"
+      :collection="collection" :deleting="deleting"
+      @close="showDelete = false" @confirm="onDelete"
+    />
   </section>
 </template>
 
@@ -257,4 +294,6 @@ onBeforeUnmount(() => global.setCrumbs(null))
 .spin { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .switch.disabled { opacity: .5; pointer-events: none; }
+.del-btn { color: var(--ink-500); }
+.del-btn:hover { color: var(--bad); border-color: var(--bad-bd); background: var(--bad-bg); }
 </style>

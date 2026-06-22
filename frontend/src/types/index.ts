@@ -177,8 +177,9 @@ export interface ConceptTimeline {
 
 // 集合的订阅源（自动追更）。无订阅则为 null。同步/开关端点用集合自身 id。
 export interface CollectionSubscription {
-  source_type: string        // bilibili_up
-  source_id: string          // B站 mid
+  source_type: string        // bilibili_up/fav/collection · youtube_channel · rss · local_dir
+  source_id: string          // B站 mid / 频道URL / feed URL / 目录路径 / 收藏夹id ...
+  source_label?: string      // 后端派生来源短标签(bilibili/youtube/rss/local);前端=name+徽标
   enabled: boolean           // 自动同步开关 = collection.sync_enabled
   last_synced_at: string | null
 }

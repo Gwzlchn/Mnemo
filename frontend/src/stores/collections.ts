@@ -24,12 +24,13 @@ export const useCollectionStore = defineStore('collections', () => {
   }
 
   async function create(payload: {
-    name: string
+    name?: string          // 订阅集合可留空,首次同步自动取来源真实名
     domain: string
     description?: string
     tags?: string[]
-    source_type?: string   // 订阅集合：bilibili_up
-    source_id?: string     // 订阅集合：UP mid
+    source_type?: string   // 订阅集合：bilibili_up/fav/collection · youtube_channel · rss · local_dir
+    source_id?: string     // 订阅集合：mid / 频道URL / feed URL / 目录路径 / 收藏夹id
+    sync_now?: boolean
   }): Promise<Collection> {
     const c = await api.post<Collection>('/api/collections', payload)
     await fetchAll()
@@ -45,8 +46,9 @@ export const useCollectionStore = defineStore('collections', () => {
     return c
   }
 
-  async function remove(id: string) {
-    await api.del(`/api/collections/${id}`)
+  // 删除两模式:purge=false 解绑保留内容(默认);purge=true 连名下 job/笔记一起删。
+  async function remove(id: string, purge = false) {
+    await api.del(`/api/collections/${id}${purge ? '?purge=true' : ''}`)
     await fetchAll()
   }
 
