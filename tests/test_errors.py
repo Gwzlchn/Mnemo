@@ -101,29 +101,8 @@ class TestRetryPolicy:
         assert RETRY_POLICY["resource"]["max"] == 0
 
 
-class TestGetRetryDelay:
-    def test_no_retry(self):
-        assert get_retry_delay("input_missing", 0) is None
-        assert get_retry_delay("resource", 0) is None
-
-    def test_first_attempt(self):
-        assert get_retry_delay("processing", 0) == 0
-        assert get_retry_delay("ai", 0) == 30
-        assert get_retry_delay("timeout", 0) == 10
-
-    def test_exponential_backoff(self):
-        assert get_retry_delay("ai", 0) == 30
-        assert get_retry_delay("ai", 1) == 60
-        assert get_retry_delay("ai", 2) == 120
-
-    def test_exceeds_max(self):
-        assert get_retry_delay("ai", 3) is None
-        assert get_retry_delay("processing", 1) is None
-
-    def test_unknown_error_type(self):
-        assert get_retry_delay("nonexistent", 0) is None
-
-
+# 注:原 TestGetRetryDelay 已删——其全部断言(no-retry/首次/指数退避/超 max/未知)
+# 被下面 TestBuildVsSystemMatrix 完整覆盖且更全,留两套是重复维护面。
 class TestBuildVsSystemMatrix:
     """BUILD（确定性失败，不重试）vs SYSTEM（瞬态，退避重试）的完整重试矩阵。"""
 

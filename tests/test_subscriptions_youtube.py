@@ -17,6 +17,7 @@ import pytest
 import shared.subscriptions.youtube as yt
 from shared.subscriptions.base import SourceContext, SourceItem
 from shared.subscriptions.youtube import (
+    _ensure_videos_tab,
     _normalize_channel_url,
     _parse_entries,
     enumerate_youtube_channel,
@@ -213,3 +214,33 @@ async def test_enumerate_source_unknown_type_raises():
 
     with pytest.raises(ValueError, match="unsupported source_type"):
         await enumerate_source("no_such_source", "x", SourceContext())
+
+
+# ── _ensure_videos_tab:契约——频道页补 /videos,watch/playlist/已带 tab 透传 ──
+@pytest.mark.parametrize("url,expected", [
+    # 频道页形态 → 补 /videos
+    ("https://www.youtube.com/@chan", "https://www.youtube.com/@chan/videos"),
+    ("https://www.youtube.com/channel/UCabc", "https://www.youtube.com/channel/UCabc/videos"),
+    # 已带 tab → 原样
+    ("https://www.youtube.com/@chan/streams", "https://www.youtube.com/@chan/streams"),
+    ("https://www.youtube.com/@chan/videos", "https://www.youtube.com/@chan/videos"),
+    # watch/playlist 非频道页 → 透传不动(交 yt-dlp 自处理),此前无用例钉死该分支
+    ("https://www.youtube.com/watch?v=abc", "https://www.youtube.com/watch?v=abc"),
+    ("https://www.youtube.com/playlist?list=PL123", "https://www.youtube.com/playlist?list=PL123"),
+])
+def test_ensure_videos_tab(url, expected):
+    assert _ensure_videos_tab(url) == expected
+
+
+@pytest.mark.asyncio
+async def test_enumerate_propagates_subprocess_error(monkeypatch):
+    # 契约:_run_yt_dlp 失败(check=True → CalledProcessError)如约透传,
+    # 由上层转重试/记日志,不被适配器静默吞成空结果。
+    import subprocess
+
+    def boom(args, timeout=None):
+        raise subprocess.CalledProcessError(1, ["yt-dlp"], stderr="boom")
+
+    monkeypatch.setattr("shared.subscriptions.youtube._run_yt_dlp", boom)
+    with pytest.raises(subprocess.CalledProcessError):
+        await enumerate_youtube_channel("@x", SourceContext())

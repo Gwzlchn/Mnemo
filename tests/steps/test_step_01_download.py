@@ -88,10 +88,14 @@ class TestDownloadStep:
 
         config = make_step_config(tmp_path, step_name="01_download")
         step = DownloadStep("01_download", job_dir, config)
-        meta = step._extract_metadata("bilibili", "video")
+        # mock 时长提取:去掉对宿主 ffprobe 的隐式依赖(假 mp4 喂 ffprobe 本就读不出时长),
+        # 同时把 duration_sec 这条派生字段钉成确定值。
+        with patch.object(step, "_get_video_duration", return_value=42.0):
+            meta = step._extract_metadata("bilibili", "video")
         assert meta["source"] == "bilibili"
         assert meta["has_subtitle"] is True
         assert meta["file_size_mb"] > 0
+        assert meta["duration_sec"] == 42.0
 
     def test_idempotent(self, tmp_path):
         job_dir = tmp_path / "job"

@@ -457,6 +457,13 @@ class TestConditions:
         assert await scheduler.check_condition("j_nodir", "no_subtitle") is True
 
     @pytest.mark.asyncio
+    async def test_unknown_condition_defaults_true(self, scheduler, tmp_jobs_dir):
+        # 文档化契约(scheduler.py:692):未知条件名 → 默认 True(放行,不静默跳过该步)。
+        # 配置期无条件名白名单,故此默认是误拼/打错条件名时的安全兜底,值得钉死。
+        (tmp_jobs_dir / "j_cond_unknown" / "input").mkdir(parents=True)
+        assert await scheduler.check_condition("j_cond_unknown", "bogus_condition") is True
+
+    @pytest.mark.asyncio
     async def test_unknown_condition_returns_true(self, scheduler):
         """Unknown conditions should default to True."""
         result = await scheduler.check_condition("j_any", "some_new_condition")

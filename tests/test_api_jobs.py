@@ -326,6 +326,11 @@ class TestRetryRerunResubmit:
         )
         assert resp.status_code == 200
         assert resp.json()["from_step"] == "10_smart"
+        # 真实副作用:job 以 rerun 命令被重新派发(而非只回显入参)。最后一次 publish 是 rerun。
+        ch, payload = mock_redis.publish.call_args[0]
+        assert ch == "job_command"
+        assert payload["action"] == "rerun" and payload["job_id"] == job_id
+        assert payload["from_step"] == "10_smart"
 
     @pytest.mark.asyncio
     async def test_resubmit(self, client, mock_redis):
@@ -333,6 +338,9 @@ class TestRetryRerunResubmit:
         job_id = create_resp.json()["job_id"]
         resp = await client.post(f"/api/jobs/{job_id}/resubmit")
         assert resp.status_code == 200
+        # 真实副作用:job 以 resubmit 命令被重新派发。
+        ch, payload = mock_redis.publish.call_args[0]
+        assert ch == "job_command" and payload == {"action": "resubmit", "job_id": job_id}
 
 
 class TestListByCollection:

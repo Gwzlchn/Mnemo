@@ -51,6 +51,8 @@ class TestDedupStep:
         assert kept == 1  # all identical → only first kept
 
     def test_execute_all_different(self, tmp_path):
+        # 依赖真实 pHash:三张构图差异足够大的图,感知哈希距离均 > dedup 阈值 → 全保留。
+        # (用真实 imagehash 而非 mock,故对阈值敏感;若日后调阈值需同步这三张图的差异度。)
         job_dir = self._setup(tmp_path)
         from PIL import Image, ImageDraw
         img1 = Image.new("RGB", (320, 180), color="white")

@@ -69,10 +69,12 @@ class TestStatus:
         resp = await client.get("/api/status")
         assert resp.status_code == 200
         data = resp.json()
-        assert "workers" in data
-        assert "pools" in data
-        assert "jobs" in data
-        assert "disk" in data
+        # 空 db + mock redis(pool/queue=0):断具体值,而非只断 key 存在(后者源码返错结构也假绿)。
+        assert data["workers"] == {}                       # 无 worker
+        assert data["jobs"]["total"] == 0 and data["jobs"]["pending"] == 0
+        assert data["pools"] and all(                      # 每个池 used/queue 归零
+            p["used"] == 0 and p["queue"] == 0 for p in data["pools"].values())
+        assert "available_gb" in data["disk"]
 
 
 class TestPoolsConfig:
