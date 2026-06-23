@@ -115,6 +115,13 @@ const newTags = ref('')
 const activeTab = ref<(typeof TABS)[number]['id']>('gateway')
 const token = ref('')
 const minting = ref(false)
+// AI 凭证方式:订阅共享(claude-cli 共享宿主 ~/.claude,Max 不按量计费) | 各家 API key(按量)。
+const AI_CRED_METHODS = [
+  { id: 'claude-sub', label: 'Claude 订阅(共享 ~/.claude)' },
+  { id: 'anthropic', label: 'Anthropic API Key' },
+  { id: 'deepseek', label: 'DeepSeek API Key' },
+] as const
+const aiCredMethod = ref<(typeof AI_CRED_METHODS)[number]['id']>('claude-sub')
 
 const gatewayUrl = computed(() => {
   const o = typeof window !== 'undefined' ? window.location?.origin : ''
@@ -123,7 +130,11 @@ const gatewayUrl = computed(() => {
 // 凭证一律走 env(无状态:网页可见、随容器注入,不落本地文件)。
 // ai → AI key;io(下载)→ B站 SESSDATA;gpu 订 [gpu,scene,cpu,io] 不含 ai 池,不需 AI key。
 const credLines = computed(() => {
-  if (newType.value === 'ai') return '  -e ANTHROPIC_API_KEY=<KEY> \\\n'
+  if (newType.value === 'ai') {
+    if (aiCredMethod.value === 'claude-sub') return '  -v $HOME/.claude:/root/.claude \\\n'
+    if (aiCredMethod.value === 'deepseek') return '  -e DEEPSEEK_API_KEY=<KEY> \\\n'
+    return '  -e ANTHROPIC_API_KEY=<KEY> \\\n'
+  }
   if (newType.value === 'io') return '  -e BILI_SESSDATA=<B站SESSDATA,留空=匿名480P> \\\n'
   return ''
 })
@@ -332,6 +343,17 @@ onMounted(refreshAll)
           <label>标签（可选，空=自动探测）</label>
           <input v-model="newTags" class="input" placeholder="如 home-desktop vision" />
         </div>
+      </div>
+
+      <div v-if="newType === 'ai'" class="field" style="margin:0 0 14px">
+        <label>AI 凭证方式</label>
+        <select v-model="aiCredMethod" class="input">
+          <option v-for="m in AI_CRED_METHODS" :key="m.id" :value="m.id">{{ m.label }}</option>
+        </select>
+        <p class="note-tip" style="margin:6px 0 0">
+          <template v-if="aiCredMethod === 'claude-sub'">挂宿主已登录的 ~/.claude,claude-cli 自动续期、走 Max 订阅(不按 token 计费);镜像内置 claude CLI。中国大陆机器另加 -e HTTPS_PROXY=… 走代理。</template>
+          <template v-else>按量计费:从对应 provider 控制台取 key 填入 &lt;KEY&gt;。</template>
+        </p>
       </div>
 
       <!-- 生成 token -->
