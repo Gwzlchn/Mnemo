@@ -221,7 +221,11 @@ class DownloadStep(StepBase):
             "--write-info-json",   # 写 source.info.json(供元信息取标题/上传日期)
             "--write-sub", "--sub-lang", "en,zh-Hans",
             "--convert-subs", "srt",
-            "-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+            # 避开 AV1:处理镜像 ffmpeg 解不了 av01,场景检测/抽帧会拿到 0 结果(场景/关键帧全空)。
+            # 优先非-av1 视频,-S 再偏好 H.264;实在只有 av1 才回退,保证总能下到东西。
+            "-f", "bestvideo[height<=1080][vcodec!*=av01]+bestaudio/"
+                  "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+            "-S", "vcodec:h264",
             "--merge-output-format", "mp4",
         ]
         # 上传的 YouTube cookies(/data/cookies/youtube.txt,Netscape 格式)用于受限/年龄限制
