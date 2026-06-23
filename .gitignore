@@ -43,3 +43,4 @@ plans/
 
 # 个人暂存/归档(笔记、旧计划、部署速查等,不入 git)
 .local/
+.playwright-mcp/
