@@ -962,6 +962,72 @@ class Database:
             "total_cost_usd": row["total_cost"],
         }
 
+    def get_usage_aggregate(self) -> dict:
+        """全量 AI 用量聚合(供 /api/usage + 系统状态展示):累计 token/缓存/成本 + 平均缓存命中率
+        + 按 model 分。命中率 = cache_read /(input + cache_read + cache_creation)。"""
+        with self._lock:
+            total = self._conn.execute(
+                """SELECT
+                    COUNT(*) AS calls,
+                    COALESCE(SUM(input_tokens),0) AS in_tok,
+                    COALESCE(SUM(output_tokens),0) AS out_tok,
+                    COALESCE(SUM(cache_creation_input_tokens),0) AS cc_tok,
+                    COALESCE(SUM(cache_read_input_tokens),0) AS cr_tok,
+                    COALESCE(SUM(cost_usd),0) AS cost,
+                    COALESCE(SUM(num_turns),0) AS turns,
+                    COALESCE(SUM(duration_sec),0) AS dur
+                FROM ai_usage""",
+            ).fetchone()
+            rows = self._conn.execute(
+                """SELECT provider, model,
+                    COUNT(*) AS calls,
+                    COALESCE(SUM(input_tokens),0) AS in_tok,
+                    COALESCE(SUM(output_tokens),0) AS out_tok,
+                    COALESCE(SUM(cache_creation_input_tokens),0) AS cc_tok,
+                    COALESCE(SUM(cache_read_input_tokens),0) AS cr_tok,
+                    COALESCE(SUM(cost_usd),0) AS cost
+                FROM ai_usage GROUP BY provider, model ORDER BY cost DESC""",
+            ).fetchall()
+
+        def _hit_rate(in_tok: int, cc: int, cr: int) -> float:
+            denom = in_tok + cc + cr
+            return round(cr / denom * 100, 1) if denom else 0.0
+
+        return {
+            "calls": total["calls"],
+            "total_input_tokens": total["in_tok"],
+            "total_output_tokens": total["out_tok"],
+            "total_cache_creation_tokens": total["cc_tok"],
+            "total_cache_read_tokens": total["cr_tok"],
+            "total_cost_usd": round(total["cost"], 6),
+            "total_num_turns": total["turns"],
+            "total_duration_sec": round(total["dur"], 1),
+            "cache_hit_rate_pct": _hit_rate(total["in_tok"], total["cc_tok"], total["cr_tok"]),
+            "by_model": [
+                {
+                    "provider": r["provider"], "model": r["model"], "calls": r["calls"],
+                    "input_tokens": r["in_tok"], "output_tokens": r["out_tok"],
+                    "cache_creation_tokens": r["cc_tok"], "cache_read_tokens": r["cr_tok"],
+                    "cost_usd": round(r["cost"], 6),
+                    "cache_hit_rate_pct": _hit_rate(r["in_tok"], r["cc_tok"], r["cr_tok"]),
+                }
+                for r in rows
+            ],
+        }
+
+    def throughput_since(self, since_iso: str) -> dict:
+        """近窗口吞吐:since_iso 之后进入终态的 job 计数(done/failed)。用 updated_at 近似终态时刻
+        (rerun 改 updated_at 致重复计入罕见,设计 §7.3 已注;利用 idx_jobs_status)。"""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT status, COUNT(*) AS n FROM jobs
+                   WHERE status IN ('done','failed') AND updated_at >= ?
+                   GROUP BY status""",
+                (since_iso,),
+            ).fetchall()
+        by = {r["status"]: r["n"] for r in rows}
+        return {"done": by.get("done", 0), "failed": by.get("failed", 0)}
+
     # ── Collection ──
 
     def _row_to_collection(self, r: sqlite3.Row) -> Collection:
