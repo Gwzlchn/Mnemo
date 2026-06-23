@@ -306,21 +306,34 @@ class Worker:
                 await self.transport.report_step_alive(job_id, step)
                 await self._push_step_log(job_id, step, work_dir)
 
-            try:
-                returncode, stderr = await self.runner.run_step(ctx, on_progress, on_tick)
-            finally:
-                # 不论成功/失败/超时,都把本步产物(含日志)推回存储,失败也能在前端看日志排错。
-                await self._push_safe(job_id, step, work_dir)
+            returncode, stderr = await self.runner.run_step(ctx, on_progress, on_tick)
             duration = time.time() - start
 
             if returncode == 0:
                 await self._collect_usage(job_id, step, work_dir)
-                await self.transport.report_done(claim, duration, start)
-                logger.info(
-                    "step_done", worker_id=self.worker_id,
-                    job_id=job_id, step=step, duration=round(duration, 1),
-                )
+                # ★ 产物必须先成功推上中心存储,才报 done。否则会出现「上游标 done 但产物没上去」→
+                #   下游步拉 work_dir 时 input_missing(如 candidates.json)。push 失败 → 降级为步失败、
+                #   重试时重新生成并推送,绝不在产物缺失时标完成。
+                try:
+                    await self.storage.push(job_id, step, work_dir)
+                except Exception as push_err:
+                    await self.transport.report_failed(
+                        claim, f"artifact push failed: {push_err}"[:500],
+                        "storage", duration, start, count_stats=False,
+                    )
+                    logger.warning(
+                        "step_push_failed", worker_id=self.worker_id,
+                        job_id=job_id, step=step, error=str(push_err)[:200],
+                    )
+                else:
+                    await self.transport.report_done(claim, duration, start)
+                    logger.info(
+                        "step_done", worker_id=self.worker_id,
+                        job_id=job_id, step=step, duration=round(duration, 1),
+                    )
             else:
+                # 步本身失败:best-effort 推产物(含日志)便于前端排错,再报 failed。
+                await self._push_safe(job_id, step, work_dir)
                 error_type, error_json_msg = self._parse_error(work_dir, step)
                 # 兜底:子进程 stderr 为空时,用 .{step}.error.json 的 message(真实异常文本),
                 # 避免前端只看到「unknown error」无从排错。
@@ -335,6 +348,8 @@ class Worker:
 
         except asyncio.TimeoutError:
             duration = time.time() - start
+            if work_dir:
+                await self._push_safe(job_id, step, work_dir)  # best-effort 推日志便于排错
             await self.transport.report_failed(
                 claim, "timeout", "timeout", duration, start, count_stats=False,
             )
@@ -345,6 +360,8 @@ class Worker:
 
         except Exception as e:
             duration = time.time() - start
+            if work_dir:
+                await self._push_safe(job_id, step, work_dir)  # best-effort 推日志便于排错
             error_msg = str(e)[:500]
             await self.transport.report_failed(
                 claim, error_msg, "processing", duration, start, count_stats=False,

@@ -591,6 +591,29 @@ class TestExecuteFullFlow:
         assert await redis.get_pool_count("cpu") == 0
 
     @pytest.mark.asyncio
+    async def test_push_failure_on_success_reports_failed_not_done(self, worker, redis, db, tmp_jobs_dir):
+        # ★ returncode==0 但产物推送失败 → 必须报 failed(绝不标 done),否则下游拉不到输入
+        #   (上游 done 但产物缺失 → input_missing)。重试时会重新生成并推送。
+        await worker.register()
+        db.create_job(make_job())
+        db.upsert_step(Step(job_id="j_test_001", name="A", status=StepStatus.READY, pool="cpu"))
+        await redis.try_acquire_slot("cpu", limit=3)
+        (tmp_jobs_dir / "j_test_001").mkdir(exist_ok=True)
+
+        async def mock_run_step(ctx, on_progress, on_tick):
+            return 0, ""
+        worker.runner.run_step = mock_run_step
+
+        async def boom_push(job_id, step, work_dir):
+            raise RuntimeError("minio down")
+        worker.storage.push = boom_push
+
+        await worker.execute(make_claim())
+
+        assert db.get_steps("j_test_001")[0].status == StepStatus.FAILED  # 不是 DONE
+        assert await redis.get_pool_count("cpu") == 0                     # 槽位仍释放
+
+    @pytest.mark.asyncio
     async def test_minimal_claim_resolves_pipeline_via_transport(self, worker, redis, db, tmp_jobs_dir):
         # 最小 claim(无 pipeline/domain/style_tags)→ execute 在 try 内经 transport 回读后跑完。
         await worker.register()
