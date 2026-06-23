@@ -109,8 +109,6 @@ async def list_workers(
     # 不信任 Redis 里 worker 自报的 status 字段。
     now = datetime.now(timezone.utc)
     for wid in await redis.list_worker_ids():
-        if wid in by_id:
-            continue
         info = await redis.get_worker_info(wid)
         if not info:
             continue
@@ -122,6 +120,16 @@ async def list_workers(
             online_window_sec=online_window,
             stale_window_sec=stale_window,
         )
+        # Redis 是实时 liveness 源(TTL,每心跳刷新);db.last_heartbeat 在 worker 空闲时可能不刷新而
+        # 过期,据此判定会误标离线。故 db 已有该 worker 时,用 Redis 覆盖状态/心跳/当前任务(累计统计
+        # 仍用 db);Redis 里没有的(已失活)保留 db 判定。
+        existing = by_id.get(wid)
+        if existing is not None:
+            existing.status = status
+            existing.last_heartbeat = _iso_utc(info.get("last_heartbeat"))
+            existing.current_job = info.get("current_job") or None
+            existing.current_step = info.get("current_step") or None
+            continue
         by_id[wid] = WorkerResponse(
             id=wid,
             type=info.get("type", ""),
@@ -161,13 +169,32 @@ async def mint_registration_token(redis: RedisClient = Depends(get_redis)):
 async def get_worker(
     worker_id: str,
     db: Database = Depends(get_db),
+    redis: RedisClient = Depends(get_redis),
     config: AppConfig = Depends(get_config),
 ):
     online_window, stale_window = _windows(config)
     w = await asyncio.to_thread(db.get_worker, worker_id, online_window, stale_window)
     if not w:
         raise HTTPException(404, "worker not found")
-    return _to_response(w)
+    resp = _to_response(w)
+    # 同 list_workers:Redis 是实时 liveness 源(TTL,每心跳刷新),db.last_heartbeat 在 worker 空闲时
+    # 可能不刷新而过期 → 用 Redis 覆盖状态/心跳/当前任务(Redis 无则保留 db 判定,即已失活)。
+    info = await redis.get_worker_info(worker_id)
+    if info:
+        resp.status = compute_worker_status(
+            last_heartbeat=_parse_iso(info.get("last_heartbeat")),
+            current_job=info.get("current_job") or None,
+            admin_status=info.get("admin_status"),
+            now=datetime.now(timezone.utc),
+            online_window_sec=online_window,
+            stale_window_sec=stale_window,
+        )
+        resp.last_heartbeat = _iso_utc(info.get("last_heartbeat"))
+        resp.current_job = info.get("current_job") or None
+        resp.current_step = info.get("current_step") or None
+        if info.get("remote_addr"):
+            resp.remote_addr = info.get("remote_addr")
+    return resp
 
 
 @router.get("/{worker_id}/jobs")

@@ -175,6 +175,28 @@ class TestStatusSemantics:
         assert body["status"] == "paused"
 
     @pytest.mark.asyncio
+    async def test_redis_fresh_overrides_stale_db_heartbeat_list(self, client, db, redis_mock):
+        # 回归:worker 空闲时 db.last_heartbeat 可能不刷新而过期(单看 db 判 offline),但 Redis 心跳
+        # 新鲜。列表必须用 Redis 的新鲜心跳覆盖 db 已有 worker → 在线;否则在线 worker 全被误标离线。
+        _make_worker(db, id="cpu-rescue", heartbeat=_utcnow() - timedelta(minutes=5))
+        redis_mock.list_worker_ids.return_value = ["cpu-rescue"]
+        redis_mock.get_worker_info.return_value = {
+            "type": "cpu", "status": "idle", "last_heartbeat": _utcnow().isoformat(),
+        }
+        w = next(x for x in (await client.get("/api/workers")).json() if x["id"] == "cpu-rescue")
+        assert w["status"] == "online-idle"
+
+    @pytest.mark.asyncio
+    async def test_redis_fresh_overrides_stale_db_heartbeat_detail(self, client, db, redis_mock):
+        _make_worker(db, id="cpu-rescue", heartbeat=_utcnow() - timedelta(minutes=5))
+        redis_mock.list_worker_ids.return_value = ["cpu-rescue"]
+        redis_mock.get_worker_info.return_value = {
+            "type": "cpu", "status": "idle", "last_heartbeat": _utcnow().isoformat(),
+        }
+        body = (await client.get("/api/workers/cpu-rescue")).json()
+        assert body["status"] == "online-idle"
+
+    @pytest.mark.asyncio
     async def test_list_online_count(self, client, db):
         _make_worker(db, id="w1", status="idle")
         _make_worker(db, id="w2", status="busy", current_job="j")
