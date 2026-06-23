@@ -134,7 +134,7 @@ class DownloadStep(StepBase):
         # 取值优先级:本机侧载 → 本地 cookie 文件。注意 yutto 的 -c 要的是 SESSDATA「值」,
         # 不是文件路径——此前回退误把 bilibili.txt 路径当值传给 -c,致登录态失效:匿名下载、
         # 无字幕(字幕需登录)、清晰度降 480P。
-        sessdata = self._read_sessdata() or self._read_cookie_file_sessdata()
+        sessdata = self._resolve_sessdata()
         if sessdata:
             cmd.extend(["-c", sessdata])
         else:
@@ -149,6 +149,15 @@ class DownloadStep(StepBase):
             self.log.warn("yutto_failed_ytdlp_fallback", error=str(e)[:200])
             self._download_bili_ytdlp(target_url, input_dir, sessdata)
         self._verify_download(input_dir / "source.mp4")
+
+    def _resolve_sessdata(self) -> str | None:
+        """B站 SESSDATA 取值优先级:环境变量 BILI_SESSDATA(无状态 worker 推荐:凭证随 env 注入、
+        不落本地文件)→ 本机侧载 input/.credentials.json → 本地 cookie 文件 /data/cookies/bilibili.txt。"""
+        return (
+            os.environ.get("BILI_SESSDATA", "").strip()
+            or self._read_sessdata()
+            or self._read_cookie_file_sessdata()
+        )
 
     def _read_sessdata(self) -> str | None:
         """从本机侧载凭证文件读 SESSDATA(只在同机 LocalStorage 存在;远端 worker 取不到)。

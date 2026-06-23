@@ -78,6 +78,31 @@ class TestReadSessdata:
         assert step._read_sessdata() is None
 
 
+# ── _resolve_sessdata 优先级(env > 侧载 > 文件)──
+
+class TestResolveSessdata:
+    def test_env_takes_priority_over_sideload(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BILI_SESSDATA", "ENVVAL")
+        job_dir = _make_job_dir(tmp_path)
+        (job_dir / "input" / ".credentials.json").write_text(json.dumps({"sessdata": "SIDELOAD"}))
+        step = _make_step(job_dir, tmp_path)
+        assert step._resolve_sessdata() == "ENVVAL"
+
+    def test_falls_back_to_sideload_without_env(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("BILI_SESSDATA", raising=False)
+        job_dir = _make_job_dir(tmp_path)
+        (job_dir / "input" / ".credentials.json").write_text(json.dumps({"sessdata": "SIDELOAD"}))
+        step = _make_step(job_dir, tmp_path)
+        assert step._resolve_sessdata() == "SIDELOAD"
+
+    def test_none_when_no_env_no_files(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("BILI_SESSDATA", raising=False)
+        monkeypatch.setenv("DATA_DIR", str(tmp_path / "nodata"))
+        job_dir = _make_job_dir(tmp_path)
+        step = _make_step(job_dir, tmp_path)
+        assert step._resolve_sessdata() is None
+
+
 # ── _read_cookie_file_sessdata ──
 
 class TestReadCookieFileSessdata:

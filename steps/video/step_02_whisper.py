@@ -23,8 +23,15 @@ class WhisperStep(StepBase):
         model_size, compute_type = select_whisper_model()
         self.log.info("whisper_config", model=model_size, compute_type=compute_type)
 
+        import os
+
         from faster_whisper import WhisperModel
-        model = WhisperModel(model_size, compute_type=compute_type)
+        # 模型缓存目录显式可配(无状态部署唯一该挂的卷):设 MODEL_CACHE_DIR 即把权重缓存到该目录
+        #(可挂 warm 卷 / 跨重启复用);不设则用库默认 HF 缓存。
+        model = WhisperModel(
+            model_size, compute_type=compute_type,
+            download_root=os.environ.get("MODEL_CACHE_DIR") or None,
+        )
 
         # 不写死语种:faster-whisper 自动检测。本步仅在无原生 srt 时跑,外文无字幕内容若强制
         # language="zh" 会被按中文声学模型解码出乱码,且 info.language 恒为 zh 丢失真实语种(下游 08 据此判翻译)。

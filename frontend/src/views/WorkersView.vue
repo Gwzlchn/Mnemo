@@ -120,8 +120,16 @@ const gatewayUrl = computed(() => {
   const o = typeof window !== 'undefined' ? window.location?.origin : ''
   return o && o.startsWith('http') ? o : 'https://<FLORI_HOST>'
 })
-// 仅 ai 类型订 ai 池、需 AI key;gpu 订 [gpu,scene,cpu,io] 不含 ai,不需 ANTHROPIC_API_KEY。
-const needsAiKey = computed(() => newType.value === 'ai')
+// 凭证一律走 env(无状态:网页可见、随容器注入,不落本地文件)。
+// ai → AI key;io(下载)→ B站 SESSDATA;gpu 订 [gpu,scene,cpu,io] 不含 ai 池,不需 AI key。
+const credLines = computed(() => {
+  if (newType.value === 'ai') return '  -e ANTHROPIC_API_KEY=<KEY> \\\n'
+  if (newType.value === 'io') return '  -e BILI_SESSDATA=<B站SESSDATA,留空=匿名480P> \\\n'
+  return ''
+})
+// gpu 唯一该挂的卷:whisper 模型 warm 缓存(可选,跨重启复用,免每次重下模型)。
+const cacheLine = computed(() => (newType.value === 'gpu'
+  ? '  -v whisper-cache:/cache -e MODEL_CACHE_DIR=/cache \\\n' : ''))
 const tagsArg = computed(() => {
   const t = newTags.value.split(/[\s,]+/).filter(Boolean)
   return t.length ? ` --tags ${t.join(' ')}` : ''
@@ -132,19 +140,22 @@ const gpuFlag = computed(() => (newType.value === 'gpu' ? ' --gpus all' : ''))
 
 const command = computed(() => {
   if (activeTab.value === 'gateway') {
-    const aiLine = needsAiKey.value ? '  -e ANTHROPIC_API_KEY=<KEY> \\\n' : ''
+    // 无状态:不挂 /data 卷。id 由 WORKER_NAME 确定性派生、configs 在镜像、产物经网关、凭证走 env。
     return `docker run -d --restart unless-stopped${gpuFlag.value} \\
   -e GATEWAY_URL=${gatewayUrl.value} \\
   -e GATEWAY_TLS_INSECURE=1 \\
   -e WORKER_REGISTRATION_TOKEN=${tokenLine.value} \\
   -e WORKER_NAME=${newType.value}-1 \\
-  -e DATA_DIR=/data -e CONFIG_DIR=/app/configs -e WORK_DIR=/tmp/flori-work \\
-${aiLine}  -v flori-data:/data \\
-  ${IMAGE} \\
+  -e CONFIG_DIR=/app/configs \\
+${credLines.value}${cacheLine.value}  ${IMAGE} \\
   ${runCmd.value}`
   }
   if (activeTab.value === 'compose') {
-    const aiLines = needsAiKey.value ? '      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}\n' : ''
+    const credCompose = newType.value === 'ai'
+      ? '      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}\n'
+      : newType.value === 'io'
+        ? '      - BILI_SESSDATA=${BILI_SESSDATA:-}\n'
+        : ''
     return `# 追加到 docker-compose.yml services:
   worker-${newType.value}-extra:
     image: ${IMAGE}
@@ -155,14 +166,14 @@ ${aiLine}  -v flori-data:/data \\
       - REDIS_URL=redis://redis:6379/0
       - DATA_DIR=/data
       - CONFIG_DIR=/app/configs
-${aiLines}    depends_on: [ redis ]`
+      - WORKER_NAME=${newType.value}-1
+${credCompose}    depends_on: [ redis ]`
   }
-  const aiLine = needsAiKey.value ? '  -e ANTHROPIC_API_KEY=<KEY> \\\n' : ''
   return `docker run -d --restart unless-stopped${gpuFlag.value} \\
   -e REDIS_URL=redis://<HOST>:6379/0 \\
   -e MINIO_URL=<HOST>:9000 -e MINIO_ACCESS_KEY=<KEY> -e MINIO_SECRET_KEY=<SECRET> -e MINIO_BUCKET=flori \\
   -e DATA_DIR=/data -e CONFIG_DIR=/app/configs -e WORK_DIR=/tmp/flori-work \\
-${aiLine}  -v flori-data:/data \\
+${credLines.value}${cacheLine.value}  -v flori-data:/data \\
   ${IMAGE} \\
   ${runCmd.value}`
 })

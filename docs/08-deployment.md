@@ -241,29 +241,32 @@ volumes:
 > **audio/播客流水线需要 whisper-capable worker**：`02_whisper` 步在 `gpu` 池，仅由 `--type gpu` 且装了 `[gpu]` 依赖（faster-whisper）的 worker 执行；该 worker 在无 GPU 的机器上用 CPU（int8）转写，较慢但可用。若集群无此 worker，含音频/无字幕视频的 job 会在约 90s 后 fail-fast 报「无可用 worker」而非永久挂起。默认 `docker compose up` 只起 download/cpu/ai worker，不含 whisper worker。
 
 现行接入走 worker-gateway 单出站 HTTPS（见 [ADR-0009](adr/0009-worker-gateway-outbound-https.md)）：
-GPU 机只需能出站访问主机 API，不暴露任何入站端口、不直连 Redis/MinIO。
+worker 机只需能出站访问主机 API，不暴露入站端口、不直连 Redis/MinIO。
 
-whisper 需 `[gpu]` 依赖(faster-whisper)，base 镜像未含——先构建一个带该 extra 的镜像：
-
-```dockerfile
-FROM ghcr.io/${IMAGE_OWNER:-gwzlchn}/flori:latest
-RUN pip install --no-cache-dir ".[gpu]"
-```
+**worker 无状态**：id 由 `WORKER_NAME` 确定性派生(`{type}-sha256(name)[:8]`)、configs/prompts 在镜像、
+产物经网关、凭证走 env —— **不挂 `/data` 卷**。唯一可选挂载是 GPU 的 whisper 模型 warm 缓存。
 
 ```bash
-docker run -d --gpus all \
-  --name flori-gpu-worker \
+# 任意内网机,纯出站 HTTPS,无状态(--type 换 cpu/io/ai/gpu):
+docker run -d --restart unless-stopped \
   -e GATEWAY_URL=https://<主机域名> \
-  -e WORKER_REGISTRATION_TOKEN=<管理页铸造的接入 token> \
-  -e IDLE_TIMEOUT=600 \
-  --tmpfs /tmp:size=2G \
-  --memory 8g \
-  --security-opt no-new-privileges:true \
-  <上面构建的镜像> \
-  python -m worker.main --type gpu
+  -e GATEWAY_TLS_INSECURE=1 \                 # 自签/裸IP 网关需要;有受信证书可删
+  -e WORKER_REGISTRATION_TOKEN=<管理页铸造的 flw- token> \
+  -e WORKER_NAME=cpu-1 \                       # 确定性 id;同机多 worker 各给唯一名,不撞
+  -e CONFIG_DIR=/app/configs \
+  ghcr.io/${IMAGE_OWNER:-gwzlchn}/flori:latest \
+  python -m worker.main --type cpu
 ```
 
-一条命令接入，纯出站 HTTPS，空闲 10 分钟自动退出；删除 worker 即吊销其 token。
+**凭证一律走 env**（管理页「接入新 Worker」会按类型自动生成命令)：
+- `ai`：`-e ANTHROPIC_API_KEY=<KEY>`（及 `DEEPSEEK_API_KEY` 等)。
+- `io`(下载)：B站 `-e BILI_SESSDATA=<SESSDATA>`；YouTube 受限视频再挂只读 cookie 文件
+  `-v /宿主/youtube.txt:/data/cookies/youtube.txt:ro`(公开视频匿名即可)。
+- `gpu`(whisper)：`--gpus all`，并需带 `[gpu]` extra 的镜像(`FROM …/flori:latest` + `RUN pip install ".[gpu]"`)；
+  可选模型 warm 缓存(免每次重下)`-v whisper-cache:/cache -e MODEL_CACHE_DIR=/cache`。
+
+一条命令接入，纯出站 HTTPS；删除 worker 即吊销其 token。除 GPU 模型缓存(可选)与 YouTube cookie
+(可选只读文件)外，worker 不需任何持久化卷。
 
 > 旧的「中转 Redis(TLS)+MinIO」直连模型见上方 compose，已被网关模型取代，仅在需要 worker 直连内部组件时保留。
 
