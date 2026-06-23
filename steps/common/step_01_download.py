@@ -401,6 +401,51 @@ class DownloadStep(StepBase):
                     f.rename(input_dir / "source.mp4")
                 return
 
+    def _probe_codec_info(self, video_file: Path) -> dict:
+        """ffprobe 取视频/音频编码、码率、帧率等基本信息(供前端「元信息」展示)。尽力而为,失败返回空。"""
+        import json as _json
+        import subprocess
+        try:
+            out = subprocess.run(
+                ["ffprobe", "-v", "error", "-print_format", "json",
+                 "-show_streams", "-show_format", str(video_file)],
+                capture_output=True, text=True, timeout=30,
+            )
+            d = _json.loads(out.stdout or "{}")
+        except Exception:
+            return {}
+        info: dict = {}
+        streams = d.get("streams", [])
+        vs = next((s for s in streams if s.get("codec_type") == "video"), None)
+        aud = next((s for s in streams if s.get("codec_type") == "audio"), None)
+        fmt = d.get("format", {})
+
+        def _kbps(v) -> int | None:
+            return round(int(v) / 1000) if v and str(v).isdigit() else None
+
+        if vs:
+            info["video_codec"] = vs.get("codec_name")
+            fr = vs.get("avg_frame_rate") or vs.get("r_frame_rate") or ""
+            if "/" in fr:
+                a, b = fr.split("/", 1)
+                try:
+                    if float(b):
+                        info["fps"] = round(float(a) / float(b), 2)
+                except (ValueError, ZeroDivisionError):
+                    pass
+            vb = _kbps(vs.get("bit_rate"))
+            if vb is not None:
+                info["video_bitrate_kbps"] = vb
+        if aud:
+            info["audio_codec"] = aud.get("codec_name")
+            ab = _kbps(aud.get("bit_rate"))
+            if ab is not None:
+                info["audio_bitrate_kbps"] = ab
+        tb = _kbps(fmt.get("bit_rate"))
+        if tb is not None:
+            info["bitrate_kbps"] = tb  # 总码率(视频流缺 bit_rate 时也能从容器拿到)
+        return info
+
     def _extract_metadata(self, source: str, content_type: str) -> dict:
         input_dir = self.job_dir / "input"
         metadata: dict = {"source": source, "content_type": content_type}
@@ -419,6 +464,7 @@ class DownloadStep(StepBase):
             if w and h:
                 metadata["width"], metadata["height"] = w, h
                 metadata["resolution"] = f"{w}x{h}"
+            metadata.update(self._probe_codec_info(video_file))  # 编码/码率/帧率等基本信息
 
         pdf_file = input_dir / "source.pdf"
         if pdf_file.exists():

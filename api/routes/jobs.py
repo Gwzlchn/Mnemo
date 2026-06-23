@@ -294,6 +294,12 @@ async def get_job(
                     "file_size_mb": md.get("file_size_mb"),
                     "has_subtitle": md.get("has_subtitle"),
                     "has_danmaku": md.get("has_danmaku"),
+                    # 视频基本信息(01_download 经 ffprobe 写入):编码/帧率/码率。
+                    "video_codec": md.get("video_codec"),
+                    "audio_codec": md.get("audio_codec"),
+                    "fps": md.get("fps"),
+                    "bitrate_kbps": md.get("bitrate_kbps"),
+                    "video_bitrate_kbps": md.get("video_bitrate_kbps"),
                 }.items() if v is not None
             }
     except Exception:

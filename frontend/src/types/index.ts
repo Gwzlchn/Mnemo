@@ -48,6 +48,11 @@ export interface JobMedia {
   has_subtitle?: boolean
   has_danmaku?: boolean
   word_count?: number           // 文章:字数
+  video_codec?: string          // 视频编码,如 "h264" / "av1"
+  audio_codec?: string          // 音频编码,如 "aac" / "opus"
+  fps?: number                  // 帧率
+  bitrate_kbps?: number         // 总码率(kbps)
+  video_bitrate_kbps?: number   // 视频流码率(kbps)
 }
 
 export interface JobDetail extends JobSummary {

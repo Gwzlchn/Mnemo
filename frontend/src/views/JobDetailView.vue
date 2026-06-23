@@ -52,6 +52,12 @@ const sourceLabel = computed(() => jobSourceLabel(job.value?.source))
 // BV 号(B 站)
 const bv = computed(() => jobId.value.match(/_(BV[0-9A-Za-z]+)/)?.[1] ?? null)
 
+// 码率:kbps,≥1000 转 Mbps。
+function fmtBitrate(kbps?: number): string {
+  if (kbps == null) return '—'
+  return kbps >= 1000 ? `${(kbps / 1000).toFixed(1)} Mbps` : `${kbps} kbps`
+}
+
 // 原始文件大小:字节优先(精确,可转 KB);无字节时回退 MB。
 function fmtSize(media: { file_size_bytes?: number; file_size_mb?: number }): string {
   let b = media.file_size_bytes
@@ -655,6 +661,9 @@ watch(job, (j) => {
             <!-- 视频→时长+分辨率、文章→字数、通用→原始大小/字幕(metadata.json/parsed.json) -->
             <tr v-if="job.media?.duration_sec"><td>时长</td><td>{{ fmtDuration(job.media.duration_sec) }}</td></tr>
             <tr v-if="job.media?.resolution"><td>分辨率</td><td class="mono">{{ job.media.resolution }}</td></tr>
+            <tr v-if="job.media?.video_codec"><td>编码</td><td class="mono">{{ job.media.video_codec }}<span v-if="job.media.audio_codec"> / {{ job.media.audio_codec }}</span></td></tr>
+            <tr v-if="job.media?.fps"><td>帧率</td><td>{{ job.media.fps }} fps</td></tr>
+            <tr v-if="job.media?.bitrate_kbps ?? job.media?.video_bitrate_kbps"><td>码率</td><td>{{ fmtBitrate(job.media.bitrate_kbps ?? job.media.video_bitrate_kbps) }}</td></tr>
             <tr v-if="job.media?.word_count"><td>字数</td><td>{{ job.media.word_count.toLocaleString() }} 字</td></tr>
             <tr v-if="job.media && (job.media.file_size_bytes != null || job.media.file_size_mb != null)">
               <td>原始文件大小</td><td>{{ fmtSize(job.media) }}</td>
