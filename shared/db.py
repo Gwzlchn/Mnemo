@@ -560,6 +560,14 @@ class Database:
         ).fetchall()
         return [self._row_to_step(r) for r in rows]
 
+    def delete_step(self, job_id: str, step_name: str) -> None:
+        """删单个步骤行(供 resubmit 对齐:删去当前 pipeline 不再有的步,避免 DB 残留旧步)。"""
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM job_steps WHERE job_id=? AND step=?", (job_id, step_name)
+            )
+            self._conn.commit()
+
     def update_step(
         self, job_id: str, step_name: str, *, only_if_active: bool = False, **fields
     ) -> None:

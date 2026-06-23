@@ -11,7 +11,7 @@ import pytest
 from tests.conftest import make_fakeredis
 from shared.config import AppConfig
 from shared.db import Database
-from shared.models import Job, JobStatus, StepStatus, AIUsage
+from shared.models import Job, JobStatus, StepStatus, Step, AIUsage
 from scheduler.scheduler import Scheduler
 
 
@@ -1296,6 +1296,10 @@ class TestResubmit:
         assert await redis.get_step_status("j_test_001", "B") == "done"
         assert await redis.get_step_status("j_test_001", "C") == "done"
         assert await redis.get_step_status("j_test_001", "D") == "ready"
+        # DB 也要与 redis 步集一致(修分叉 bug:原实现新步 D 只进 redis、没回填 DB)
+        db_names = {s.name for s in db.get_steps("j_test_001")}
+        assert "D" in db_names
+        assert db_names == set(await redis.get_all_step_statuses("j_test_001")) == {"A", "B", "C", "D"}
 
     @pytest.mark.asyncio
     async def test_removes_deleted_steps(self, scheduler, redis, db, tmp_path, tmp_jobs_dir, configs_dir):
@@ -1318,6 +1322,30 @@ class TestResubmit:
         await scheduler.resubmit("j_test_001")
 
         assert await redis.get_step_status("j_test_001", "C") is None
+        # C 也要从 DB 删除(原实现只删 redis、DB 残留旧步)
+        db_names = {s.name for s in db.get_steps("j_test_001")}
+        assert "C" not in db_names
+        assert db_names == set(await redis.get_all_step_statuses("j_test_001")) == {"A", "B"}
+
+    @pytest.mark.asyncio
+    async def test_resubmit_repairs_redis_db_divergence(self, scheduler, redis, db):
+        """直接复现并修复 redis/DB 分叉:DB 残留 pipeline 已无的旧步 + redis 丢了 pipeline 里的步,
+        resubmit 后两侧步集都==当前 pipeline(A/B/C),不再分叉(流水线读 DB 不再显示旧步/漏新步)。"""
+        job = make_job()
+        db.create_job(job)
+        await scheduler.submit_job(job)              # A/B/C 物化到 redis+DB
+        # 制造分叉:DB 残留已不在 pipeline 的旧步 X_old;redis 丢了 pipeline 里的 C
+        db.upsert_step(Step(job_id="j_test_001", name="X_old", status=StepStatus.DONE, pool="cpu"))
+        await redis.delete_step_status("j_test_001", "C")
+        scheduler.reload_config = lambda: None         # 保持默认 A/B/C pipeline
+
+        await scheduler.resubmit("j_test_001")
+
+        db_names = {s.name for s in db.get_steps("j_test_001")}
+        redis_names = set(await redis.get_all_step_statuses("j_test_001"))
+        assert db_names == {"A", "B", "C"}             # X_old 从 DB 删除、C 在 DB
+        assert redis_names == {"A", "B", "C"}          # C 补回 redis
+        assert db_names == redis_names                 # 核心:两侧一致、无分叉
 
 
 class TestRetryFailed:

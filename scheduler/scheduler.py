@@ -1083,26 +1083,38 @@ class Scheduler:
         return reset_steps
 
     async def resubmit(self, job_id: str) -> None:
-        """按当前 pipelines.yaml 重新初始化步骤，保留已完成步骤状态。"""
+        """按当前 pipelines.yaml 重新初始化步骤，保留已有步骤的状态。
+
+        以**当前 pipeline 为准**对齐 redis 与 DB 两侧:删去 pipeline 不再有的步(两侧都删)、
+        补齐新步、并把每个步在 redis/DB 写到同一状态——保证 redis 与 DB 步集一致。
+        (修旧实现的分叉 bug:删旧步只删 redis 不删 DB、且用 redis existing 当判据跳过 DB 回填,
+         renumber/改 pipeline 后会导致流水线读 DB 显示旧步、与实际执行的 redis 分叉。)"""
         self.reload_config()
 
         pipeline = await self.redis.get_job_pipeline(job_id)
         if not pipeline:
             return
         steps = self._get_pipeline_steps(pipeline)
+        # 状态真源:redis(运行态)优先,redis 无则用 DB,都无则 waiting——保留已完成/已跑步骤状态。
         existing = await self.redis.get_all_step_statuses(job_id)
+        db_status = {
+            s.name: (s.status.value if isinstance(s.status, StepStatus) else s.status)
+            for s in await asyncio.to_thread(self.db.get_steps, job_id)
+        }
 
-        for name in existing:
-            if name not in steps:
-                await self.redis.delete_step_status(job_id, name)
+        # 删去当前 pipeline 不再有的步:redis 与 DB 都删(原实现只删 redis,DB 残留旧步)。
+        for name in (set(existing) | set(db_status)) - set(steps):
+            await self.redis.delete_step_status(job_id, name)
+            await asyncio.to_thread(self.db.delete_step, job_id, name)
 
+        # 当前 pipeline 的每个步:取已有状态(缺则 waiting),redis 与 DB 都写到同一状态(强制对齐)。
         for name, cfg in steps.items():
-            if name not in existing:
-                await self.redis.set_step_status(job_id, name, "waiting")
-                await asyncio.to_thread(
-                    self.db.upsert_step,
-                    Step(job_id=job_id, name=name, status=StepStatus.WAITING, pool=cfg["pool"]),
-                )
+            status = existing.get(name) or db_status.get(name) or "waiting"
+            await self.redis.set_step_status(job_id, name, status)
+            await asyncio.to_thread(
+                self.db.upsert_step,
+                Step(job_id=job_id, name=name, status=StepStatus(status), pool=cfg["pool"]),
+            )
 
         await asyncio.to_thread(
             self.db.update_job, job_id, status=JobStatus.PROCESSING,
