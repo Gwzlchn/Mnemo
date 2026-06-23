@@ -38,6 +38,7 @@ interface WsCollection {
   is_subscription: boolean
   source_id: string | null
   sync_enabled: boolean
+  recent?: JobSummary[]  // issue 6:后端按集合返回的最近 N 条(替代「全域最近」分组)
 }
 interface WsConcept {
   term: string
@@ -104,22 +105,13 @@ function strength(sourceCount: number): number {
 
 // 内容类型 → 图标/配色:统一走 utils/contentType(contentTypeIcon / contentTypePill)。
 
-// 集合 + 未归集合内容分组：recent_jobs 按 collection_id 归到对应集合，其余进「未归集合」。
+// issue 6:每集合最近内容改用后端按集合返回的 c.recent;此处只算「未归集合」=
+// recent_jobs 中不属任何已知集合的内容(手动投递等)。
 const grouped = computed(() => {
   const cols = data.value?.collections ?? []
   const jobs = data.value?.recent_jobs ?? []
-  const byCol = new Map<string, JobSummary[]>()
-  const loose: JobSummary[] = []
-  for (const j of jobs) {
-    if (j.collection_id && cols.some((c) => c.id === j.collection_id)) {
-      const arr = byCol.get(j.collection_id) ?? []
-      arr.push(j)
-      byCol.set(j.collection_id, arr)
-    } else {
-      loose.push(j)
-    }
-  }
-  return { byCol, loose }
+  const loose = jobs.filter((j) => !(j.collection_id && cols.some((c) => c.id === j.collection_id)))
+  return { loose }
 })
 
 async function load() {
@@ -245,8 +237,8 @@ function onProfileSaved() {
               <ChevronRight :size="14" class="dim" style="margin-left:auto" />
             </div>
             <div class="list">
-              <template v-if="grouped.byCol.get(c.id)?.length">
-                <div v-for="j in grouped.byCol.get(c.id)" :key="j.job_id" class="row" @click="goJob(j.job_id)">
+              <template v-if="c.recent?.length">
+                <div v-for="j in c.recent" :key="j.job_id" class="row" @click="goJob(j.job_id)">
                   <span class="type-pill" :class="contentTypePill(j.content_type)">
                     <component :is="contentTypeIcon(j.content_type)" :size="16" />
                   </span>

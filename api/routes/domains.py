@@ -105,6 +105,11 @@ async def create_domain(
     return by[domain]
 
 
+# 注:知识库展示元数据(display_name/icon/color)的修改复用已有 PUT /api/profiles/{domain}
+# (api/routes/profiles.py,ProfileUpdateRequest 已含这三字段且为部分合并、保留 terminology)——
+# 不在此另开 PATCH/PUT 端点,避免同一份 yaml meta 持久化逻辑两处分叉(审计去重原则)。
+
+
 @router.get("/{domain}")
 async def domain_workspace(
     domain: str,
@@ -117,6 +122,18 @@ async def domain_workspace(
     if domain not in overview:
         raise HTTPException(404, "domain not found")
     collections = await asyncio.to_thread(db.list_collections, domain)
+    # issue 6:每集合各取最近 5 条。原先复用「全域最近 12 条」按 collection_id 分组,集合内容不在
+    # 前 12 即被误显「该集合暂无最近内容」(如 finance 167 jobs、集合 79/45)。集合数通常个位数,
+    # N+1 小查询可接受。loose/未归类仍用下方全域 recent_jobs。
+    col_payload = []
+    for c in collections:
+        _, c_recent = await asyncio.to_thread(db.list_jobs, None, c.id, 5, 0, domain)
+        col_payload.append({
+            "id": c.id, "name": c.name, "job_count": c.job_count,
+            "is_subscription": c.is_subscription,
+            "source_id": c.source_id, "sync_enabled": c.sync_enabled,
+            "recent": [_job_brief(j) for j in c_recent],
+        })
     _, recent = await asyncio.to_thread(db.list_jobs, None, None, 12, 0, domain)
     top_terms = await asyncio.to_thread(db.domain_top_terms, domain, 30)
     topics = await asyncio.to_thread(db.domain_topics, domain)
@@ -124,14 +141,7 @@ async def domain_workspace(
     return {
         "domain": domain,
         "stats": overview[domain],
-        "collections": [
-            {
-                "id": c.id, "name": c.name, "job_count": c.job_count,
-                "is_subscription": c.is_subscription,
-                "source_id": c.source_id, "sync_enabled": c.sync_enabled,
-            }
-            for c in collections
-        ],
+        "collections": col_payload,
         "recent_jobs": [_job_brief(j) for j in recent],
         "top_concepts": top_terms,
         "topics": topics,

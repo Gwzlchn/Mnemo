@@ -89,14 +89,18 @@ describe('DomainWorkspaceView tab 内容', () => {
     get.mockResolvedValue(
       ws({
         collections: [
-          { id: 'c1', name: '我的集合', job_count: 1, is_subscription: false, source_id: null, sync_enabled: false },
-        ],
-        recent_jobs: [
           {
-            job_id: 'j1', content_type: 'video', status: 'done', created_at: '2026-01-01',
-            title: '集合内视频', progress_pct: 100, source: 'youtube', domain: 'tech', collection_id: 'c1',
+            id: 'c1', name: '我的集合', job_count: 1, is_subscription: false, source_id: null, sync_enabled: false,
+            // issue 6:卡片改读后端按集合返回的 recent(不再用全域 recent_jobs 分组)
+            recent: [
+              {
+                job_id: 'j1', content_type: 'video', status: 'done', created_at: '2026-01-01',
+                title: '集合内视频', progress_pct: 100, source: 'youtube', domain: 'tech', collection_id: 'c1',
+              },
+            ],
           },
         ],
+        recent_jobs: [],
       }),
     )
     const w = await mountView()

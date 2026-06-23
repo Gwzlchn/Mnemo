@@ -53,7 +53,9 @@ i[data-lucide]{width:16px;height:16px;stroke-width:1.75;flex:none}
 /* --------------------------------- APP SHELL --------------------------------- */
 .app{display:grid;grid-template-columns:240px 1fr;min-height:100vh}
 .side{background:var(--surface);border-right:1px solid var(--line);display:flex;
-  flex-direction:column;padding:16px 12px;position:sticky;top:0;height:100vh}
+  flex-direction:column;padding:16px 12px;position:sticky;top:0;height:100vh;overflow:hidden}
+/* #5 长侧栏:头部/投递行/底部工具固定,只有知识库树(.nav)内部滚动 → 设置图标永不被顶出屏外 */
+.side > .brand, .side > .top-row, .side-tools{flex:none}
 .brand{display:flex;align-items:center;gap:9px;padding:6px 8px 14px}
 .brand .logo{width:28px;height:28px;border-radius:7px;
   background:#37352f;
@@ -63,7 +65,7 @@ i[data-lucide]{width:16px;height:16px;stroke-width:1.75;flex:none}
   border-radius:var(--r-sm);font-weight:600;font-size:13.5px;background:var(--brand-600);color:#fff;
   box-shadow:var(--sh-sm);transition:.15s}
 .btn-submit:hover{background:var(--brand-700)}
-.nav{margin-top:18px;display:flex;flex-direction:column;gap:2px}
+.nav{margin-top:18px;display:flex;flex-direction:column;gap:2px;flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin}
 .nav > a{display:flex;align-items:center;gap:11px;padding:8px 10px;border-radius:var(--r-sm);
   color:var(--ink-600);font-size:14px;font-weight:500;transition:.12s;cursor:pointer}
 .nav a:hover{background:var(--line-soft);color:var(--ink-900)}
@@ -391,7 +393,6 @@ textarea.input{resize:vertical;min-height:64px;line-height:1.5}
 .nav .sub-item{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:var(--r-sm);color:var(--ink-700);font-size:14px;cursor:pointer;transition:.12s}
 .nav .sub-item:hover{background:var(--line-soft);color:var(--ink-900)}
 .nav .sub-item.on{color:var(--ink-900);font-weight:600}
-.nav .sub-item .nb-dot{width:8px;height:8px;border-radius:3px;flex:none}
 .nav .sub-item.new{color:var(--brand-600);padding-left:9px} .nav .sub-item.new i{width:15px;height:15px;color:var(--brand-500)}
 .app.rail .nav .sub-list{display:none}
 

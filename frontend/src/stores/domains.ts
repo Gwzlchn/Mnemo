@@ -47,5 +47,16 @@ export const useDomainStore = defineStore('domains', () => {
     return api.get<ConceptTimeline>(`/api/domains/${encodeURIComponent(domain)}/concept-timeline?granularity=${granularity}`)
   }
 
-  return { domains, loading, fetchAll, workspace, term, topic, topicConcepts, create, conceptTimeline }
+  // 改知识库展示元数据(显示名/图标/配色),不改英文 domain key;改后刷新列表让侧栏即时更新。
+  // 复用已有 PUT /api/profiles/{domain}(部分合并 display_name/icon/color,保留 terminology);
+  // 不另开端点避免同一份 yaml meta 持久化两处分叉。空值经侧栏 display_name||domain / resolveIcon 回退。
+  async function updateMeta(
+    domain: string,
+    patch: { display_name?: string; icon?: string; color?: string },
+  ): Promise<void> {
+    await api.put(`/api/profiles/${encodeURIComponent(domain)}`, patch)
+    await fetchAll()
+  }
+
+  return { domains, loading, fetchAll, workspace, term, topic, topicConcepts, create, conceptTimeline, updateMeta }
 })
