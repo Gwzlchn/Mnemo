@@ -29,6 +29,7 @@ class WorkerTransport(Protocol):
     async def register(
         self, worker_id: str, worker_type: str, pools: list[str],
         tags: set[str], reject_tags: set[str], hostname: str, now: datetime,
+        concurrency: int = 1,
     ) -> str: ...
 
     async def heartbeat(self, worker_id: str) -> None: ...
@@ -110,7 +111,7 @@ class RedisTransport:
 
     # ── 生命周期 / 心跳 ──
     async def register(self, worker_id, worker_type, pools, tags,
-                       reject_tags, hostname, now):
+                       reject_tags, hostname, now, concurrency: int = 1):
         info = {
             "type": worker_type,
             "pools": ",".join(pools),
@@ -119,6 +120,7 @@ class RedisTransport:
             "hostname": hostname,
             "status": "idle",
             "admin_status": "",
+            "concurrency": str(concurrency),
             "started_at": now.isoformat(),
             "last_heartbeat": now.isoformat(),
         }
@@ -128,7 +130,8 @@ class RedisTransport:
         worker_model = WorkerModel(
             id=worker_id, type=worker_type, pools=pools,
             tags=tags, reject_tags=reject_tags, hostname=hostname,
-            status="idle", started_at=now, first_seen=now, last_heartbeat=now,
+            status="idle", concurrency=concurrency,
+            started_at=now, first_seen=now, last_heartbeat=now,
         )
         await asyncio.to_thread(self._db.upsert_worker, worker_model)
         return worker_id

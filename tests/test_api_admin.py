@@ -15,6 +15,7 @@ def mock_redis():
     r.ping = AsyncMock(return_value=True)
     r.get_pool_count = AsyncMock(return_value=0)
     r.get_queue_info = AsyncMock(return_value={"length": 0})
+    r.get_all_pool_limit_overrides = AsyncMock(return_value={})
     r.publish = AsyncMock()
     return r
 
@@ -83,6 +84,26 @@ class TestPoolsConfig:
         resp = await client.get("/api/config/pools")
         assert resp.status_code == 200
         assert "pools" in resp.json()
+
+    @pytest.mark.asyncio
+    async def test_get_pool_limits(self, client):
+        resp = await client.get("/api/config/pool-limits")
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), dict)
+
+    @pytest.mark.asyncio
+    async def test_put_pool_limit_unknown_400(self, client):
+        resp = await client.put("/api/config/pool-limits", json={"no_such_pool": 1})
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_put_pool_limit_valid(self, client, mock_redis):
+        pools = (await client.get("/api/config/pool-limits")).json()
+        pool = next(iter(pools), None)
+        if pool:
+            resp = await client.put("/api/config/pool-limits", json={pool: 256})
+            assert resp.status_code == 200
+            mock_redis.set_pool_limit_override.assert_awaited_with(pool, 256)
 
 
 class TestStylesConfig:

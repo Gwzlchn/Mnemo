@@ -94,6 +94,19 @@ class TestClaimStep:
         assert await redis.is_pool_frozen("cpu") is False
 
     @pytest.mark.asyncio
+    async def test_pool_limit_override_caps_claim(self, redis, db):
+        await _register_worker(redis, db)
+        await redis.set_pool_limit_override("cpu", 1)  # 运行时覆盖到 1:只能领 1 个
+        for s in ("A", "B"):
+            await redis.enqueue_step("cpu", "j1", s, [], priority=0)
+            await redis.set_step_status("j1", s, "ready")
+        await redis.init_job("j1", "test", {"domain": "general", "style_tags": "[]"})
+        c1 = await runner_ops.claim_step(redis, db, WORKER_ID, ["cpu"], POOL_LIMITS, set(), set())
+        assert c1 is not None
+        c2 = await runner_ops.claim_step(redis, db, WORKER_ID, ["cpu"], POOL_LIMITS, set(), set())
+        assert c2 is None  # 覆盖上限=1 → 第二个领不到(即便 POOL_LIMITS cpu=3)
+
+    @pytest.mark.asyncio
     async def test_paused_returns_none(self, redis, db):
         await _register_worker(redis, db)
         await redis.set_worker_field(WORKER_ID, "admin_status", "paused")

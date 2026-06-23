@@ -192,6 +192,7 @@ class Worker:
             worker_id=self.worker_id, worker_type=self.worker_type,
             pools=self.pools, tags=self.tags, reject_tags=self.reject_tags,
             hostname=socket.gethostname(), now=datetime.now(timezone.utc),
+            concurrency=self.concurrency,
         )
 
     async def heartbeat_loop(self) -> None:

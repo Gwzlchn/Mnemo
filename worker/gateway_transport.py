@@ -75,7 +75,7 @@ class GatewayTransport:
     # ── 生命周期 / 心跳(走 gateway) ──
 
     async def register(self, worker_id, worker_type, pools, tags,
-                       reject_tags, hostname, now):
+                       reject_tags, hostname, now, concurrency: int = 1):
         # 缓存的 id 优先,让 worker 重启后复用同一身份(注册幂等)。
         effective_id = self._load_cached_id() or worker_id
         body = {
@@ -85,6 +85,7 @@ class GatewayTransport:
             "tags": sorted(tags),
             "reject_tags": sorted(reject_tags),
             "hostname": hostname,
+            "concurrency": concurrency,
         }
         resp = await self._http.post(
             "/api/runner/register", json=body,
@@ -99,6 +100,7 @@ class GatewayTransport:
         if self._inner is not None:
             await self._inner.register(
                 returned_id, worker_type, pools, tags, reject_tags, hostname, now,
+                concurrency,
             )
         return returned_id
 

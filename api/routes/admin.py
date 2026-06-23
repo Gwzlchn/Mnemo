@@ -110,12 +110,16 @@ async def build_system_status(db, redis, config) -> dict:
             worker_summary[wtype]["busy"] += 1
 
     pools_cfg = config.pools.get("pools", {})
+    overrides = await redis.get_all_pool_limit_overrides()
     pools_info = {}
     for pool_name, pcfg in pools_cfg.items():
         count = await redis.get_pool_count(pool_name)
         queue = await redis.get_queue_info(pool_name)
+        cap = overrides.get(pool_name)
+        if cap is None:
+            cap = pcfg.get("limit", 1024)
         pools_info[pool_name] = {
-            "capacity": pcfg.get("limit", 999),
+            "capacity": cap,  # 运行时覆盖优先,否则 pools.yaml 默认
             "used": count,
             "queue": queue["length"],
         }
@@ -196,4 +200,41 @@ async def update_pools_config(
         raise HTTPException(500, f"failed to write pools.yaml: {e}")
     config.pools = new_config
     await redis.publish("config_reload", {"type": "pools"})
+    return {"status": "updated"}
+
+
+@router.get("/config/pool-limits", dependencies=[Depends(verify_token)])
+async def get_pool_limits(
+    config: AppConfig = Depends(get_config),
+    redis: RedisClient = Depends(get_redis),
+):
+    """各池 {default(pools.yaml), override(redis 运行时覆盖,可为 null)}。前端据此渲染可调表单。"""
+    overrides = await redis.get_all_pool_limit_overrides()
+    pools = (config.pools or {}).get("pools", {}) or {}
+    return {
+        p: {"default": int((pc or {}).get("limit", 1024)), "override": overrides.get(p)}
+        for p, pc in pools.items()
+    }
+
+
+@router.put("/config/pool-limits", dependencies=[Depends(verify_token)])
+async def update_pool_limits(
+    body: dict,
+    config: AppConfig = Depends(get_config),
+    redis: RedisClient = Depends(get_redis),
+):
+    """运行时覆盖每池上限(写 redis,不动 pools.yaml);即时对所有 worker(含网关)生效。
+    body: {pool: int}(设覆盖,0=暂停该池)或 {pool: null}(清除回落默认)。"""
+    pools = (config.pools or {}).get("pools", {}) or {}
+    if not isinstance(body, dict) or not body:
+        raise HTTPException(400, "body must be a non-empty {pool: int|null} mapping")
+    for pool, val in body.items():
+        if pool not in pools:
+            raise HTTPException(400, f"unknown pool '{pool}'")
+        if val is None:
+            await redis.clear_pool_limit_override(pool)
+        elif isinstance(val, int) and not isinstance(val, bool) and val >= 0:
+            await redis.set_pool_limit_override(pool, val)
+        else:
+            raise HTTPException(400, f"pool '{pool}' limit must be a non-negative integer or null")
     return {"status": "updated"}

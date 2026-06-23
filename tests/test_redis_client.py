@@ -134,6 +134,16 @@ class TestPool:
         assert sum(results) == 1
 
     @pytest.mark.asyncio
+    async def test_pool_limit_override_roundtrip(self, rc):
+        assert await rc.get_pool_limit_override("cpu") is None
+        await rc.set_pool_limit_override("cpu", 5)
+        assert await rc.get_pool_limit_override("cpu") == 5
+        assert await rc.get_all_pool_limit_overrides() == {"cpu": 5}
+        await rc.clear_pool_limit_override("cpu")
+        assert await rc.get_pool_limit_override("cpu") is None
+        assert await rc.get_all_pool_limit_overrides() == {}
+
+    @pytest.mark.asyncio
     async def test_release_at_zero_returns_false(self, rc):
         """release_slot when count is already 0 should return False and not go negative."""
         result = await rc.release_slot("empty_pool")

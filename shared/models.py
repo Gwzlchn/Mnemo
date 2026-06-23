@@ -82,6 +82,7 @@ class Worker:
     hostname: str | None = None
     gpu_name: str | None = None
     gpu_memory_mb: int | None = None
+    concurrency: int = 1   # per-worker 并发(认领并行度);worker 启动 WORKER_CONCURRENCY 自报。
     current_job: str | None = None
     current_step: str | None = None
     tasks_completed: int = 0

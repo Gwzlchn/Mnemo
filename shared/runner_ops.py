@@ -118,6 +118,9 @@ async def claim_step(
             continue
         # 限额来自 worker 传入的 pool_limits(等价旧 fetch_task 读 self.config.pools 的 limit,缺省 999)。
         limit = pool_limits.get(pool, 999)
+        override = await redis.get_pool_limit_override(pool)
+        if override is not None:
+            limit = override  # 运行时覆盖即最终上限(直连+网关两路都过本函数,前端调小即时生效)
         if not await redis.try_acquire_slot(pool, limit):
             continue
 

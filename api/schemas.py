@@ -72,6 +72,7 @@ class WorkerResponse(BaseModel):
     hostname: str | None = None
     gpu_name: str | None = None
     gpu_memory_mb: int | None = None
+    concurrency: int = 1
     status: str
     current_job: str | None = None
     current_step: str | None = None

@@ -59,6 +59,7 @@ class RunnerRegisterRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
     reject_tags: list[str] = Field(default_factory=list)
     hostname: str | None = None
+    concurrency: int = 1
 
 
 class RunnerHeartbeatRequest(BaseModel):
@@ -115,6 +116,7 @@ async def register(
         "hostname": req.hostname or "",
         "status": "idle",
         "admin_status": "",
+        "concurrency": str(req.concurrency),
         "started_at": now.isoformat(),
         "last_heartbeat": now.isoformat(),
     }
@@ -129,6 +131,7 @@ async def register(
             reject_tags=set(req.reject_tags),
             hostname=req.hostname,
             status="idle",
+            concurrency=req.concurrency,
             started_at=now,
             first_seen=now,
             last_heartbeat=now,

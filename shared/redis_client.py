@@ -172,6 +172,31 @@ class RedisClient:
         val = await self.r.hget(self._RESOURCE_LIMITS_KEY, resource)
         return int(val) if val is not None else None
 
+    # ── 池上限运行时覆盖(前端可调,即时生效,无需改 pools.yaml/重启)──
+    # claim_step 取 limit 时优先读此覆盖,否则用 pools.yaml 默认(默认 1024≈不限,即"完全由
+    # worker 自报并发"); 覆盖是 opt-in 的系统级天花板(如 ai 池设小以护 Claude 速率)。
+    _POOL_LIMIT_OVERRIDES_KEY = "pool_limit_overrides"
+
+    async def get_pool_limit_override(self, pool: str) -> int | None:
+        val = await self.r.hget(self._POOL_LIMIT_OVERRIDES_KEY, pool)
+        return int(val) if val is not None else None
+
+    async def set_pool_limit_override(self, pool: str, limit: int) -> None:
+        await self.r.hset(self._POOL_LIMIT_OVERRIDES_KEY, pool, str(int(limit)))
+
+    async def clear_pool_limit_override(self, pool: str) -> None:
+        await self.r.hdel(self._POOL_LIMIT_OVERRIDES_KEY, pool)
+
+    async def get_all_pool_limit_overrides(self) -> dict[str, int]:
+        raw = await self.r.hgetall(self._POOL_LIMIT_OVERRIDES_KEY)
+        out: dict[str, int] = {}
+        for k, v in (raw or {}).items():
+            try:
+                out[k] = int(v)
+            except (TypeError, ValueError):
+                continue
+        return out
+
     async def try_acquire_resource(self, resource: str, limit: int) -> bool:
         # 复用池槽 Lua;资源无 frozen 概念,frozen 键永不置位故恒放行该检查。
         result = await self.r.eval(
