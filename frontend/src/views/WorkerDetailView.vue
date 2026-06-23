@@ -188,6 +188,7 @@ onBeforeUnmount(() => global.setCrumbs(null))
           <tbody>
             <tr><td>主机名</td><td class="mono">{{ worker.hostname || '—' }}</td></tr>
             <tr><td>算力</td><td>{{ computeDesc }}</td></tr>
+            <tr><td>并发</td><td>{{ worker.concurrency }}</td></tr>
             <tr>
               <td>资源池</td>
               <td>

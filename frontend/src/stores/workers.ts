@@ -51,8 +51,17 @@ export const useWorkerStore = defineStore('workers', () => {
     return await api.get<WorkerJob[]>(`/api/workers/${workerId}/jobs`)
   }
 
+  // 系统池上限:default(pools.yaml)+ override(redis 运行时覆盖,可为 null)。
+  async function fetchPoolLimits(): Promise<Record<string, { default: number; override: number | null }>> {
+    return await api.get('/api/config/pool-limits')
+  }
+  async function savePoolLimits(body: Record<string, number | null>) {
+    await api.put('/api/config/pool-limits', body)
+  }
+
   return {
     workers, loading, fetchAll, pause, resume,
     updateNote, updateTags, remove, mintToken, fetchJobs,
+    fetchPoolLimits, savePoolLimits,
   }
 })

@@ -82,6 +82,7 @@ export interface Worker {
   hostname: string | null
   gpu_name: string | null
   gpu_memory_mb: number | null
+  concurrency: number
   status: WorkerStatus
   current_job: string | null
   current_step: string | null

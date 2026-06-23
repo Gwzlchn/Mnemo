@@ -45,7 +45,29 @@ async function loadStatus() {
 }
 
 async function refreshAll() {
-  await Promise.all([loadStatus(), workerStore.fetchAll()])
+  await Promise.all([loadStatus(), workerStore.fetchAll(), loadPoolLimits()])
+}
+
+// 系统池上限(可调,即时生效):{pool:{default,override}};limitDraft=编辑中的值。
+const poolLimits = ref<Record<string, { default: number; override: number | null }>>({})
+const limitDraft = ref<Record<string, number | null>>({})
+const limitBusy = ref<string | null>(null)
+async function loadPoolLimits() {
+  try {
+    poolLimits.value = await workerStore.fetchPoolLimits()
+    limitDraft.value = Object.fromEntries(
+      Object.entries(poolLimits.value).map(([k, v]) => [k, v.override ?? v.default]),
+    )
+  } catch { /* 非致命:其余状态仍可用 */ }
+}
+async function saveOnePoolLimit(pool: string) {
+  limitBusy.value = pool
+  try {
+    await workerStore.savePoolLimits({ [pool]: limitDraft.value[pool] })
+    await Promise.all([loadPoolLimits(), loadStatus()])
+  } finally {
+    limitBusy.value = null
+  }
 }
 
 // ── Worker 列表派生 ──
@@ -115,6 +137,7 @@ const newTags = ref('')
 const activeTab = ref<(typeof TABS)[number]['id']>('gateway')
 const token = ref('')
 const minting = ref(false)
+const newConcurrency = ref(1)   // per-worker 并发(生成 -e WORKER_CONCURRENCY)
 // AI 凭证方式:订阅共享(claude-cli 共享宿主 ~/.claude,Max 不按量计费) | 各家 API key(按量)。
 const AI_CRED_METHODS = [
   { id: 'claude-sub', label: 'Claude 订阅(共享 ~/.claude)' },
@@ -158,6 +181,7 @@ const command = computed(() => {
   -e GATEWAY_TLS_INSECURE=1 \\
   -e WORKER_REGISTRATION_TOKEN=${tokenLine.value} \\
   -e WORKER_NAME=${newType.value}-1 \\
+  -e WORKER_CONCURRENCY=${newConcurrency.value} \\
 ${credLines.value}${cacheLine.value}  ${IMAGE} \\
   ${runCmd.value}`
   }
@@ -177,12 +201,13 @@ ${credLines.value}${cacheLine.value}  ${IMAGE} \\
       - REDIS_URL=redis://redis:6379/0
       - DATA_DIR=/data
       - WORKER_NAME=${newType.value}-1
+      - WORKER_CONCURRENCY=${newConcurrency.value}
 ${credCompose}    depends_on: [ redis ]`
   }
   return `docker run -d --restart unless-stopped${gpuFlag.value} \\
   -e REDIS_URL=redis://<HOST>:6379/0 \\
   -e MINIO_URL=<HOST>:9000 -e MINIO_ACCESS_KEY=<KEY> -e MINIO_SECRET_KEY=<SECRET> -e MINIO_BUCKET=flori \\
-  -e DATA_DIR=/data -e WORK_DIR=/tmp/flori-work \\
+  -e DATA_DIR=/data -e WORK_DIR=/tmp/flori-work -e WORKER_CONCURRENCY=${newConcurrency.value} \\
 ${credLines.value}${cacheLine.value}  -v flori-data:/data \\
   ${IMAGE} \\
   ${runCmd.value}`
@@ -250,6 +275,18 @@ onMounted(refreshAll)
             <div class="row-l"><span>占用</span><b>{{ p.used }} / {{ p.capacity }}</b></div>
             <div class="track"><span :style="{ width: `${Math.min(100, p.capacity ? (p.used / p.capacity) * 100 : 0)}%` }"></span></div>
           </div>
+          <div v-if="name in limitDraft" style="display:flex;align-items:center;gap:6px;margin-top:9px">
+            <span style="font-size:11px;color:var(--ink-600)">上限</span>
+            <input v-model.number="limitDraft[name]" type="number" min="0" class="input"
+              style="width:70px;padding:3px 7px;font-size:12px"
+              :placeholder="String(poolLimits[name]?.default ?? '')" />
+            <button class="btn sm" :disabled="limitBusy === name" @click="saveOnePoolLimit(name)">
+              {{ limitBusy === name ? '…' : '保存' }}
+            </button>
+            <span style="font-size:11px" :style="{ color: poolLimits[name]?.override == null ? 'var(--ink-400)' : 'var(--brand,#7c3aed)' }">
+              {{ poolLimits[name]?.override == null ? '默认' : '已覆盖' }}
+            </span>
+          </div>
         </div>
       </div>
       <!-- 磁盘 + jobs 概览 -->
@@ -306,7 +343,8 @@ onMounted(refreshAll)
             <span v-if="w.hostname" class="sep">·</span>
             <span>{{ computeDesc(w) }}</span><span class="sep">·</span>
             <span>完成 {{ w.tasks_completed }}</span><span class="sep">·</span>
-            <span>失败 {{ w.tasks_failed }}</span>
+            <span>失败 {{ w.tasks_failed }}</span><span class="sep">·</span>
+            <span>并发 {{ w.concurrency }}</span>
             <template v-if="w.total_duration_sec > 0">
               <span class="sep">·</span><span>运行 {{ fmtDuration(w.total_duration_sec) }}</span>
             </template>
@@ -343,6 +381,11 @@ onMounted(refreshAll)
           <label>标签（可选，空=自动探测）</label>
           <input v-model="newTags" class="input" placeholder="如 home-desktop vision" />
         </div>
+      </div>
+
+      <div class="field" style="margin:0 0 14px;max-width:240px">
+        <label>并发(本机同时跑几步;弱机=1,强机调大)</label>
+        <input v-model.number="newConcurrency" type="number" min="1" class="input" />
       </div>
 
       <div v-if="newType === 'ai'" class="field" style="margin:0 0 14px">
