@@ -72,6 +72,18 @@ const ago = (v: string | null | undefined) => fmtRelative(v, { style: 'cn', abso
 // 算力描述：GPU 名优先，否则按类型;无 worker 时回退 —。
 const computeDesc = computed(() => (worker.value ? workerComputeDesc(worker.value) : '—'))
 
+// 机器配置(worker 自报 spec):核数 · 内存 · 平台 · Python。
+const machineDesc = computed(() => {
+  const s = worker.value?.spec
+  if (!s) return ''
+  const parts: string[] = []
+  if (s.cpu) parts.push(`${s.cpu} 核`)
+  if (s.mem_mb) parts.push(`${(s.mem_mb / 1024).toFixed(1)} GB`)
+  if (s.platform) parts.push(s.platform)
+  if (s.python) parts.push(`Py ${s.python}`)
+  return parts.join(' · ')
+})
+
 // 任务历史 type-pill（按 step 无内容类型，统一用中性图标兜底）。
 const STEP_ICON: Record<string, any> = { download: Play, transcribe: Headphones }
 function stepIcon(step: string): any {
@@ -190,6 +202,8 @@ onBeforeUnmount(() => global.setCrumbs(null))
             <tr><td>连接来源</td><td class="mono">{{ worker.remote_addr || '本机(直连)' }}</td></tr>
             <tr><td>算力</td><td>{{ computeDesc }}</td></tr>
             <tr><td>并发</td><td>{{ worker.concurrency }}</td></tr>
+            <tr v-if="worker.spec?.version"><td>版本</td><td class="mono">{{ worker.spec.version }}</td></tr>
+            <tr v-if="machineDesc"><td>机器</td><td>{{ machineDesc }}</td></tr>
             <tr>
               <td>资源池</td>
               <td>

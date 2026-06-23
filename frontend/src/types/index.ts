@@ -36,6 +36,7 @@ export interface StepInfo {
   duration_sec: number | null
   meta: Record<string, any>
   error: string | null
+  worker_id?: string | null     // 执行本步的 worker(「由 xxx 完成」)
 }
 
 export interface JobMedia {
@@ -78,6 +79,14 @@ export type WorkerStatus =
   | 'paused'
   | 'stale'
 
+export interface WorkerSpec {
+  version?: string              // 代码版本(构建时注入的 git sha;'dev'=未注入)
+  cpu?: number                  // 逻辑核数
+  mem_mb?: number               // 内存(MB)
+  platform?: string             // OS/架构
+  python?: string               // Python 版本
+}
+
 export interface Worker {
   id: string
   type: string
@@ -89,6 +98,7 @@ export interface Worker {
   gpu_memory_mb: number | null
   concurrency: number
   remote_addr: string | null
+  spec?: WorkerSpec             // worker 自报:版本/机器配置
   status: WorkerStatus
   current_job: string | null
   current_step: string | null

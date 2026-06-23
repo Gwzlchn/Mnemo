@@ -349,6 +349,7 @@ Response `200`:
       "concurrency": 1,
       "hostname": "gpu-server",
       "gpu_name": "RTX 4090",
+      "spec": {"version": "a342130", "cpu": 16, "mem_mb": 32000, "platform": "Linux-x86_64", "python": "3.11.9"},
       "status": "idle",
       "tasks_completed": 88,
       "tasks_failed": 1,
@@ -1134,6 +1135,8 @@ Fields:
   current_job:    "j_xxx" | ""
   current_step:   "03_scene" | ""
   gpu_name:       "RTX 4090" | ""
+  remote_addr:    "1.2.3.4" | ""                      ← 网关 worker 连接来源 IP；本机直连为空
+  spec:           JSON {version,cpu,mem_mb,platform,python}  ← worker 自报版本/机器配置(redis-only,前端详情展示)
   started_at:     ISO timestamp
   last_heartbeat: ISO timestamp
 TTL:    30 秒（心跳续期）

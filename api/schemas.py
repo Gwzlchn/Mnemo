@@ -45,6 +45,7 @@ class StepResponse(BaseModel):
     duration_sec: float | None = None
     meta: dict = Field(default_factory=dict)
     error: str | None = None
+    worker_id: str | None = None      # 执行本步的 worker(前端「由 xxx 完成」)
 
 
 JobDetailResponse.model_rebuild()
@@ -74,6 +75,7 @@ class WorkerResponse(BaseModel):
     gpu_memory_mb: int | None = None
     concurrency: int = 1
     remote_addr: str | None = None
+    spec: dict = Field(default_factory=dict)   # 版本/机器配置(worker 自报);前端详情展示
     status: str
     current_job: str | None = None
     current_step: str | None = None

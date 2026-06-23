@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import os
+import platform
 import shutil
 import socket
 import time
@@ -27,6 +28,25 @@ from worker.step_runner import StepContext, create_step_runner
 from worker.transport import WorkerTransport, default_worker_id_file
 
 logger = structlog.get_logger(component="worker")
+
+
+def _worker_spec() -> dict:
+    """worker 自报:版本(构建时注入的 FLORI_VERSION,便于查代码漂移)+ 机器配置。"""
+    spec: dict = {
+        "version": os.environ.get("FLORI_VERSION", "dev"),
+        "cpu": os.cpu_count(),
+        "platform": platform.platform(),
+        "python": platform.python_version(),
+    }
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    spec["mem_mb"] = int(line.split()[1]) // 1024
+                    break
+    except OSError:
+        pass
+    return spec
 
 # worker 类型 → 订阅的池(拓扑权威,不在 pools.yaml;新增/重命名池在此维护)。
 # 下载隔离:只有 io 类型订 io 池 → 唯一下载/出网 worker;cpu/ai/gpu 都不下载。
@@ -192,7 +212,7 @@ class Worker:
             worker_id=self.worker_id, worker_type=self.worker_type,
             pools=self.pools, tags=self.tags, reject_tags=self.reject_tags,
             hostname=socket.gethostname(), now=datetime.now(timezone.utc),
-            concurrency=self.concurrency,
+            concurrency=self.concurrency, spec=_worker_spec(),
         )
 
     async def heartbeat_loop(self) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import secrets
 from datetime import datetime, timezone
@@ -94,6 +95,14 @@ def _parse_iso(value: str | None) -> datetime | None:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
+def _spec(info: dict) -> dict:
+    """从 Redis info 解析 worker 自报的 spec(版本/机器配置)JSON;失败返回 {}。"""
+    try:
+        return json.loads(info.get("spec") or "{}") or {}
+    except (ValueError, TypeError):
+        return {}
+
+
 @router.get("")
 async def list_workers(
     db: Database = Depends(get_db),
@@ -129,6 +138,7 @@ async def list_workers(
             existing.last_heartbeat = _iso_utc(info.get("last_heartbeat"))
             existing.current_job = info.get("current_job") or None
             existing.current_step = info.get("current_step") or None
+            existing.spec = _spec(info)
             continue
         by_id[wid] = WorkerResponse(
             id=wid,
@@ -141,6 +151,7 @@ async def list_workers(
             gpu_memory_mb=_int(info.get("gpu_memory_mb")) or None,
             concurrency=_int(info.get("concurrency")) or 1,
             remote_addr=info.get("remote_addr") or None,
+            spec=_spec(info),
             status=status,
             current_job=info.get("current_job") or None,
             current_step=info.get("current_step") or None,
@@ -194,6 +205,7 @@ async def get_worker(
         resp.current_step = info.get("current_step") or None
         if info.get("remote_addr"):
             resp.remote_addr = info.get("remote_addr")
+        resp.spec = _spec(info)
     return resp
 
 

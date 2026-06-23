@@ -45,3 +45,8 @@ COPY configs/ configs/
 # 更新仓库 profiles/styles 后需手动同步 /data/prompts(或重置该卷)。profiles 经 API 可运行时编辑,
 # 故不能直接只读 bind-mount 仓库目录覆盖。
 COPY configs/prompts/ /data/prompts/
+
+# 构建期注入版本(git sha):worker 启动 _worker_spec() 读 FLORI_VERSION 上报,便于查"哪台 worker
+# 跑哪份代码"(代码漂移排查)。放最后,版本变化不影响上面代码层缓存。
+ARG FLORI_VERSION=dev
+ENV FLORI_VERSION=${FLORI_VERSION}

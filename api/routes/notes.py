@@ -167,15 +167,30 @@ async def list_artifacts(
     if not job:
         raise HTTPException(404, "job not found")
     files = [f for f in await storage.list_files(job_id) if not _artifact_hidden(f)]
+    steps = config.pipelines.get(job.pipeline, {}).get("steps", [])
     assigned: set[str] = set()
-    groups = []
-    for s in config.pipelines.get(job.pipeline, {}).get("steps", []):
+    by_step: dict[str, list[str]] = {}
+
+    def _claim(step_name: str, f: str) -> None:
+        by_step.setdefault(step_name, []).append(f)
+        assigned.add(f)
+
+    # 第一轮:精确路径(无通配)的 outputs 优先认领,避免被别的步的宽 glob 抢走——
+    # 例如 02_whisper 的 input/subtitle.srt 不再被 01_download 的 input/*.srt 抢走(字幕错归「下载」)。
+    for s in steps:
+        for p in (s.get("outputs") or []):
+            if not any(c in p for c in "*?[") and p in files and p not in assigned:
+                _claim(s["name"], p)
+    # 第二轮:glob 匹配,按步顺序认领剩余文件。
+    for s in steps:
         pats = s.get("outputs") or []
-        matched = sorted(
-            f for f in files
-            if f not in assigned and any(fnmatch.fnmatch(f, p) for p in pats)
-        )
-        assigned.update(matched)
+        for f in files:
+            if f not in assigned and any(fnmatch.fnmatch(f, p) for p in pats):
+                _claim(s["name"], f)
+
+    groups = []
+    for s in steps:
+        matched = sorted(by_step.get(s["name"], []))
         if matched:
             groups.append({"step": s["name"], "label": s.get("label") or s["name"],
                            "files": [{"path": f, "kind": _artifact_kind(f)} for f in matched]})

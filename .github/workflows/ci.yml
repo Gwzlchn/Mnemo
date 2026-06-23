@@ -122,5 +122,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             USE_USTC_MIRROR=0
+            FLORI_VERSION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

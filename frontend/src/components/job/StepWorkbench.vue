@@ -188,6 +188,7 @@ watch(() => props.steps.map(s => s.name).join(','), () => { if (!sel.value) pick
             <span><Clock :size="12" class="inline -mt-0.5" /> 开始 {{ fmtDateTime(selStep.started_at) }}</span>
             <span>结束 {{ selStep.status === 'running' ? '进行中' : fmtDateTime(selStep.finished_at) }}</span>
             <span>耗时 {{ selStep.status === 'running' ? '进行中' : fmtDuration(selStep.duration_sec, { decimalSeconds: true }) }}</span>
+            <span v-if="selStep.worker_id">由 <span class="font-mono text-gray-700">{{ selStep.worker_id }}</span> 完成</span>
           </div>
           <div v-else-if="['waiting', 'ready'].includes(selStep.status)" class="text-xs text-gray-400 mt-2">尚未运行</div>
 

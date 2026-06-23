@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import secrets
 import time
 from datetime import datetime, timezone
@@ -60,6 +61,7 @@ class RunnerRegisterRequest(BaseModel):
     reject_tags: list[str] = Field(default_factory=list)
     hostname: str | None = None
     concurrency: int = 1
+    spec: dict = Field(default_factory=dict)   # 版本/机器配置(worker 自报,redis-only)
 
 
 class RunnerHeartbeatRequest(BaseModel):
@@ -122,6 +124,7 @@ async def register(
         "admin_status": "",
         "concurrency": str(req.concurrency),
         "remote_addr": remote_addr,
+        "spec": json.dumps(req.spec or {}),
         "started_at": now.isoformat(),
         "last_heartbeat": now.isoformat(),
     }

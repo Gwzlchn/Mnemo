@@ -94,7 +94,13 @@ class SubprocessStepRunner:
         log_dir = work_dir / "logs"
         log_dir.mkdir(exist_ok=True)
         log_path = log_dir / f"{step}.log"
-        log_file = log_path.open("w", encoding="utf-8")
+        # append 而非 truncate:幂等跳过(只输出一行 skip: up-to-date)不再覆盖上次真跑的处理日志;
+        # 重跑则在已有日志后追加分隔头,保留历史(原来 'w' 会把真跑日志冲掉,出现「有产物没日志」)。
+        had_content = log_path.exists() and log_path.stat().st_size > 0
+        log_file = log_path.open("a", encoding="utf-8")
+        if had_content:
+            log_file.write(f"\n===== re-run {step} =====\n")
+            log_file.flush()
         stderr_tail: list[str] = []
 
         async def _drain(stream: asyncio.StreamReader, prefix: str) -> None:

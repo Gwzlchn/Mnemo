@@ -11,6 +11,7 @@ transport 内部,worker.py 不再出现 asyncio.to_thread(self.db.xxx),双写顺
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from datetime import datetime
 from typing import Protocol
@@ -29,7 +30,7 @@ class WorkerTransport(Protocol):
     async def register(
         self, worker_id: str, worker_type: str, pools: list[str],
         tags: set[str], reject_tags: set[str], hostname: str, now: datetime,
-        concurrency: int = 1,
+        concurrency: int = 1, spec: dict | None = None,
     ) -> str: ...
 
     async def heartbeat(self, worker_id: str) -> None: ...
@@ -111,7 +112,8 @@ class RedisTransport:
 
     # ── 生命周期 / 心跳 ──
     async def register(self, worker_id, worker_type, pools, tags,
-                       reject_tags, hostname, now, concurrency: int = 1):
+                       reject_tags, hostname, now, concurrency: int = 1,
+                       spec: dict | None = None):
         info = {
             "type": worker_type,
             "pools": ",".join(pools),
@@ -121,6 +123,7 @@ class RedisTransport:
             "status": "idle",
             "admin_status": "",
             "concurrency": str(concurrency),
+            "spec": json.dumps(spec or {}),   # 版本/机器配置(redis-only,前端 worker 详情展示)
             "started_at": now.isoformat(),
             "last_heartbeat": now.isoformat(),
         }

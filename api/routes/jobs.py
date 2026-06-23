@@ -343,6 +343,7 @@ async def get_job(
                 started_at=s.started_at.isoformat() if s.started_at else None,
                 finished_at=s.finished_at.isoformat() if s.finished_at else None,
                 duration_sec=s.duration_sec, meta=s.meta, error=s.error,
+                worker_id=s.worker_id,
             )
             for s in steps
         ],
