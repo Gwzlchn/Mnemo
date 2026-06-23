@@ -187,6 +187,7 @@ onBeforeUnmount(() => global.setCrumbs(null))
         <table class="kv">
           <tbody>
             <tr><td>主机名</td><td class="mono">{{ worker.hostname || '—' }}</td></tr>
+            <tr><td>连接来源</td><td class="mono">{{ worker.remote_addr || '本机(直连)' }}</td></tr>
             <tr><td>算力</td><td>{{ computeDesc }}</td></tr>
             <tr><td>并发</td><td>{{ worker.concurrency }}</td></tr>
             <tr>

@@ -83,6 +83,7 @@ export interface Worker {
   gpu_name: string | null
   gpu_memory_mb: number | null
   concurrency: number
+  remote_addr: string | null
   status: WorkerStatus
   current_job: string | null
   current_step: string | null

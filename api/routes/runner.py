@@ -107,6 +107,10 @@ async def register(
         revoked=False,
     )
 
+    # 连接来源:网关 worker 经 Caddy→隧道→api,真实客户端 IP 在 X-Forwarded-For(Caddy 注入);
+    # 无该头(本机直连 api)则取 request.client.host。供详情页显示「worker 从哪连过来」。
+    _xff = request.headers.get("x-forwarded-for", "")
+    remote_addr = _xff.split(",")[0].strip() if _xff else (request.client.host if request.client else "")
     # 单写者：服务端同时写 Redis liveness 与 DB 行，info 形态与 RedisTransport.register 对齐。
     info = {
         "type": req.type,
@@ -117,6 +121,7 @@ async def register(
         "status": "idle",
         "admin_status": "",
         "concurrency": str(req.concurrency),
+        "remote_addr": remote_addr,
         "started_at": now.isoformat(),
         "last_heartbeat": now.isoformat(),
     }
@@ -132,6 +137,7 @@ async def register(
             hostname=req.hostname,
             status="idle",
             concurrency=req.concurrency,
+            remote_addr=remote_addr or None,
             started_at=now,
             first_seen=now,
             last_heartbeat=now,

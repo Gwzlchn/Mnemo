@@ -180,6 +180,19 @@ class TestWorkerCRUD:
         assert got.tags == {"vision"}
         assert got.reject_tags == {"private"}
 
+    def test_upsert_persists_concurrency_and_remote_addr(self, db):
+        w = Worker(id="io-deadbeef", type="io", concurrency=4, remote_addr="203.0.113.7")
+        db.upsert_worker(w)
+        got = db.get_worker("io-deadbeef")
+        assert got.concurrency == 4
+        assert got.remote_addr == "203.0.113.7"
+
+    def test_default_concurrency_and_remote_addr(self, db):
+        db.upsert_worker(Worker(id="cpu-defaults", type="cpu"))
+        got = db.get_worker("cpu-defaults")
+        assert got.concurrency == 1
+        assert got.remote_addr is None
+
     def test_upsert_updates(self, db):
         w = Worker(id="ai-aabbccdd", type="ai")
         db.upsert_worker(w)

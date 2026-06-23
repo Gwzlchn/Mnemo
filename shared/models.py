@@ -83,6 +83,7 @@ class Worker:
     gpu_name: str | None = None
     gpu_memory_mb: int | None = None
     concurrency: int = 1   # per-worker 并发(认领并行度);worker 启动 WORKER_CONCURRENCY 自报。
+    remote_addr: str | None = None   # 连接来源:网关 worker 注册时的客户端 IP;直连(本机)= None。
     current_job: str | None = None
     current_step: str | None = None
     tasks_completed: int = 0

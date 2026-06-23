@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS workers (
     hostname TEXT,
     gpu_name TEXT,
     gpu_memory_mb INTEGER,
+    concurrency INTEGER NOT NULL DEFAULT 1,
+    remote_addr TEXT,
     status TEXT NOT NULL DEFAULT 'offline',
     admin_status TEXT NOT NULL DEFAULT '',
     current_job TEXT,
@@ -299,6 +301,8 @@ class Database:
             "reject_tags": "reject_tags TEXT NOT NULL DEFAULT '[]'",
             "admin_note": "admin_note TEXT",
             "admin_status": "admin_status TEXT NOT NULL DEFAULT ''",
+            "concurrency": "concurrency INTEGER NOT NULL DEFAULT 1",
+            "remote_addr": "remote_addr TEXT",
         },
         "collections": {
             "source_type": "source_type TEXT",
@@ -594,10 +598,11 @@ class Database:
             self._conn.execute(
                 """INSERT OR REPLACE INTO workers
                    (id, type, pools, tags, reject_tags, hostname, gpu_name,
-                    gpu_memory_mb, status, admin_status, current_job, current_step,
+                    gpu_memory_mb, concurrency, remote_addr, status, admin_status,
+                    current_job, current_step,
                     tasks_completed, tasks_failed, total_duration_sec,
                     first_seen, started_at, last_heartbeat, admin_note)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     worker.id,
                     worker.type,
@@ -607,6 +612,8 @@ class Database:
                     worker.hostname,
                     worker.gpu_name,
                     worker.gpu_memory_mb,
+                    worker.concurrency,
+                    worker.remote_addr,
                     worker.status,
                     worker.admin_status,
                     worker.current_job,
@@ -1557,6 +1564,8 @@ class Database:
             hostname=row["hostname"],
             gpu_name=row["gpu_name"],
             gpu_memory_mb=row["gpu_memory_mb"],
+            concurrency=row["concurrency"] if "concurrency" in row.keys() else 1,
+            remote_addr=row["remote_addr"] if "remote_addr" in row.keys() else None,
             status=row["status"],
             admin_status=row["admin_status"] if "admin_status" in row.keys() else "",
             current_job=row["current_job"],
