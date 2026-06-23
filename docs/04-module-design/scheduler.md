@@ -3,7 +3,7 @@
 > 职责：监听步骤完成事件，推进 DAG 中的下一步骤到对应资源池队列。
 > 不执行任何步骤，只做"推进"逻辑。
 
-> 现状提示：pipeline 已改为 GitLab-CI 风格（`needs` 推导 DAG、`rules` 声明式跳过、`extends`/`variables`，见 `configs/pipelines.yaml` 与 [docs/03-contracts.md §4.1](../03-contracts.md)）；步骤名为各 pipeline 内独立 `01..N`（如 video: `01_download`/`02_whisper`/.../`11_smart`→`10_smart`/`11_review`）。worker 已 GitLab-runner 化：认领/上报搬到服务端 `/api/runner/jobs/*`，远程 worker 不直连 Redis（见 [worker.md](worker.md) 与 [ADR-0009](../adr/0009-worker-gateway-outbound-https.md)）。本文余下的 `depends_on`/`condition`/Worker 直取 ZSET 等为早期设计示意，核心不变量（DAG / 资源池 / scene↔cpu 互斥 / 优先级 / 孤儿回收 / 幂等）仍成立，仅落地形态以代码为准。
+> 现状提示：pipeline 已改为 GitLab-CI 风格（`needs` 推导 DAG、`rules` 声明式跳过、`extends`/`variables`，见 `configs/pipelines.yaml` 与 [docs/03-contracts.md §4.1](../03-contracts.md)）；步骤名为各 pipeline 内独立 `01..N`（如 video: `01_download`/`02_whisper`/.../`11_smart`→`10_smart`/`11_review`）。worker 已 GitLab-runner 化：认领/上报搬到服务端 `/api/runner/jobs/*`，远程 worker 不直连 Redis（见 [worker.md](worker.md) 与 [ADR-0009](../adr/0009-worker-gateway-outbound-https.md)）。本文余下的 `depends_on`/`condition`/Worker 直取 ZSET 等为早期设计示意，核心不变量（DAG / 资源池上限+运行时覆盖 / 下载隔离到 io 池 / B站 cookie 硬门控 / 优先级 / 孤儿回收 / 幂等）仍成立(scene↔cpu 互斥已废弃:scene 并入 cpu、单机抢资源由 per-worker 并发控制)，仅落地形态以代码为准。
 
 ## 1. 职责边界
 
@@ -204,8 +204,7 @@ class PoolManager:
 
     async def release(self, pool_name: str):
         await self.redis.decr(f"pool:{pool_name}:count")
-        if pool_name == "scene":
-            await self.redis.delete("pool:cpu:frozen")
+        # scene 已并入 cpu 池,取消 scene→cpu 全局冻结(单机抢资源由 per-worker WORKER_CONCURRENCY 控制)。
 ```
 
 注意：资源池获取/释放在 **Worker** 端做（自取模式），不在调度器。调度器只负责把步骤放进队列。

@@ -73,7 +73,7 @@ GPU 可用时用 faster-whisper large-v3（float16），仅 CPU 时用 base（in
 
 | 项目 | 值 |
 |------|---|
-| 池 | scene（独占 CPU） |
+| 池 | cpu（scene 已并入 cpu 池，不再独立/独占；单机抢资源由 per-worker 并发控制） |
 | 依赖 | 01_download |
 | 超时 | 10min |
 | 输入 | input/source.mp4 |

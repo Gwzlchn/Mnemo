@@ -268,12 +268,12 @@ GET /api/jobs/{id}/notes/transcript     → text/markdown (逐字稿)
     "gpu":      {"online": 0, "busy": 0}
   },
   "pools": {
-    "io":     {"capacity": 999, "used": 0, "queue": 0},
-    "scene":  {"capacity": 1,   "used": 0, "queue": 2},
-    "cpu":    {"capacity": 3,   "used": 1, "queue": 5},
-    "ai":     {"capacity": 2,   "used": 1, "queue": 3},
-    "gpu":    {"capacity": 1,   "used": 0, "queue": 0}
+    "io":     {"capacity": 1024, "used": 0, "queue": 0},
+    "cpu":    {"capacity": 1024, "used": 1, "queue": 5},
+    "ai":     {"capacity": 1024, "used": 1, "queue": 3},
+    "gpu":    {"capacity": 1024, "used": 0, "queue": 0}
   },
+  "//pools": "scene 已并入 cpu 池(无独立 scene 池);capacity = redis 运行时覆盖优先,否则 pools.yaml 默认(1024≈不限,实际并发由 per-worker WORKER_CONCURRENCY 控制)",
   "jobs": {"total": 44, "done": 12, "processing": 4, "failed": 1, "pending": 27},
   "disk": {"used_gb": 15.2, "available_gb": 600.0}
 }
@@ -345,7 +345,8 @@ Response `200`:
     {
       "id": "gpu-e5f6g7h8",
       "type": "gpu",
-      "pools": ["gpu", "scene", "cpu", "io"],
+      "pools": ["gpu", "cpu"],
+      "concurrency": 1,
       "hostname": "gpu-server",
       "gpu_name": "RTX 4090",
       "status": "idle",
@@ -439,8 +440,10 @@ Response `200`:
 ### 1.6 配置管理
 
 ```
-GET  /api/config/pools                 → 当前资源池配置
-PUT  /api/config/pools                 → 热更新资源池配置
+GET  /api/config/pools                 → 当前资源池配置(pools.yaml,默认上限)
+PUT  /api/config/pools                 → 热更新资源池配置(写 pools.yaml)
+GET  /api/config/pool-limits           → 各池 {default(pools.yaml), override(redis 运行时覆盖,可 null)}
+PUT  /api/config/pool-limits           → 运行时覆盖各池上限(写 redis、不动 pools.yaml;body {pool:int}=设、{pool:null}=清除回落默认;即时对所有 worker 含网关生效;0=暂停该池;unknown pool/非法值 400)
 GET  /api/config/styles                → 可用风格标签列表
 ```
 
@@ -1077,7 +1080,11 @@ Value:  当前已占用槽数
 
 Key:    pool:{pool_name}:frozen
 Type:   STRING
-Value:  "1" 表示冻结（scene 运行时冻结 cpu 池）
+Value:  "1" 表示冻结（保留作资源槽/前端手动冻结池用途;scene→cpu 自动冻结已移除——scene 已并入 cpu 池）
+
+Key:    pool_limit_overrides
+Type:   HASH
+Fields: {pool_name: integer}    ← 池上限运行时覆盖(前端 PUT /api/config/pool-limits 写);claim 时覆盖优先于 pools.yaml 默认(1024);缺该字段=回落默认
 ```
 
 ### 3.3 Job 状态（调度器维护）
