@@ -6,8 +6,12 @@ import { useGlobalStore } from '../../stores/global'
 import { useApi } from '../../composables/useApi'
 import {
   Send, Inbox, BookMarked, Lightbulb, ChevronRight, ChevronUp, ChevronDown,
-  Rss, Folder, Server, Settings, PanelLeftClose, Plus,
+  Folder, Server, Settings, PanelLeftClose, Plus, MoreHorizontal,
 } from 'lucide-vue-next'
+import { resolveIcon } from '../../utils/kbIcons'
+import { sourceBadge, sourceLabelOf } from '../../constants/sources'
+import AddSubscriptionDialog from '../collection/AddSubscriptionDialog.vue'
+import KbSettingsDialog from './KbSettingsDialog.vue'
 
 defineProps<{ mobileOpen?: boolean }>()
 const emit = defineEmits<{ (e: 'toggle-rail'): void; (e: 'nav'): void }>()
@@ -134,6 +138,55 @@ function moveKb(i: number, dir: number) {
   kbOrder.value = arr
   localStorage.setItem(ORDER_KEY, JSON.stringify(arr))
 }
+
+// #3 知识库图标:有 d.icon 用之;未设按名关键词 smart 默认;颜色用 d.color 否则名字哈希(替代纯色点)。
+const ICON_KW: [RegExp, string][] = [
+  [/financ|金融|财经|invest|trad|market|stock|经济/i, 'landmark'],
+  [/deep.?learn|深度学习|machine.?learn|neural|\bml\b|\bai\b|人工智能|算法/i, 'brain'],
+  [/program|coding|编程|代码|software|\bdev\b|开发/i, 'code'],
+]
+function smartIcon(d: any): string {
+  const hay = `${d.domain} ${d.display_name || ''}`
+  for (const [re, name] of ICON_KW) if (re.test(hay)) return name
+  return 'book-marked'
+}
+function kbIconComp(d: any) { return resolveIcon(d.icon) || resolveIcon(smartIcon(d)) }
+function kbHue(d: any) { return d.color || kbColor(d.domain) }
+function kbLabel(d: any) { return d.display_name || d.domain }
+
+// #4 集合来源图标 + 订阅状态点(数据来自 c.subscription={source_label,enabled,last_synced_at})
+function srcIcon(c: any) { return c.subscription ? sourceBadge(sourceLabelOf(c.subscription)).icon : Folder }
+function subState(c: any): string {
+  const s = c.subscription
+  if (!s) return ''
+  if (!s.enabled) return 'paused'        // 灰:暂停追更
+  if (!s.last_synced_at) return 'never'  // 琥珀:从未同步
+  return 'active'                         // 绿:订阅中
+}
+const SUB_TIP: Record<string, string> = { active: '订阅中', paused: '已暂停追更', never: '尚未同步' }
+
+// #1/#2 KB 设置弹窗(重命名/图标/配色)+ 新增集合/订阅弹窗
+const settingsFor = ref<any | null>(null)
+const addFor = ref('')
+const addSaving = ref(false)
+const addError = ref('')
+function openSettings(d: any) { settingsFor.value = d }
+async function saveSettings(patch: { display_name: string; icon: string; color: string }) {
+  const d = settingsFor.value
+  if (!d) return
+  try { await domainStore.updateMeta(d.domain, patch) } finally { settingsFor.value = null }
+}
+function openAdd(d: string) { addError.value = ''; addFor.value = d }
+async function onCreateCollection(payload: any) {
+  addSaving.value = true; addError.value = ''
+  try {
+    await api.post('/api/collections', payload)
+    const dom = payload.domain
+    delete kbCols[dom]; await loadCols(dom); expandedKb[dom] = true
+    addFor.value = ''
+  } catch (e: any) { addError.value = e?.message || '创建失败' }
+  finally { addSaving.value = false }
+}
 </script>
 
 <template>
@@ -157,17 +210,19 @@ function moveKb(i: number, dir: number) {
         <div class="nb-group" v-for="(d, i) in orderedDomains" :key="d.domain">
           <div
             class="sub-item" :class="{ on: isKbActive(d.domain), dragover: dragOver === i }"
-            draggable="true"
+            draggable="true" @click="nav(`/kb/${encodeURIComponent(d.domain)}`)"
             @dragstart="onDragStart(i)" @dragover.prevent="onDragOver(i)" @drop="onDrop(i)" @dragend="onDragEnd"
           >
-            <span class="kb-caret" :class="{ open: expandedKb[d.domain] }" @click.stop="toggleKb(d.domain)">
+            <span class="kb-caret" :class="{ open: expandedKb[d.domain] }" title="展开/收起内容" @click.stop="toggleKb(d.domain)">
               <ChevronRight :size="14" />
             </span>
-            <span class="nb-dot" :style="{ background: kbColor(d.domain) }" />
-            <span class="nb-name" @click="nav(`/kb/${encodeURIComponent(d.domain)}`)">{{ d.domain }}</span>
-            <span class="kb-move">
+            <span class="kb-ic" :style="{ color: kbHue(d) }"><component :is="kbIconComp(d)" :size="15" /></span>
+            <span class="nb-name">{{ kbLabel(d) }}</span>
+            <span class="kb-actions">
               <button class="kb-mv" title="上移" :disabled="i === 0" @click.stop="moveKb(i, -1)"><ChevronUp :size="13" /></button>
               <button class="kb-mv" title="下移" :disabled="i === orderedDomains.length - 1" @click.stop="moveKb(i, 1)"><ChevronDown :size="13" /></button>
+              <button class="kb-mv" title="设置:重命名 / 图标 / 配色" @click.stop="openSettings(d)"><MoreHorizontal :size="14" /></button>
+              <button class="kb-mv" title="新增集合 / 订阅来源" @click.stop="openAdd(d.domain)"><Plus :size="14" /></button>
             </span>
           </div>
 
@@ -177,8 +232,9 @@ function moveKb(i: number, dir: number) {
                 <span class="src-caret" :class="{ open: expandedCol[c.id] }" @click.stop="toggleCol(c.id)">
                   <ChevronRight :size="14" />
                 </span>
-                <component :is="c.subscription?.enabled ? Rss : Folder" :size="14" />
+                <component :is="srcIcon(c)" :size="14" :title="c.subscription ? sourceLabelOf(c.subscription) : '手动集合'" />
                 <span class="nb-name" @click="nav(`/collections/${c.id}`)">{{ c.name }}</span>
+                <span v-if="c.subscription" class="sub-dot" :class="subState(c)" :title="SUB_TIP[subState(c)]" />
               </div>
               <div class="src-content" :class="{ open: expandedCol[c.id] }">
                 <div class="content-item" v-for="j in (colItems[c.id] || [])" :key="j.job_id"
@@ -227,22 +283,42 @@ function moveKb(i: number, dir: number) {
       <button class="tool" :class="{ on: route.name === 'settings' }" data-tip="设置" title="设置" @click="nav('/settings')"><Settings :size="17" /></button>
       <button class="tool collapse" data-tip="折叠侧栏" title="折叠侧栏" @click="$emit('toggle-rail')"><PanelLeftClose :size="17" /></button>
     </div>
+
+    <KbSettingsDialog
+      v-if="settingsFor" :domain="settingsFor.domain"
+      :name="settingsFor.display_name || ''" :icon="settingsFor.icon || ''" :color="settingsFor.color || ''"
+      @close="settingsFor = null" @save="saveSettings"
+    />
+    <AddSubscriptionDialog
+      v-if="addFor" :default-domain="addFor" :saving="addSaving" :error="addError"
+      @close="addFor = ''" @create="onCreateCollection"
+    />
   </aside>
 </template>
 
 <style scoped>
 .nb-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* #3 KB 图标(替代纯色点):色取 d.color / 名字哈希 */
+.kb-ic { display: inline-flex; align-items: center; justify-content: center; width: 18px; flex: none; }
+.kb-ic svg { width: 15px; height: 15px; }
 /* #3 当前内容在侧栏高亮 */
 .content-item.on { color: var(--brand-700); font-weight: 600; }
 .content-item.on .ci-dot { box-shadow: 0 0 0 2px var(--brand-100); }
-/* #5dup 拖拽中的落点提示 + 抓取手势 */
-.sub-item[draggable="true"] { cursor: grab; }
+/* #4 订阅状态点:绿=订阅中 / 灰=已暂停 / 琥珀=尚未同步(无 error 字段,暂无红) */
+.sub-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; margin-left: auto; }
+.sub-dot.active { background: #10b981; }
+.sub-dot.paused { background: var(--ink-300); }
+.sub-dot.never { background: #f59e0b; }
+/* #2 Notion 式:整行点击=进工作台;箭头 hover 抬起(底色+阴影)提示"点这里才展开" */
+.sub-item:hover .kb-caret { background: var(--surface); box-shadow: 0 1px 3px rgba(15, 23, 42, .18); color: var(--ink-700); }
+/* #5dup 拖拽落点提示;行可点(进工作台)故 pointer */
+.sub-item[draggable="true"] { cursor: pointer; }
 .sub-item.dragover { box-shadow: inset 0 2px 0 var(--brand-500); }
-/* #5dup 上移/下移按钮:默认淡出,hover 行时显现(触屏长按行也可见);移动端常驻 */
-.kb-move { display: inline-flex; flex: none; opacity: 0; transition: opacity .12s; }
-.sub-item:hover .kb-move { opacity: 1; }
+/* 行尾操作(上移/下移/设置…/新增＋):默认淡出,hover 行显现;移动端常驻 */
+.kb-actions { display: inline-flex; flex: none; gap: 0; opacity: 0; transition: opacity .12s; }
+.sub-item:hover .kb-actions { opacity: 1; }
 .kb-mv { display: inline-flex; align-items: center; padding: 1px; color: var(--ink-400); border-radius: 3px; }
 .kb-mv:hover:not(:disabled) { color: var(--ink-700); background: var(--raised); }
 .kb-mv:disabled { opacity: .35; cursor: default; }
-@media (max-width: 768px) { .kb-move { opacity: 1; } }
+@media (max-width: 768px) { .kb-actions { opacity: 1; } }
 </style>

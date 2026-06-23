@@ -19,8 +19,9 @@ export const KB_ICONS: Record<string, Component> = {
 
 // 知识库图标选择器的可选项(顺序即展示顺序)
 export const ICON_NAMES: string[] = [
-  'brain', 'cpu', 'coins', 'atom', 'dna', 'flask-conical', 'book', 'graduation-cap',
-  'code', 'database', 'globe', 'network', 'briefcase', 'line-chart', 'microscope', 'landmark',
+  'brain', 'network', 'cpu', 'binary', 'sigma', 'atom', 'dna', 'flask-conical',
+  'code', 'database', 'globe', 'microscope', 'book', 'graduation-cap',
+  'landmark', 'coins', 'line-chart', 'briefcase', 'palette', 'music', 'languages', 'lightbulb',
 ]
 
 // 知识库配色候选(存 #hex 入 profile.color)。HomeView/ProfileEditor 共用,避免各写一份。
