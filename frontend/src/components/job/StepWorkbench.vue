@@ -5,7 +5,7 @@ import MarkdownViewer from '../notes/MarkdownViewer.vue'
 import { fmtDateTime, fmtDuration } from '../../utils/datetime'
 import { statusLabel } from '../../utils/status'
 import type { StepInfo } from '../../types'
-import { Check, X, Minus, Loader, Clock, ChevronRight, FileText, Braces } from 'lucide-vue-next'
+import { Check, X, Minus, Loader, Clock, ChevronRight, FileText, Braces, Package } from 'lucide-vue-next'
 
 const props = defineProps<{ jobId: string; steps: StepInfo[] }>()
 const api = useApi()
@@ -209,56 +209,63 @@ watch(() => props.steps.map(s => s.name).join(','), () => { if (!sel.value) pick
             </span>
           </div>
 
-          <!-- 产物:按类别全部铺开,无内部滚动条 -->
-          <div v-if="selFiles.length" class="mt-4 space-y-3">
-            <div class="text-xs text-gray-500">产物（{{ selFiles.length }}）</div>
-            <div v-for="grp in cats" :key="grp.cat">
-              <div class="text-xs font-medium text-gray-600 mb-1.5">{{ grp.cat }} <span class="text-gray-400 font-normal">({{ grp.files.length }})</span></div>
-              <!-- 图片:全部缩略图网格 -->
-              <div v-if="grp.cat === '图片'" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-1.5">
-                <button
-                  v-for="f in grp.files" :key="f.path" @click="viewFile(f)"
-                  class="block rounded overflow-hidden border"
-                  :class="selFile?.path === f.path ? 'ring-2 ring-blue-400 border-blue-300' : 'border-gray-200 hover:border-gray-300'"
-                >
-                  <img :src="artUrl(f.path)" loading="lazy" class="w-full h-16 object-cover" />
-                </button>
+          <!-- ════ 产物(本步产出的文件)════ -->
+          <div v-if="['done', 'failed', 'running'].includes(selStep.status)" class="mt-4 pt-3 border-t border-gray-100">
+            <div class="text-xs font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
+              <Package :size="13" class="text-gray-500" />产物 <span class="font-normal text-gray-400">（{{ selFiles.length }}）</span>
+            </div>
+            <div v-if="selFiles.length" class="space-y-3">
+              <div v-for="grp in cats" :key="grp.cat">
+                <div class="text-xs font-medium text-gray-600 mb-1.5">{{ grp.cat }} <span class="text-gray-400 font-normal">({{ grp.files.length }})</span></div>
+                <!-- 图片:全部缩略图网格 -->
+                <div v-if="grp.cat === '图片'" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-1.5">
+                  <button
+                    v-for="f in grp.files" :key="f.path" @click="viewFile(f)"
+                    class="block rounded overflow-hidden border"
+                    :class="selFile?.path === f.path ? 'ring-2 ring-blue-400 border-blue-300' : 'border-gray-200 hover:border-gray-300'"
+                  >
+                    <img :src="artUrl(f.path)" loading="lazy" class="w-full h-16 object-cover" />
+                  </button>
+                </div>
+                <!-- 字幕/文档/数据:文件名全部列出 -->
+                <div v-else class="flex flex-wrap gap-1.5">
+                  <button
+                    v-for="f in grp.files" :key="f.path" @click="viewFile(f)"
+                    class="text-xs px-2 py-1 rounded border flex items-center gap-1"
+                    :class="selFile?.path === f.path ? 'bg-blue-100 border-blue-200 text-blue-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'"
+                  >
+                    <component :is="grp.cat === '数据' ? Braces : FileText" :size="11" />
+                    <span>{{ fname(f.path) }}</span>
+                  </button>
+                </div>
               </div>
-              <!-- 字幕/文档/数据:文件名全部列出 -->
-              <div v-else class="flex flex-wrap gap-1.5">
-                <button
-                  v-for="f in grp.files" :key="f.path" @click="viewFile(f)"
-                  class="text-xs px-2 py-1 rounded border flex items-center gap-1"
-                  :class="selFile?.path === f.path ? 'bg-blue-100 border-blue-200 text-blue-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'"
-                >
-                  <component :is="grp.cat === '数据' ? Braces : FileText" :size="11" />
-                  <span>{{ fname(f.path) }}</span>
-                </button>
+              <!-- 选中文件预览:容器留 min-height、加载态用浮层覆盖(不塌缩内容),避免点产物时页面抖动 -->
+              <div v-if="selFile" class="relative border border-gray-100 rounded-lg p-3 bg-gray-50/40 min-h-[16rem]">
+                <img v-if="selFile.kind === 'image'" :src="artUrl(selFile.path)" class="max-w-full rounded border border-gray-200" />
+                <video v-else-if="selFile.kind === 'video'" :src="mediaUrl(selFile.path)" controls preload="metadata" class="max-w-full rounded border border-gray-200" />
+                <audio v-else-if="selFile.kind === 'audio'" :src="mediaUrl(selFile.path)" controls class="w-full" />
+                <div v-else-if="fileErr" class="text-xs text-red-600">{{ fileErr }}</div>
+                <MarkdownViewer v-else-if="selFile.path.endsWith('.md')" :content="fileContent" :job-id="jobId" />
+                <pre v-else class="text-xs whitespace-pre-wrap break-all">{{ fileContent }}</pre>
+                <!-- 文本加载:浮层覆盖,旧内容保持原高度不塌缩 -->
+                <div v-if="fileLoading" class="absolute inset-0 flex items-center justify-center bg-gray-50/70 text-xs text-gray-400 rounded-lg">加载中…</div>
               </div>
             </div>
-            <!-- 选中文件预览:容器留 min-height、加载态用浮层覆盖(不塌缩内容),避免点产物时页面抖动 -->
-            <div v-if="selFile" class="relative border border-gray-100 rounded-lg p-3 bg-gray-50/40 min-h-[16rem]">
-              <img v-if="selFile.kind === 'image'" :src="artUrl(selFile.path)" class="max-w-full rounded border border-gray-200" />
-              <video v-else-if="selFile.kind === 'video'" :src="mediaUrl(selFile.path)" controls preload="metadata" class="max-w-full rounded border border-gray-200" />
-              <audio v-else-if="selFile.kind === 'audio'" :src="mediaUrl(selFile.path)" controls class="w-full" />
-              <div v-else-if="fileErr" class="text-xs text-red-600">{{ fileErr }}</div>
-              <MarkdownViewer v-else-if="selFile.path.endsWith('.md')" :content="fileContent" :job-id="jobId" />
-              <pre v-else class="text-xs whitespace-pre-wrap break-all">{{ fileContent }}</pre>
-              <!-- 文本加载:浮层覆盖,旧内容保持原高度不塌缩 -->
-              <div v-if="fileLoading" class="absolute inset-0 flex items-center justify-center bg-gray-50/70 text-xs text-gray-400 rounded-lg">加载中…</div>
-            </div>
+            <div v-else class="text-xs text-gray-400">该步骤无产物文件</div>
           </div>
-          <div v-else-if="selStep.status === 'done'" class="mt-3 text-xs text-gray-400">（此步无可展示的产物文件）</div>
 
-          <!-- 原始日志(默认折叠,排错用) -->
-          <div v-if="selStep.status !== 'waiting' && selStep.status !== 'ready'" class="mt-4">
-            <button @click="toggleLog" class="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1">
-              <ChevronRight :size="12" :class="logOpen ? 'rotate-90' : ''" class="transition-transform" /> 原始日志
-            </button>
-            <div v-if="logOpen" class="mt-1.5">
+          <!-- ════ 日志(本步运行日志)════ -->
+          <div v-if="['done', 'failed', 'running'].includes(selStep.status)" class="mt-4 pt-3 border-t border-gray-100">
+            <div class="flex items-center gap-2 mb-1.5">
+              <span class="text-xs font-semibold text-gray-700 flex items-center gap-1.5"><FileText :size="13" class="text-gray-500" />日志</span>
+              <button @click="toggleLog" class="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-0.5">
+                <ChevronRight :size="12" :class="logOpen ? 'rotate-90' : ''" class="transition-transform" />{{ logOpen ? '收起' : '展开' }}
+              </button>
+            </div>
+            <div v-if="logOpen">
               <div v-if="logLoading" class="text-xs text-gray-400">加载中…</div>
               <div v-else-if="logErr" class="text-xs text-gray-400">{{ logErr }}</div>
-              <div v-else-if="!logText.trim()" class="text-xs text-gray-400">（该步骤无日志输出，见上方「产出摘要」）</div>
+              <div v-else-if="!logText.trim()" class="text-xs text-gray-400">该步骤无日志输出</div>
               <pre v-else class="text-xs bg-gray-900 text-gray-100 rounded-lg p-3 max-h-72 overflow-auto whitespace-pre-wrap break-all">{{ logText }}</pre>
             </div>
           </div>
