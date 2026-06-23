@@ -90,6 +90,24 @@ class TestDomains:
         assert ws["top_concepts"][0]["term"] == "国债期货"
 
     @pytest.mark.asyncio
+    async def test_workspace_per_collection_recent(self, client, app):
+        """issue 6:集合最近内容来自「按集合各取」而非「全域最近 12 条」分组——
+        老集合的内容即使被新内容挤出全域最近 12,其 collection.recent 仍应有(否则误显「暂无」)。"""
+        db = app.state.db
+        db.create_collection(Collection(id="col_old", name="老集合", domain="finance",
+                                        source_type="youtube_channel", source_id="x"))
+        db.create_job(Job(id="old1", content_type="video", pipeline="video",
+                          domain="finance", collection_id="col_old"))
+        for i in range(15):   # 15 条更新的未归类内容,把 old1 挤出全域最近 12
+            db.create_job(Job(id=f"n{i}", content_type="video", pipeline="video", domain="finance"))
+        ws = (await client.get("/api/domains/finance")).json()
+        col = next(c for c in ws["collections"] if c["id"] == "col_old")
+        # 注:job_count 是 collections 计数列,由 create_job_core 维护;raw db.create_job 不增,故此处不验它。
+        assert "old1" in [j["job_id"] for j in col["recent"]]          # 修复前此处为空(全域最近12分组)
+        assert len(ws["recent_jobs"]) == 12                            # 全域最近仍封顶 12
+        assert "old1" not in [j["job_id"] for j in ws["recent_jobs"]]  # old1 不在全域最近(正是 bug 触发条件)
+
+    @pytest.mark.asyncio
     async def test_workspace_404(self, client):
         assert (await client.get("/api/domains/nope")).status_code == 404
 
@@ -142,3 +160,7 @@ class TestDomains:
         # domain 过滤仅供领域工作台内部用，经 /api/domains/:d 验证(test_workspace)。
         _seed(app.state.db)
         assert (await client.get("/api/jobs")).json()["total"] == 3
+
+
+# 注:知识库展示元数据(display_name/icon/color)的修改复用 PUT /api/profiles/{domain}
+# (见 test_api_profiles 的 meta 合并用例),侧栏 updateMeta 即调它;此处不再另测一份 domains meta 端点。

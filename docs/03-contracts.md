@@ -683,7 +683,7 @@ curl -X POST http://localhost:8000/api/domains \
 
 错误：`400` domain 非法或为 `general`（默认领域无需新建）、`409` 该领域已存在（profile 已存在）。
 
-> 元数据后续修改走 `PUT /api/profiles/{domain}`（见 1.12，已支持 `display_name`/`icon`/`color`/`description`）。
+> 展示元数据(重命名/图标/配色)修改走已有 `PUT /api/profiles/{domain}`（见 1.12，`ProfileUpdateRequest` 已含可选 `display_name`/`icon`/`color`/`description`,部分合并、保留 `terminology`)。侧栏「…」菜单的「重命名/改图标配色」即调它(`stores/domains.ts` updateMeta);**不另开 domains meta 端点**,避免同一份 yaml 持久化两处分叉。**不迁移 domain key**(英文标识不变;真改 key 为二期单独迁移端点)。
 
 #### GET /api/domains/{domain} — 领域工作台
 
@@ -694,7 +694,8 @@ curl -X POST http://localhost:8000/api/domains \
   "domain": "deep-learning",
   "stats": { "domain": "deep-learning", "collection_count": 4, "job_count": 42, "concept_count": 120, "subscription_count": 2, "last_active_at": "…" },
   "collections": [
-    {"id": "c_xxx", "name": "某 UP", "job_count": 12, "is_subscription": true, "source_id": "12345678", "sync_enabled": true}
+    {"id": "c_xxx", "name": "某 UP", "job_count": 12, "is_subscription": true, "source_id": "12345678", "sync_enabled": true,
+     "recent": [{"job_id": "j_xxx", "content_type": "video", "status": "done", "created_at": "…", "title": "…", "progress_pct": 100, "source": "bilibili", "domain": "deep-learning", "collection_id": "c_xxx"}]}
   ],
   "recent_jobs": [
     {"job_id": "j_xxx", "content_type": "video", "status": "done", "created_at": "…", "title": "…", "progress_pct": 100, "source": "bilibili", "domain": "deep-learning", "collection_id": "c_xxx"}
@@ -710,8 +711,8 @@ curl -X POST http://localhost:8000/api/domains \
 ```
 
 - `stats`：即 `GET /api/domains` 中该域那条。
-- `collections`：精简集合卡（非完整 `CollectionResponse`），仅 `id/name/job_count/is_subscription/source_id/sync_enabled`。
-- `recent_jobs`：最近 12 条，字段同 `JobResponse` 子集（`job_id/content_type/status/created_at/title/progress_pct/source/domain/collection_id`）。
+- `collections`：精简集合卡（非完整 `CollectionResponse`），`id/name/job_count/is_subscription/source_id/sync_enabled` + `recent`（**该集合各自的最近 5 条**，字段同 `recent_jobs` 项;每集合独立取,避免「全域最近 12」分组时大集合误显「暂无最近内容」）。
+- `recent_jobs`：**全域**最近 12 条(供「未归集合」分组),字段同 `JobResponse` 子集（`job_id/content_type/status/created_at/title/progress_pct/source/domain/collection_id`）。
 - `top_concepts`：术语 Top 30（含 `suggested` 候选，各带 `status`），按 `source_count`（佐证来源数）降序；`is_topic` 标记是否为主题概念。
 - `topics`：该域所有 job 的 `style_tags` 去重计数，按 count 降序。
 - `suggested_count`：状态为 `suggested` 的候选术语数。
