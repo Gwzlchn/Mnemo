@@ -46,7 +46,7 @@ COPY configs/ configs/
 # 故不能直接只读 bind-mount 仓库目录覆盖。
 COPY configs/prompts/ /data/prompts/
 
-# 构建期注入版本(git sha):worker 启动 _worker_spec() 读 FLORI_VERSION 上报,便于查"哪台 worker
-# 跑哪份代码"(代码漂移排查)。放最后,版本变化不影响上面代码层缓存。
-ARG FLORI_VERSION=dev
-ENV FLORI_VERSION=${FLORI_VERSION}
+# 构建期注入构建短 sha:运行时 shared.version 把它拼到语义版本后(0.2.0+<sha>),用于查"哪台
+# worker 跑哪份代码"(代码漂移排查)。放最后,版本变化不影响上面代码层缓存。语义版本来自已装包(pyproject)。
+ARG FLORI_BUILD_SHA=
+ENV FLORI_BUILD_SHA=${FLORI_BUILD_SHA}

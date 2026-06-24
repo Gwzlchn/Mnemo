@@ -158,8 +158,17 @@ function poolQueueBadge(name: string, p: { capacity: number; used: number; queue
 }
 
 // ── 版本漂移（前端比对，§8.6）──
-function shortSha(v: string | null | undefined): string {
-  return (v || '').trim().slice(0, 7)
+// 版本显示:FLORI_VERSION = "<语义版本>+<构建短sha>"(如 0.2.0+f1d86f0)。
+// verSem→主显语义版本(v0.2.0;Redis 7.4.9→v7.4.9;dev 等原样);verBuild→构建 sha(f1d86f0)。
+function verSem(v: string | null | undefined): string {
+  const sem = (v || '').trim().split('+')[0]
+  if (!sem) return '—'
+  return /^\d/.test(sem) ? `v${sem}` : sem
+}
+function verBuild(v: string | null | undefined): string {
+  const s = (v || '').trim()
+  const i = s.indexOf('+')
+  return i >= 0 ? s.slice(i + 1) : ''
 }
 function versionMatches(expected: string, actual: string | null | undefined): boolean {
   const e = (expected || '').trim().toLowerCase()
@@ -473,13 +482,13 @@ const usageByProvider = computed(() => {
     <!-- 1. 系统信息 -->
     <div class="seclabel" style="margin-bottom:10px"><GitCommit :size="14" />系统信息</div>
     <div class="card pad" style="margin-bottom:18px;display:flex;flex-wrap:wrap;gap:8px 22px;align-items:center">
-      <span style="font-size:13px;color:var(--ink-700)">系统版本 <b class="mono">{{ shortSha(systemVersion) }}</b></span>
+      <span style="font-size:13px;color:var(--ink-700)">系统版本 <b class="mono">{{ verSem(systemVersion) }}</b><span v-if="verBuild(systemVersion)" class="dim" style="font-size:11px"> · 构建 {{ verBuild(systemVersion) }}</span></span>
       <span class="sep" style="color:var(--ink-300)">·</span>
       <span style="font-size:13px;color:var(--ink-700)">部署模式 <b>{{ deployMode }}</b></span>
       <template v-for="c in components" :key="`v-${c.name}`">
         <span class="sep" style="color:var(--ink-300)">·</span>
         <span style="font-size:12.5px;color:var(--ink-600)">{{ COMPONENT_KIND_LABELS[c.kind] }}
-          <b class="mono">{{ c.version ? shortSha(c.version) : '—' }}</b></span>
+          <b class="mono">{{ c.version ? verSem(c.version) : '—' }}</b></span>
       </template>
     </div>
 
@@ -628,7 +637,7 @@ const usageByProvider = computed(() => {
       <Cpu :size="14" />Worker · {{ workerStore.workers.length }}
       <template v-if="driftEnabled">
         <span class="sep" style="margin:0 6px;color:var(--ink-300)">·</span>
-        <span style="font-weight:500;text-transform:none;letter-spacing:0">系统版本 <b class="mono">{{ shortSha(systemVersion) }}</b></span>
+        <span style="font-weight:500;text-transform:none;letter-spacing:0">系统版本 <b class="mono">{{ verSem(systemVersion) }}</b></span>
         <span v-if="sameVersionCount > 0" style="font-weight:500;color:var(--ok);text-transform:none;letter-spacing:0"> · ✓{{ sameVersionCount }} 同版</span>
         <span v-if="driftCount > 0" style="font-weight:500;color:var(--warn);text-transform:none;letter-spacing:0"> · ▲{{ driftCount }} 版本漂移</span>
       </template>
@@ -724,8 +733,8 @@ const usageByProvider = computed(() => {
               <span v-if="w.current_job" class="mono">{{ w.current_job }}</span>
             </span>
             <span v-if="workerDrifted(w)" class="badge b-warn"
-              :title="`期望 ${shortSha(systemVersion)}，当前 ${shortSha(w.spec?.version)}`">
-              旧版本 {{ shortSha(w.spec?.version) }}
+              :title="`期望 ${systemVersion}，当前 ${w.spec?.version}`">
+              旧版本 {{ verSem(w.spec?.version) }}<span v-if="verBuild(w.spec?.version)">·{{ verBuild(w.spec?.version) }}</span>
             </span>
           </div>
           <div class="wcard-stats">
@@ -740,7 +749,7 @@ const usageByProvider = computed(() => {
             <span>{{ computeDesc(w) }}</span>
             <span class="sep">·</span>
             <span :title="w.spec?.version || '未上报版本(多为旧镜像 worker)'"
-              :style="workerDrifted(w) ? 'color:var(--warn)' : ''">{{ w.spec?.version ? 'v' + shortSha(w.spec?.version) : '版本未报' }}</span>
+              :style="workerDrifted(w) ? 'color:var(--warn)' : ''">{{ w.spec?.version ? verSem(w.spec?.version) : '版本未报' }}</span>
             <template v-if="w.total_duration_sec > 0"><span class="sep">·</span><span>运行 {{ fmtDuration(w.total_duration_sec) }}</span></template>
             <template v-if="trafficText(w)"><span class="sep">·</span><span title="网关中转:拉取产物 / 回传产物">中转 {{ trafficText(w) }}</span></template>
             <span class="sep">·</span><span>心跳 {{ fmtRelative(w.last_heartbeat) }}</span>

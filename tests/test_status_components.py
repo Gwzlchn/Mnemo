@@ -70,6 +70,6 @@ class TestSysload:
 
 
 def test_flori_version_default():
-    # 未注入 env 时默认 'dev'(本测试进程通常未设 FLORI_VERSION)。
+    # FLORI_VERSION = 语义版本(pyproject,经 importlib.metadata)+ 可选构建短sha;非空字符串。
     from shared.version import FLORI_VERSION
     assert isinstance(FLORI_VERSION, str) and FLORI_VERSION

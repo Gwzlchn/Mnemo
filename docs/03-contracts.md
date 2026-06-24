@@ -277,13 +277,13 @@ GET /api/jobs/{id}/notes/transcript     → text/markdown (逐字稿)
 
 ```json
 {
-  "version": "a1b2c3d",
-  "//version": "FLORI_VERSION（构建期注入 git short sha）；未注入=\"dev\"。顶层 version = components[kind=api].version 的冗余",
+  "version": "0.2.0+f1d86f0",
+  "//version": "FLORI_VERSION = 语义版本(pyproject [project].version)+构建短sha,如 0.2.0+f1d86f0;构建sha 未注入则仅语义版本。顶层 version = components[kind=api].version 的冗余。前端拆「+」显示 v<语义> + 构建号",
   "components": [
-    {"name": "api", "kind": "api", "status": "up", "version": "a1b2c3d",
+    {"name": "api", "kind": "api", "status": "up", "version": "0.2.0+f1d86f0",
      "last_heartbeat": "2026-06-24T07:21:55+00:00", "uptime_sec": 273840, "detail": null,
      "extra": {"rss_mb": 128.4}},
-    {"name": "scheduler", "kind": "scheduler", "status": "up", "version": "a1b2c3d",
+    {"name": "scheduler", "kind": "scheduler", "status": "up", "version": "0.2.0+f1d86f0",
      "last_heartbeat": "2026-06-24T07:21:54+00:00", "uptime_sec": 18290, "detail": null,
      "extra": {"loop_lag_sec": 0.8, "loop_interval_sec": 30, "pid": 7}},
     {"name": "redis", "kind": "redis", "status": "up", "version": "7.2.4",
@@ -423,7 +423,7 @@ Response `200`:
       "concurrency": 1,
       "hostname": "gpu-server",
       "gpu_name": "RTX 4090",
-      "spec": {"version": "a342130", "cpu": 16, "mem_mb": 32000, "platform": "Linux-x86_64", "python": "3.11.9"},
+      "spec": {"version": "0.2.0+f1d86f0", "cpu": 16, "mem_mb": 32000, "platform": "Linux-x86_64", "python": "3.11.9"},
       "status": "idle",
       "tasks_completed": 88,
       "tasks_failed": 1,

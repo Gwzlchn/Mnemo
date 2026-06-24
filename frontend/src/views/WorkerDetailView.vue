@@ -202,7 +202,7 @@ onBeforeUnmount(() => global.setCrumbs(null))
             <tr><td>连接来源</td><td class="mono">{{ worker.remote_addr || '本机(直连)' }}</td></tr>
             <tr><td>算力</td><td>{{ computeDesc }}</td></tr>
             <tr><td>并发</td><td>{{ worker.concurrency }}</td></tr>
-            <tr v-if="worker.spec?.version"><td>版本</td><td class="mono">{{ worker.spec.version }}</td></tr>
+            <tr v-if="worker.spec?.version"><td>版本</td><td class="mono">{{ worker.spec.version.split('+')[0] }}<span v-if="worker.spec.version.includes('+')" class="dim"> · 构建 {{ worker.spec.version.split('+')[1] }}</span></td></tr>
             <tr v-if="machineDesc"><td>机器</td><td>{{ machineDesc }}</td></tr>
             <tr>
               <td>资源池</td>

@@ -128,7 +128,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             USE_USTC_MIRROR=0
-            FLORI_VERSION=${{ github.sha }}
+            FLORI_BUILD_SHA=${{ github.sha }}
           # registry 缓存常驻 ghcr(不被 GHA 10GB LRU 淘汰)→ 依赖层 digest 稳定,远程 worker 重拉
           # 只下变动的代码层(几 MB),不再整包重下 1GB+ 依赖。PR 无 ghcr 登录则回退 gha。
           cache-from: |

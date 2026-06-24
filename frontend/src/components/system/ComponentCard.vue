@@ -23,8 +23,10 @@ const mainText = computed(() => {
     const b = extra.value.bucket
     return b ? `bucket ${b} ${extra.value.bucket_exists ? '✓' : '✗'}` : '对象存储'
   }
-  // sha 版本截短 7 位(与 SystemView shortSha 一致);Redis 等语义版本(<7 位)原样。
-  return c.version ? `版本 ${c.version.slice(0, 7)}` : '版本 —'
+  // 版本显示:FLORI_VERSION="0.2.0+sha" → v0.2.0;Redis 等(7.4.9)→ v7.4.9;无则 —。
+  if (!c.version) return '版本 —'
+  const sem = c.version.split('+')[0]
+  return `版本 ${/^\d/.test(sem) ? 'v' + sem : sem}`
 })
 
 // 次要指标行（uptime / 心跳·loop / 内存·ping·conn / 探活）。
