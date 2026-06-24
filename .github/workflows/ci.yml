@@ -95,6 +95,12 @@ jobs:
             context: ./frontend
     steps:
       - uses: actions/checkout@v6
+      # ghcr 镜像/缓存引用必须全小写,而 github.repository_owner 含大写字母:
+      # metadata-action 会自动转小写 tag,但手写的 buildcache 引用不会 → 导致
+      # "failed to configure registry cache exporter: ... must be lowercase",build-push 必挂。
+      # 这里统一算一个小写 owner 供 images / cache 引用复用。
+      - name: Lowercase owner
+        run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - name: Log in to ghcr.io
@@ -108,7 +114,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          images: ghcr.io/${{ env.OWNER_LC }}/${{ matrix.image }}
           tags: |
             type=raw,value=latest
             type=sha,format=short
@@ -126,6 +132,6 @@ jobs:
           # registry 缓存常驻 ghcr(不被 GHA 10GB LRU 淘汰)→ 依赖层 digest 稳定,远程 worker 重拉
           # 只下变动的代码层(几 MB),不再整包重下 1GB+ 依赖。PR 无 ghcr 登录则回退 gha。
           cache-from: |
-            type=registry,ref=ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:buildcache
+            type=registry,ref=ghcr.io/${{ env.OWNER_LC }}/${{ matrix.image }}:buildcache
             type=gha
-          cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache,mode=max', github.repository_owner, matrix.image) || 'type=gha,mode=max' }}
+          cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache,mode=max', env.OWNER_LC, matrix.image) || 'type=gha,mode=max' }}
