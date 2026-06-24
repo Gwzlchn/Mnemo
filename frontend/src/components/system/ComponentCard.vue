@@ -21,7 +21,9 @@ const mainText = computed(() => {
   if (c.kind === 'minio') {
     if (extra.value.mode === 'local') return '本地存储（无对象存储）'
     const b = extra.value.bucket
-    return b ? `bucket ${b} ${extra.value.bucket_exists ? '✓' : '✗'}` : '对象存储'
+    const head = b ? `bucket ${b} ${extra.value.bucket_exists ? '✓' : '✗'}` : '对象存储'
+    // MinIO 版本是 RELEASE 日期(如 2025-09-07T..),取日期段;无则不显。
+    return c.version ? `${head} · 版本 ${c.version.slice(0, 10)}` : head
   }
   // 版本显示:FLORI_VERSION="0.2.0+sha" → v0.2.0;Redis 等(7.4.9)→ v7.4.9;无则 —。
   if (!c.version) return '版本 —'
