@@ -32,6 +32,8 @@ function onRename() {
 </script>
 
 <template>
+  <!-- 侧栏 .side 是 position:sticky(会建立层叠上下文),弹窗若留在侧栏 DOM 内会被主内容区盖住 → Teleport 到 body 逃出。 -->
+  <Teleport to="body">
   <div class="overlay show confirm" @click.self="emit('close')">
     <div class="modal">
       <div class="hd">
@@ -73,6 +75,7 @@ function onRename() {
       </div>
     </div>
   </div>
+  </Teleport>
 </template>
 
 <style scoped>

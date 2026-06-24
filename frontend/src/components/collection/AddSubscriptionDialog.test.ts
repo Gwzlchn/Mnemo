@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, config } from '@vue/test-utils'
 import AddSubscriptionDialog from './AddSubscriptionDialog.vue'
 import { SOURCE_TYPES } from '../../constants/sources'
+
+// 弹窗已 <Teleport to="body">(逃出侧栏 .side 的 sticky 层叠上下文);测试里让 teleport 就地渲染,
+// 这样 w.find/.findAll 仍能查到弹窗内部节点(否则内容被传送到 body、不在 wrapper 内)。
+config.global.stubs = { ...config.global.stubs, teleport: true }
 
 // AddSubscriptionDialog 是纯受控弹窗(props/emit + 本地 ref,无 store/router/请求)。
 // 这里验证渲染、来源类型切换的条件分支、提交校验与 create/close 事件的 payload。

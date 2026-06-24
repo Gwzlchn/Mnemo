@@ -47,6 +47,8 @@ function submit() {
 </script>
 
 <template>
+  <!-- 侧栏 .side 是 position:sticky(建立层叠上下文)→ 弹窗留在侧栏 DOM 内会被主内容盖住,Teleport 到 body 逃出。 -->
+  <Teleport to="body">
   <div class="overlay show" @click.self="emit('close')">
     <div class="modal">
       <div class="hd">
@@ -119,6 +121,7 @@ function submit() {
       </div>
     </div>
   </div>
+  </Teleport>
 </template>
 
 <style scoped>
