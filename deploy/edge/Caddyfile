@@ -24,7 +24,7 @@ https://{$EDGE_HOST}, https://localhost, https://127.0.0.1 {
 		reverse_proxy 127.0.0.1:8000
 	}
 
-	# 前端:反代到本机 flori-frontend 容器(Watchtower 跟随 CI 自动更新)。
+	# 前端:反代到本机 flori-frontend 容器(SSH 直传部署 push-frontend-to-edge.sh,不归 Watchtower;见 docker-compose.yml）。
 	handle {
 		reverse_proxy 127.0.0.1:8090
 	}
