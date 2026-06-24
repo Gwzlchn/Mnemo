@@ -133,7 +133,7 @@ flori/
 - `inbox/` = local_dir 订阅监听目录（丢文件即入库）；`.local/processing/<日期>/` = 每次迭代工作日志（规范见该目录根的 `迭代记录规范.txt`）。
 
 ### 运行时数据
-- 容器内统一 `/data`；NAS 生产用 bind：`FLORI_DATA_DIR=/volume1/DATA/flori`、`MINIO_DATA_DIR=…/minio`、MinIO bucket `flori`；临时产物 `/tmp/flori-work`。**数据永不放进仓库目录树**。
+- 容器内统一 `/data`；NAS 生产用 bind：`FLORI_DATA_DIR=/volume2/DATA/flori`、`MINIO_DATA_DIR=…/minio`、MinIO bucket `flori`；临时产物 `/tmp/flori-work`。**数据永不放进仓库目录树**。（2026-06-24 从 HDD `/volume1` 冷迁到 **NVMe `/volume2`**；Docker 本体[镜像/命名卷如 redis]早在 /volume2。）
 
 ### 开发 / 测试（全容器内,宿主不装依赖）
 - 开发热更新：`docker compose -f docker-compose.dev.yml up -d`
