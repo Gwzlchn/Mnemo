@@ -29,6 +29,10 @@ def validate_path_segment(value: str, label: str = "value") -> None:
     集中安全逻辑(此前多处各写一份穿越校验,易漏挡 NUL/反斜杠)。"""
     if ".." in value or "/" in value or "\\" in value or "\x00" in value:
         raise HTTPException(400, f"invalid {label}")
+    # 单段常被当文件名/键用(如 profiles/{domain}.yaml);超长(>200 字节)写盘会触发
+    # OSError 'File name too long'(NAME_MAX=255)→ 5xx。提前挡成 400(模糊测试逼出的边界)。
+    if len(value.encode("utf-8")) > 200:
+        raise HTTPException(400, f"{label} too long")
 
 
 def get_db(request: Request) -> Database:

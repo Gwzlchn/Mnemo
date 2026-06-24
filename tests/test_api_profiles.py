@@ -90,3 +90,13 @@ class TestDomainValidation:
     async def test_domain_with_slash_rejected(self, client):
         resp = await client.get("/api/profiles/%2e%2e_secrets")
         assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_overlong_domain_rejected_not_500(self, client):
+        # 模糊测试逼出:超长 domain 曾被当文件名 {domain}.yaml 写盘 → OSError 'File name too long' → 500。
+        # validate_path_segment 现按字节长度(>200)挡成 400,绝不 5xx(影响 PUT/POST/DELETE profiles 等)。
+        resp = await client.put("/api/profiles/" + "x" * 300, json={"role": "x"})
+        assert resp.status_code == 400
+        # 多字节(每字 ≥3 字节)更易超 NAME_MAX(255),同样挡 400 而非 5xx。
+        resp2 = await client.post("/api/profiles/" + "金" * 120 + "/terms", json={"term": "x"})
+        assert resp2.status_code == 400
