@@ -16,7 +16,7 @@ import type { JobDetail, GlossaryTerm, JobConcept } from '../types'
 import {
   Play, FileText, ExternalLink, BookOpen, Lightbulb,
   GitBranch, Info, RefreshCw, ChevronDown, Star, List, RotateCcw, Trash2,
-  AlertTriangle, ChevronRight, Bookmark, ShieldCheck,
+  AlertTriangle, ChevronRight, Bookmark, ShieldCheck, Coins,
 } from 'lucide-vue-next'
 
 // 内容详情(原型 #detail)：头部 + 4 tab(笔记/概念/流水线/元信息)。
@@ -49,6 +49,25 @@ watch(steps, (s) => {
     || [...s].reverse().find(x => x.status === 'done') || s[s.length - 1]
   selectedStep.value = pick.name
 }, { immediate: true })
+
+// AI 用量(逐次)→ 按步聚合 provider/开销喂 DAG 节点 + 全 job 总开销。
+const jobUsageRows = ref<{ step: string | null; provider: string; cost_usd: number }[]>([])
+const usageByStep = computed<Record<string, { provider: string; cost: number; equiv: boolean }>>(() => {
+  const m: Record<string, { provider: string; cost: number; equiv: boolean }> = {}
+  for (const u of jobUsageRows.value) {
+    if (!u.step) continue
+    const e = m[u.step] || (m[u.step] = { provider: u.provider, cost: 0, equiv: false })
+    e.cost += u.cost_usd || 0
+    if (u.provider === 'claude-cli') e.equiv = true
+  }
+  return m
+})
+const totalAi = computed(() => {
+  let cost = 0, equiv = false
+  for (const u of jobUsageRows.value) { cost += u.cost_usd || 0; if (u.provider === 'claude-cli') equiv = true }
+  return { cost, equiv, calls: jobUsageRows.value.length }
+})
+const fmtCost = (v: number) => `$${(v ?? 0).toFixed(4)}`
 
 const job = ref<JobDetail | null>(null)
 const loading = ref(true)
@@ -121,6 +140,8 @@ async function fetchDetail() {
     loadEvidence()  // 权威来源(取证产物);有则显示「权威来源」tab
     // 本 job DAG 的依赖(needs)定义(/api/pipelines 返回 {pipelines:[...]});失败留空不影响详情。
     api.get<{ pipelines?: any[] }>('/api/pipelines').then(r => { pipelinesDef.value = Array.isArray(r) ? r : (r?.pipelines ?? []) }).catch(() => {})
+    // 逐次 AI 用量 → DAG 节点 provider/开销 + 总开销。
+    api.get<{ usage?: any[] }>(`/api/jobs/${jobId.value}/usage`).then(r => { jobUsageRows.value = r?.usage || [] }).catch(() => {})
     // 完成态默认落笔记，否则落流水线。
     tab.value = d.status === 'done' ? 'notes' : 'proc'
   } catch (e: any) {
@@ -664,8 +685,11 @@ watch(job, (j) => {
               <span style="display:inline-flex;align-items:center;gap:4px"><i style="width:7px;height:7px;border-radius:50%;background:var(--bad)"></i>失败</span>
               <span style="display:inline-flex;align-items:center;gap:4px"><i style="width:7px;height:7px;border-radius:50%;background:var(--ink-300)"></i>跳过/待运行</span>
             </span>
+            <span v-if="totalAi.calls" style="margin-left:auto;font-weight:600;color:var(--ink-700);display:inline-flex;align-items:center;gap:5px;font-size:12px">
+              <Coins :size="13" style="color:var(--ink-400)" />AI 总开销 {{ fmtCost(totalAi.cost) }}<span v-if="totalAi.equiv" style="font-weight:400;color:var(--ink-400);font-size:11px">（等价）</span>
+            </span>
           </div>
-          <PipelineDag :steps="jobDagSteps" :status-by-key="stepStatusByKey" :selected="selectedStep" @select="selectedStep = $event" style="margin-top:10px" />
+          <PipelineDag :steps="jobDagSteps" :status-by-key="stepStatusByKey" :selected="selectedStep" :usage-by-step="usageByStep" @select="selectedStep = $event" style="margin-top:10px" />
         </div>
         <StepWorkbench :job-id="jobId" :steps="steps" :selected-step="selectedStep" />
 
