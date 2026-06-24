@@ -738,6 +738,9 @@ const usageByProvider = computed(() => {
             <span v-if="w.hostname">{{ w.hostname }}</span>
             <span v-if="w.hostname" class="sep">·</span>
             <span>{{ computeDesc(w) }}</span>
+            <span class="sep">·</span>
+            <span :title="w.spec?.version || '未上报版本(多为旧镜像 worker)'"
+              :style="workerDrifted(w) ? 'color:var(--warn)' : ''">{{ w.spec?.version ? 'v' + shortSha(w.spec?.version) : '版本未报' }}</span>
             <template v-if="w.total_duration_sec > 0"><span class="sep">·</span><span>运行 {{ fmtDuration(w.total_duration_sec) }}</span></template>
             <template v-if="trafficText(w)"><span class="sep">·</span><span title="网关中转:拉取产物 / 回传产物">中转 {{ trafficText(w) }}</span></template>
             <span class="sep">·</span><span>心跳 {{ fmtRelative(w.last_heartbeat) }}</span>
