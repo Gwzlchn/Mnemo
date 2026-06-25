@@ -1687,10 +1687,17 @@ RETRY_POLICY = {
 ## MCP(把知识库作为 MCP 提供给 agent)
 
 <!-- contract: 借鉴 Notion — 单 server 管整库 + 工具少而精 + Markdown 输出;domain 作用域;非一库一 server。 -->
-模块 `api/mcp_server`(模块名避开 pip `mcp` SDK 包)。v1 传输 = **stdio**(`python -m api.mcp_server`);
-agent 端 `claude mcp add flori -- <docker 包装,跑该模块>`。只读;工具薄包 `api/services/kb.py`(单一来源,
+模块 `api/mcp_server`(模块名避开 pip `mcp` SDK 包)。只读;工具薄包 `api/services/kb.py`(单一来源,
 与未来 FastAPI 路由共用)。检索后端可插拔(v1 `FtsSearch` 包 notes_fts5;v2 可换 sqlite-vec 语义,工具签名不变)。
-v2:streamable-HTTP + 经 Caddy + token 认证;写工具(submit);按库 `/mcp/{domain}` 端点。
+
+<!-- contract: 两种传输,同一套工具/逻辑 -->
+**传输**(`python -m api.mcp_server`,由 `MCP_TRANSPORT` 选,默认 stdio):
+- **stdio**:agent 端 `claude mcp add flori -- <docker 包装,跑该模块>`(`-T` 关 TTY 保 stdio 干净)。本机/容器内,无网络鉴权。
+- **http**(`MCP_TRANSPORT=http`):streamable-http,uvicorn 监听 `MCP_PORT`(默认 8090),端点路径 **`/mcp`**;经 Caddy 暴露到公网。
+  · 鉴权:**`Authorization: Bearer <FLORI_MCP_TOKEN>`**。fail-closed(对齐 API):设了 `FLORI_MCP_TOKEN`→不匹配 401;
+    未设→503,除非 `FLORI_MCP_ALLOW_NO_AUTH=1`(仅可信内网放行)。compose 服务 `mcp-http`(profile `mcp`,默认绑 127.0.0.1)。
+  · curl 冒烟:`curl -H "Authorization: Bearer $TOK" -H "Accept: application/json, text/event-stream" -H "Content-Type: application/json" -X POST https://<host>/mcp -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`
+v2(未做):写工具(submit);按库 `/mcp/{domain}` 端点;sqlite-vec 语义后端。
 
 ### 工具(3,只读)
 - **`list_knowledge_bases()`** → `[{domain, collection_count, job_count, concept_count, subscription_count, last_active_at}]`

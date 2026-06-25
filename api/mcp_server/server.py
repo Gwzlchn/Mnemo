@@ -14,7 +14,7 @@ from mcp.server.fastmcp import FastMCP
 
 from api.services import kb
 from shared.db import Database
-from shared.storage import LocalStorage, StorageBackend
+from shared.storage import StorageBackend
 
 log = structlog.get_logger()
 
@@ -23,9 +23,14 @@ def build_server(
     db: Database,
     storage: StorageBackend,
     search_backend: kb.SearchBackend | None = None,
+    *,
+    stateless_http: bool = False,
 ) -> FastMCP:
-    """构造 FastMCP server(可注入 db/storage/检索后端,便于测试与未来替换)。"""
-    mcp = FastMCP("flori")
+    """构造 FastMCP server(可注入 db/storage/检索后端,便于测试与未来替换)。
+
+    stateless_http=True:streamable-http 无状态模式(每请求独立),适合放在反代后面。
+    """
+    mcp = FastMCP("flori", stateless_http=stateless_http)
     backend: kb.SearchBackend = search_backend or kb.FtsSearch(db)
 
     @mcp.tool()
@@ -74,9 +79,14 @@ def build_server(
     return mcp
 
 
-def build_default_server() -> FastMCP:
-    """从环境(CONFIG_DIR/DATA_DIR,默认与容器一致)构造生产用 server(只读)。"""
+def build_default_server(*, stateless_http: bool = False) -> FastMCP:
+    """从环境(CONFIG_DIR/DATA_DIR,默认与容器一致)构造生产用 server(只读)。
+
+    storage 用 create_storage:设了 MINIO_URL 即对象存储,否则本地 —— 与 api 服务一致,
+    保证 get_note 读到的是同一份笔记产物。
+    """
     from shared.config import load_config
+    from shared.storage import create_storage
 
     cfg = load_config(
         config_dir=os.environ.get("CONFIG_DIR", "/data/configs"),
@@ -84,5 +94,5 @@ def build_default_server() -> FastMCP:
     )
     db = Database(cfg.db_path)
     db.init_schema()  # 幂等:表已存在则 no-op
-    storage = LocalStorage(cfg.jobs_dir)
-    return build_server(db, storage)
+    storage = create_storage(cfg.jobs_dir)
+    return build_server(db, storage, stateless_http=stateless_http)
