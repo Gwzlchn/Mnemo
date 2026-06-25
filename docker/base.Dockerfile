@@ -26,7 +26,7 @@ WORKDIR /app
 COPY pyproject.toml .
 # httpx 已是核心依赖(pyproject [project].dependencies)、websockets 由 [api] 的 uvicorn[standard]
 # 传递引入,故不再裸装(原 `pip install websockets httpx` 冗余且不带版本上界)。
-RUN pip install --no-cache-dir ".[steps,api,worker,gpu]"
+RUN pip install --no-cache-dir ".[steps,api,worker,gpu,mcp]"
 
 # 不写 .pyc/__pycache__：配合 test/dev compose 的 bind-mount，避免容器内 pytest
 # 把缓存写回宿主源码目录(此前"在 docker 里测试仍冒缓存"的根因)。日志不缓冲。
