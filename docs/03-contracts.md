@@ -1681,3 +1681,26 @@ RETRY_POLICY = {
 ```
 
 注意：此处的重试次数和 `pipelines.yaml` 中每个 job 定义的 `retry` 取**较小值**。pipelines.yaml 是步骤级上限，RETRY_POLICY 是错误类型级上限。
+
+---
+
+## MCP(把知识库作为 MCP 提供给 agent)
+
+<!-- contract: 借鉴 Notion — 单 server 管整库 + 工具少而精 + Markdown 输出;domain 作用域;非一库一 server。 -->
+模块 `api/mcp_server`(模块名避开 pip `mcp` SDK 包)。v1 传输 = **stdio**(`python -m api.mcp_server`);
+agent 端 `claude mcp add flori -- <docker 包装,跑该模块>`。只读;工具薄包 `api/services/kb.py`(单一来源,
+与未来 FastAPI 路由共用)。检索后端可插拔(v1 `FtsSearch` 包 notes_fts5;v2 可换 sqlite-vec 语义,工具签名不变)。
+v2:streamable-HTTP + 经 Caddy + token 认证;写工具(submit);按库 `/mcp/{domain}` 端点。
+
+### 工具(3,只读)
+- **`list_knowledge_bases()`** → `[{domain, collection_count, job_count, concept_count, subscription_count, last_active_at}]`
+  —— agent 探索起点。
+- **`search(query, domain?=null, limit?=10)`** → `[{title, snippet, job_id, domain, kind}]`
+  —— 全文检索(FTS5 trigram,中文子串;**查询≥3 字符**才命中);`snippet` 内 `<mark>` 包裹命中;`domain` 限定某库;
+  `kind`=note_type。先 search 再 get_note。
+- **`get_note(job_id)`** → `{job_id, title, domain, collection_id, content_type, status, note_file, markdown}`
+  —— 取最新版智能笔记完整 Markdown;`markdown=null` 表示该内容智能笔记未生成。job 不存在→错误。
+
+### 迭代约定(新增工具)
+service 函数(单一来源)→ `@mcp.tool()` 薄包(写好面向 LLM 的 docstring)→ pytest 集成(进 CI)→ 本节同提交更新(`contract:`)→
+Inspector 眼检 → 版本 +1。工具少而精;签名**只增可选参数**保向后兼容(它是 agent 的公开契约)。
