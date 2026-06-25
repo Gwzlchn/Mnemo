@@ -91,3 +91,20 @@ class TestMcpServer:
         result = await mcp.call_tool("search", {"query": "坐庄收割"})
         # FastMCP.call_tool 返回 (content_blocks, structured);命中的 j1 应出现在结果里
         assert result is not None and "j1" in str(result)
+
+
+def test_stdio_logging_to_stderr_keeps_stdout_clean(capsys):
+    """MCP stdio:stdout 必须是纯 JSON-RPC。_configure_stdio_logging 后 structlog 日志须走 stderr,
+    否则 tool 调用时的 log 行会污染协议流(回归保护:之前默认 PrintLogger 写 stdout)。"""
+    import structlog
+
+    from api.mcp_server.__main__ import _configure_stdio_logging
+
+    try:
+        _configure_stdio_logging()
+        structlog.get_logger().info("probe_event_xyz", k=1)
+    finally:
+        structlog.reset_defaults()
+    out, err = capsys.readouterr()
+    assert "probe_event_xyz" not in out  # stdout 不被日志污染
+    assert "probe_event_xyz" in err      # 日志落在 stderr

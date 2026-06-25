@@ -13,6 +13,22 @@ import os
 from api.mcp_server.server import build_default_server
 
 
+def _configure_stdio_logging() -> None:
+    """MCP stdio:stdout 必须是纯 JSON-RPC 协议流。structlog 默认 PrintLogger 写 stdout
+    会污染协议(tool 调用时的 log 行混进响应)→ 重定向到 stderr。"""
+    import sys
+
+    import structlog
+
+    structlog.configure(
+        processors=[
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.JSONRenderer(ensure_ascii=False),
+        ],
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+    )
+
+
 def main() -> None:
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     if transport == "http":
@@ -26,6 +42,7 @@ def main() -> None:
             port=int(os.environ.get("MCP_PORT", "8090")),
         )
     else:
+        _configure_stdio_logging()  # 先把日志引到 stderr,再开 stdio(保 stdout 纯净)
         build_default_server().run()  # 默认 stdio 传输
 
 
