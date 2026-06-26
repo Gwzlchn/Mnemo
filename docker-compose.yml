@@ -32,20 +32,6 @@ services:
     volumes:
       - redis-data:/data
 
-  # MCP server(把知识库作为 MCP 给 agent;stdio v1,只读行为)。非常驻——由 agent 启动:
-  #   claude mcp add flori -- docker compose -f docker-compose.yml --profile mcp run --rm -T mcp
-  # profile 隔离不随 up 起;-T 关 TTY 保 stdio 干净。挂 rw(SQLite WAL 需可写 -wal/-shm),只读由代码保证(无写工具)。
-  mcp:
-    container_name: flori-mcp
-    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/flori:${IMAGE_TAG:-latest}
-    profiles: ["mcp"]
-    command: python -m api.mcp_server
-    volumes:
-      - ${FLORI_DATA_DIR:-flori-data}:/data
-    environment:
-      <<: *common-env
-    logging: *default-logging
-
   # MCP server(HTTP / streamable-http,常驻;只读)。经 Caddy 暴露 /mcp,Bearer token 鉴权。
   # FLORI_MCP_TOKEN 必设(公网/局域网暴露);未设且 FLORI_MCP_ALLOW_NO_AUTH≠1 时 fail-closed(503)。
   mcp-http:
@@ -56,7 +42,6 @@ services:
     command: python -m api.mcp_server
     environment:
       <<: *common-env
-      MCP_TRANSPORT: http
       MCP_PORT: "8090"
       WORK_DIR: ${WORK_DIR:-/tmp/flori-work}        # RemoteStorage 临时根(MinIO 后端)
       FLORI_MCP_TOKEN: ${FLORI_MCP_TOKEN:-}

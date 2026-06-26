@@ -4,10 +4,10 @@
 只读工具薄包 api.services.kb(单一来源);domain 作为作用域参数(非一库一 server)。
 检索后端可插拔(默认 FtsSearch;未来换 sqlite-vec 语义,工具签名不变)。
 
-按库作用域(/mcp/{domain} 端点 / stdio FLORI_MCP_DEFAULT_DOMAIN):仍是同一个 server,
+按库作用域(/mcp/{domain} 端点 / 环境变量 FLORI_MCP_DEFAULT_DOMAIN):仍是同一个 server,
 靠请求级 contextvar(current_domain)+ 环境变量给工具一个「生效 domain」(见 scope_domain)。
 设了作用域后工具自动锁定该库(search 忽略入参 domain、get_note 校验归属、其余只读工具默认/覆盖
-domain),无法越库;未设作用域(全局 /mcp + 未限定 stdio)行为不变。
+domain),无法越库;未设作用域(全局 /mcp)行为不变。
 """
 
 from __future__ import annotations
@@ -24,13 +24,13 @@ from shared.storage import StorageBackend
 
 log = structlog.get_logger()
 
-# 当前请求的「作用域 domain」。HTTP 端点 /mcp/{domain} 经中间件 set;stdio 用环境变量。
+# 当前请求的「作用域 domain」。HTTP 端点 /mcp/{domain} 经中间件 set;或读环境变量 FLORI_MCP_DEFAULT_DOMAIN。
 # 默认 None = 全局(无作用域),工具行为不变。
 current_domain: ContextVar[str | None] = ContextVar("flori_mcp_domain", default=None)
 
 # ── 工具调用计数(best-effort 可观测)──
 # 用同步 redis 客户端(MCP 工具多为同步函数,FastMCP 在线程池跑;async 工具里此 incr 极快可忽略)。
-# REDIS_URL 未设(如 stdio 本地包装)→ 懒构造返回 None → 静默 no-op。绝不因 redis 缺失/出错破坏工具。
+# REDIS_URL 未设(如本地/测试)→ 懒构造返回 None → 静默 no-op。绝不因 redis 缺失/出错破坏工具。
 MCP_CALLS_TOTAL_KEY = "mcp:calls:total"
 
 
@@ -47,7 +47,7 @@ def _get_stats_redis():
     if _stats_redis is None:
         url = os.environ.get("REDIS_URL")
         if not url:
-            _stats_redis = False  # http server 之外(stdio)通常无 REDIS_URL → 永不再试
+            _stats_redis = False  # 无 REDIS_URL(本地/测试)→ 永不再试
             return None
         try:
             import redis
@@ -78,9 +78,9 @@ def _record_call(name: str) -> None:
 
 
 def scope_domain() -> str | None:
-    """解析当前生效的作用域 domain:请求级 contextvar 优先,其次环境(stdio 用),否则 None。
+    """解析当前生效的作用域 domain:请求级 contextvar 优先,其次环境变量 FLORI_MCP_DEFAULT_DOMAIN,否则 None。
 
-    None = 无作用域(全局 /mcp + 未限定 stdio),工具按传入参数走。
+    None = 无作用域(全局 /mcp 未限定),工具按传入参数走。
     非 None = 工具锁定该 domain:search 忽略入参 domain、list_knowledge_bases 只回该库、
     get_note 校验归属、其余只读工具 domain 默认/覆盖为该作用域。
     """

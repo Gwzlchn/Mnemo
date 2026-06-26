@@ -1834,11 +1834,9 @@ RETRY_POLICY = {
 模块 `api/mcp_server`(模块名避开 pip `mcp` SDK 包)。只读;工具薄包 `api/services/kb.py`(单一来源,
 与未来 FastAPI 路由共用)。检索后端可插拔(v1 `FtsSearch` 包 notes_fts5;v2 可换 sqlite-vec 语义,工具签名不变)。
 
-<!-- contract: 两种传输,同一套工具/逻辑 -->
-**传输**(`python -m api.mcp_server`,由 `MCP_TRANSPORT` 选,默认 stdio):
-- **stdio**:agent 端 `claude mcp add flori -- <docker 包装,跑该模块>`(`-T` 关 TTY 保 stdio 干净)。本机/容器内,无网络鉴权。
-  · 按库作用域:env **`FLORI_MCP_DEFAULT_DOMAIN=<domain>`** → 该 stdio server 的工具锁定到该库(与 http `/mcp/{domain}` 同语义)。
-- **http**(`MCP_TRANSPORT=http`):streamable-http,uvicorn 监听 `MCP_PORT`(默认 8090),端点路径 **`/mcp`**;经 Caddy 暴露到公网。
+<!-- contract: 单一 HTTP 传输 -->
+**传输**(`python -m api.mcp_server`,streamable-http,**仅此一种**,stdio 已移除):uvicorn 监听 `MCP_PORT`(默认 8090),端点路径 **`/mcp`**;经 Caddy 暴露到公网。
+  · 按库作用域:用路径 **`/mcp/{domain}`**(由 DomainScopeASGI 中间件处理),无需每库起进程;或 env **`FLORI_MCP_DEFAULT_DOMAIN=<domain>`** 设全局默认库。
   · 鉴权:**`Authorization: Bearer <FLORI_MCP_TOKEN>`**。fail-closed(对齐 API):设了 `FLORI_MCP_TOKEN`→不匹配 401;
     未设→503,除非 `FLORI_MCP_ALLOW_NO_AUTH=1`(仅可信内网放行)。compose 服务 `mcp-http`(profile `mcp`,默认绑 127.0.0.1)。
   · <!-- contract: MCP-http 限流 429 -->**限流**:`RateLimitASGI`(最外层,鉴权之前)进程内全局时间窗计数器,

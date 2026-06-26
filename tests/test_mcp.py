@@ -1,6 +1,6 @@
 """Flori MCP server 测试:services 读层 + MCP 工具注册/委托。
 
-不 spawn stdio 子进程(进程隔离会脱离内存 fixture DB);MCP 层用 in-process
+不 spawn 子进程(进程隔离会脱离内存 fixture DB);MCP 层用 in-process
 list_tools/call_tool 验证。trigram 检索需 ≥3 字符,故查询词都取 3+ 字。
 """
 
@@ -148,7 +148,7 @@ def _structured(result):
 
 
 class TestMcpDomainScope:
-    """按库作用域(/mcp/{domain} 与 stdio FLORI_MCP_DEFAULT_DOMAIN 同语义):
+    """按库作用域(/mcp/{domain} 与 env FLORI_MCP_DEFAULT_DOMAIN 同语义):
     经 contextvar current_domain 设作用域后,工具自动锁定该库、无法越库。"""
 
     @pytest.mark.asyncio
@@ -233,7 +233,7 @@ class TestMcpDomainScope:
         assert current_domain.get(None) is None
 
     def test_scope_domain_reads_env(self, monkeypatch):
-        """stdio 用环境变量:FLORI_MCP_DEFAULT_DOMAIN 经 scope_domain 生效(无 contextvar 时)。"""
+        """环境变量 FLORI_MCP_DEFAULT_DOMAIN 经 scope_domain 生效(无 contextvar 时,如全局默认库)。"""
         from api.mcp_server.server import current_domain, scope_domain
 
         monkeypatch.setenv("FLORI_MCP_DEFAULT_DOMAIN", "finance")
@@ -247,18 +247,4 @@ class TestMcpDomainScope:
             current_domain.reset(token)
 
 
-def test_stdio_logging_to_stderr_keeps_stdout_clean(capsys):
-    """MCP stdio:stdout 必须是纯 JSON-RPC。_configure_stdio_logging 后 structlog 日志须走 stderr,
-    否则 tool 调用时的 log 行会污染协议流(回归保护:之前默认 PrintLogger 写 stdout)。"""
-    import structlog
-
-    from api.mcp_server.__main__ import _configure_stdio_logging
-
-    try:
-        _configure_stdio_logging()
-        structlog.get_logger().info("probe_event_xyz", k=1)
-    finally:
-        structlog.reset_defaults()
-    out, err = capsys.readouterr()
-    assert "probe_event_xyz" not in out  # stdout 不被日志污染
-    assert "probe_event_xyz" in err      # 日志落在 stderr
+# (stdio transport 已移除:原 test_stdio_logging_to_stderr_keeps_stdout_clean 随之删除)
