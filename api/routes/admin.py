@@ -364,12 +364,24 @@ async def build_full_status(app) -> dict:
     except Exception:
         logger.warning("traffic_failed")
 
+    # 链路流量快照:ECS↔NAS 隧道 rx/tx + 每隧道 + up + 网关聚合 + 当前速率,由 tunnel_stats 上报器周期写。
+    # 附近 60 个时间线样本(~20min)供前端画趋势 sparkline。无上报器/无边缘 → None,前端「通联」区不渲染。
+    link_traffic = None
+    try:
+        lt = await redis.get_link_traffic()
+        if isinstance(lt, dict):  # 仅真实快照(dict)才透出;防 redis mock/异常对象流进响应
+            lt["timeline"] = await redis.get_traffic_timeline(60)
+            link_traffic = lt
+    except Exception:
+        logger.warning("link_traffic_failed")
+
     return {
         "version": FLORI_VERSION,
         "components": list(components),
         **live,
         "throughput_1h": throughput,
         "traffic": traffic,
+        "link_traffic": link_traffic,
     }
 
 

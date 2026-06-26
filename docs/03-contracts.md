@@ -317,7 +317,15 @@ GET /api/jobs/{id}/notes/transcript     → text/markdown (逐字稿)
   "throughput_1h": {"done": 18, "failed": 2},
   "//throughput_1h": "近 1h 进入终态的 job 计数；用 jobs.updated_at 近似终态时刻（rerun 改 updated_at 致重复计入罕见）",
   "traffic": {"pull_bytes": 12884901888, "push_bytes": 3221225472},
-  "//traffic": "网关产物代理中转流量累计字节：pull=出库(NAS→worker,GET /artifacts 下发字节,即 worker 拉取)、push=入库(worker→NAS,PUT /artifacts 收到字节,即 ECS→NAS)。读 redis traffic:{pull,push}:total（§3.4）；best-effort 计数(失败回 0)"
+  "//traffic": "网关产物代理中转流量累计字节：pull=出库(NAS→worker,GET /artifacts 下发字节,即 worker 拉取)、push=入库(worker→NAS,PUT /artifacts 收到字节,即 ECS→NAS)。读 redis traffic:{pull,push}:total（§3.4）；best-effort 计数(失败回 0)",
+  "link_traffic": {
+    "ts": 1782500000.0,
+    "gateway": {"pull": 12884901888, "push": 3221225472, "pull_bps": 1048576.0, "push_bps": 0.0},
+    "tunnel": {"rx": 52934963, "tx": 29419407, "rx_bps": 4096.0, "tx_bps": 2048.0, "up": true,
+      "tunnels": [{"name": "api", "rx": 21013394, "tx": 19238566, "fwd": "127.0.0.1:8000:api:8000"}]},
+    "timeline": [{"ts": 1782499980.0, "gw_pull": 12884900000, "gw_push": 3221225472, "tun_rx": 52930000, "tun_tx": 29418000}]
+  },
+  "//link_traffic": "通联/链路流量快照,由 tunnel_stats 上报器(容器 flori-tunnel-stats,pid:host 读各 autossh 隧道 eth0 /proc/net/dev)周期写 redis link:traffic + traffic:timeline,/api/status 透出。gateway=远程 worker↔ECS 网关(产物代理,同 traffic);tunnel=ECS↔NAS 反向 SSH 隧道物理字节(含 api/redis/minio/dozzle/mcp 全部),up=有隧道进程,tunnels[]=每隧道累计;*_bps=上一采样周期速率(字节/秒);timeline=近 ~60 样本(趋势)。无上报器/无边缘 → null"
 }
 ```
 

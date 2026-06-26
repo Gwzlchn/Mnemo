@@ -141,6 +141,26 @@ services:
     depends_on:
       - redis
 
+  # ECS↔NAS 隧道流量上报器:pid:host 扫 /proc 读各 autossh 隧道 eth0 字节(api 不挂 docker.sock),
+  # 顺带采样网关中转量算速率,写 redis 供 /system「通联」区。隧道进程在 NAS host,故需 pid:host。
+  # 无隧道(无边缘)时上报 tunnel.up=false,无害。
+  tunnel-stats:
+    container_name: flori-tunnel-stats
+    image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/flori:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: python -m tunnel_stats.main
+    logging: *default-logging
+    pid: host
+    environment:
+      <<: *common-env
+      TUNNEL_STATS_INTERVAL: ${TUNNEL_STATS_INTERVAL:-20}
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    depends_on:
+      - redis
+
   worker-cpu:
     container_name: flori-worker-cpu
     image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/flori:${IMAGE_TAG:-latest}

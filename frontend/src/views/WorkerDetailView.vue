@@ -7,6 +7,7 @@ import { useApi } from '../composables/useApi'
 import { useWorkerStore } from '../stores/workers'
 import { useGlobalStore } from '../stores/global'
 import { fmtDateTime, fmtDuration, fmtRelative } from '../utils/datetime'
+import { fmtBytes } from '../utils/format'
 import { workerDotClass, workerComputeDesc } from '../utils/worker'
 import StatusBadge from '../components/common/StatusBadge.vue'
 import type { Worker, WorkerJob } from '../types'
@@ -200,6 +201,7 @@ onBeforeUnmount(() => global.setCrumbs(null))
           <tbody>
             <tr><td>主机名</td><td class="mono">{{ worker.hostname || '—' }}</td></tr>
             <tr><td>连接来源</td><td class="mono">{{ worker.remote_addr || '本机(直连)' }}</td></tr>
+            <tr v-if="worker.traffic && ((worker.traffic.pull ?? 0) > 0 || (worker.traffic.push ?? 0) > 0)"><td>中转流量</td><td>↓ 出库 {{ fmtBytes(worker.traffic.pull ?? 0) }} · ↑ 入库 {{ fmtBytes(worker.traffic.push ?? 0) }}</td></tr>
             <tr><td>算力</td><td>{{ computeDesc }}</td></tr>
             <tr><td>并发</td><td>{{ worker.concurrency }}</td></tr>
             <tr v-if="worker.spec?.version"><td>版本</td><td class="mono">{{ worker.spec.version.split('+')[0] }}<span v-if="worker.spec.version.includes('+')" class="dim"> · 构建 {{ worker.spec.version.split('+')[1] }}</span></td></tr>

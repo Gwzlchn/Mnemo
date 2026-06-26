@@ -504,3 +504,30 @@ class TestTraffic:
             raise RuntimeError("redis down")
         monkeypatch.setattr(rc.r, "hincrby", boom)
         await rc.incr_traffic("pull", "ai-1", 100)  # 不抛即通过
+
+
+class TestLinkTraffic:
+    """链路流量快照 + 时间线(tunnel_stats 上报器写,/api/status 读)。"""
+
+    @pytest.mark.asyncio
+    async def test_link_traffic_roundtrip(self, rc):
+        assert await rc.get_link_traffic() is None  # 未写过 → None
+        payload = {"ts": 1.0, "tunnel": {"rx": 100, "tx": 50, "up": True, "tunnels": []}}
+        await rc.set_link_traffic(payload)
+        assert await rc.get_link_traffic() == payload
+
+    @pytest.mark.asyncio
+    async def test_timeline_capped_and_recent_first(self, rc):
+        for i in range(5):
+            await rc.push_traffic_sample({"ts": i, "tun_rx": i}, cap=3)
+        tl = await rc.get_traffic_timeline()
+        assert [s["ts"] for s in tl] == [4, 3, 2]  # LTRIM 保留最近 3、最近在前
+
+    @pytest.mark.asyncio
+    async def test_link_traffic_read_never_raises(self, rc, monkeypatch):
+        async def boom(*a, **kw):
+            raise RuntimeError("redis down")
+        monkeypatch.setattr(rc.r, "get", boom)
+        monkeypatch.setattr(rc.r, "lrange", boom)
+        assert await rc.get_link_traffic() is None  # 失败回 None,不抛
+        assert await rc.get_traffic_timeline() == []

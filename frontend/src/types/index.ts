@@ -177,6 +177,17 @@ export interface FullStatus {
   disk: DiskInfo
   throughput_1h?: Throughput
   traffic?: { pull_bytes: number; push_bytes: number }  // 网关中转流量累计(出库/入库字节)
+  link_traffic?: LinkTraffic | null  // 通联:ECS↔NAS 隧道 + 网关 + 速率(tunnel_stats 上报;无边缘=null)
+}
+
+// 一条隧道(autossh)的累计字节;name=api/minio/redis/dozzle/mcp。
+export interface TunnelStat { name: string; rx: number; tx: number; fwd: string }
+// 链路流量快照(tunnel_stats 上报器周期写,/api/status 透出)。bps=上一采样周期的字节/秒速率。
+export interface LinkTraffic {
+  ts: number
+  gateway: { pull: number; push: number; pull_bps: number; push_bps: number }  // 远程 worker ↔ ECS 网关(产物代理)
+  tunnel: { rx: number; tx: number; rx_bps: number; tx_bps: number; up: boolean; tunnels: TunnelStat[] }  // ECS ↔ NAS 隧道
+  timeline?: { ts: number; gw_pull: number; gw_push: number; tun_rx: number; tun_tx: number }[]  // 近 ~20min 样本(趋势)
 }
 
 // WS /api/ws/global 每 2s 推 live 子集;本页只可靠消费这四段。

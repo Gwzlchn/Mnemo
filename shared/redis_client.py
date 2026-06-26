@@ -433,6 +433,44 @@ class RedisClient:
         except Exception:
             return {"total": 0, "by_tool": {}}
 
+    # ── 链路流量(ECS↔NAS 隧道 + 网关聚合 + 速率快照),由 tunnel_stats 上报器周期写,/api/status 读 ──
+    async def set_link_traffic(self, payload: dict) -> None:
+        """写链路流量快照(隧道 rx/tx + 每隧道 + up + 网关聚合 + 当前速率)。失败静默。"""
+        try:
+            await self.r.set("link:traffic", json.dumps(payload, ensure_ascii=False))
+        except Exception:
+            pass
+
+    async def get_link_traffic(self) -> dict | None:
+        """读链路流量快照;无/失败回 None。"""
+        try:
+            raw = await self.r.get("link:traffic")
+            return json.loads(raw) if raw else None
+        except Exception:
+            return None
+
+    async def push_traffic_sample(self, sample: dict, cap: int = 180) -> None:
+        """追加流量时间线样本(LPUSH+LTRIM 保留最近 cap 个,最近在前),供前端算速率/趋势。失败静默。"""
+        try:
+            await self.r.lpush("traffic:timeline", json.dumps(sample, ensure_ascii=False))
+            await self.r.ltrim("traffic:timeline", 0, cap - 1)
+        except Exception:
+            pass
+
+    async def get_traffic_timeline(self, limit: int = 180) -> list[dict]:
+        """读流量时间线(最近 limit 个,最近在前);失败回空。"""
+        try:
+            raw = await self.r.lrange("traffic:timeline", 0, limit - 1) or []
+            out: list[dict] = []
+            for s in raw:
+                try:
+                    out.append(json.loads(s))
+                except Exception:
+                    continue
+            return out
+        except Exception:
+            return []
+
     # ── 组件心跳(scheduler 等无 DB 行的服务,与 worker:{id} 模式一致)──
     # 键 component:{name},TTL=900(=stale_window):超窗 key 自动消失 → API 读不到 → down
     # (而非永久 degraded)。scheduler 每 10s 续约,容忍丢 2 拍仍 up。

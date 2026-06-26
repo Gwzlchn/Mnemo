@@ -18,12 +18,12 @@ import McpConnectCard from '../components/system/McpConnectCard.vue'
 import { fmtDuration, fmtRelative } from '../utils/datetime'
 import { fmtBytes } from '../utils/format'
 import { workerDotClass, workerComputeDesc } from '../utils/worker'
-import type { Worker, FullStatus, SystemComponent, SystemEvent, UsageAggregate, PricingStatus } from '../types'
+import type { Worker, FullStatus, SystemComponent, SystemEvent, UsageAggregate, PricingStatus, LinkTraffic } from '../types'
 import { COMPONENT_KIND_LABELS } from '../types'
 import {
   Server, RefreshCw, Cpu, Pause, Play, MessageSquare, X, Plus,
   Key, Copy, Check, Layers, HardDrive, Database, Boxes, AlertTriangle,
-  Activity, GitCommit, Coins, Braces,
+  Activity, GitCommit, Coins, Braces, Network,
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -145,6 +145,36 @@ const livePools = computed(() => systemStatus.value?.pools ?? status.value?.pool
 const liveDisk = computed(() => systemStatus.value?.disk ?? status.value?.disk ?? null)
 const throughput = computed(() => status.value?.throughput_1h ?? null)
 const traffic = computed(() => status.value?.traffic ?? null)
+
+// ── 通联 / 链路流量 ──
+const link = computed<LinkTraffic | null>(() => status.value?.link_traffic ?? null)
+// 远程 worker = 经网关/隧道接入(有 remote_addr);带过中转流量的优先,按总量降序。
+const remoteWorkers = computed(() =>
+  workerStore.workers
+    .filter(w => w.remote_addr)
+    .map(w => ({ w, pull: w.traffic?.pull ?? 0, push: w.traffic?.push ?? 0 }))
+    .sort((a, b) => (b.pull + b.push) - (a.pull + a.push)),
+)
+// 是否有可展示的通联数据(有上报器快照,或有远程 worker)。无则不渲染「通联」区。
+const hasLink = computed(() => !!link.value || remoteWorkers.value.length > 0)
+const fmtRate = (bps: number | undefined) => (bps && bps > 0 ? `${fmtBytes(bps)}/s` : '—')
+// 趋势 sparkline:取时间线某字段(最近在前→反转为时间正序),归一化为 0..1 高度点。
+function spark(field: 'tun_rx' | 'tun_tx' | 'gw_pull' | 'gw_push'): number[] {
+  const tl = link.value?.timeline
+  if (!tl || tl.length < 2) return []
+  const vals = [...tl].reverse().map(s => s[field] ?? 0)
+  // 累计量 → 相邻差(速率代理),负值(重启清零)截 0。
+  const deltas: number[] = []
+  for (let i = 1; i < vals.length; i++) deltas.push(Math.max(0, vals[i] - vals[i - 1]))
+  const max = Math.max(...deltas, 1)
+  return deltas.map(d => d / max)
+}
+// 0..1 高度数组 → SVG polyline points(x 等分 0..100,y 翻转留边)。
+function sparkPoints(hs: number[]): string {
+  if (hs.length < 2) return ''
+  const n = hs.length
+  return hs.map((h, i) => `${((i / (n - 1)) * 100).toFixed(1)},${((1 - h) * 17 + 1.5).toFixed(1)}`).join(' ')
+}
 
 // ── Worker 列表派生 ──
 const STATUS_ORDER: Record<string, number> = {
@@ -612,6 +642,55 @@ const usageByProvider = computed(() => {
       </div>
     </div>
 
+    <!-- 通联 / 链路流量:远程 worker ↔ ECS 网关 ⇄ 隧道 ⇄ NAS -->
+    <div v-if="hasLink" class="seclabel" style="margin-bottom:12px"><Network :size="14" />通联 · 链路流量</div>
+    <div v-if="hasLink" class="card pad" style="margin-bottom:24px">
+      <div class="topo">
+        <div class="topo-node">
+          <div class="topo-node-h"><Cpu :size="13" />远程 worker · {{ remoteWorkers.length }}</div>
+          <div v-if="remoteWorkers.length" class="topo-sub">
+            <div v-for="r in remoteWorkers.slice(0, 6)" :key="r.w.id" class="topo-wl">
+              <span class="topo-wn" :title="r.w.remote_addr || ''">{{ r.w.hostname || r.w.id }}</span>
+              <span class="topo-wb">↓{{ fmtBytes(r.pull) }} ↑{{ fmtBytes(r.push) }}</span>
+            </div>
+          </div>
+          <div v-else class="topo-empty">无远程 worker</div>
+        </div>
+        <div class="topo-edge">
+          <div class="topo-edge-dir">↑入 {{ fmtBytes(link?.gateway.push ?? traffic?.push_bytes ?? 0) }} <span class="topo-rate">{{ fmtRate(link?.gateway.push_bps) }}</span></div>
+          <div class="topo-arrow">⇆ 网关</div>
+          <div class="topo-edge-dir">↓出 {{ fmtBytes(link?.gateway.pull ?? traffic?.pull_bytes ?? 0) }} <span class="topo-rate">{{ fmtRate(link?.gateway.pull_bps) }}</span></div>
+        </div>
+        <div class="topo-node topo-ecs">
+          <div class="topo-node-h"><Server :size="13" />ECS 边缘</div>
+          <div class="topo-sub topo-center">公网入口<br />Caddy · 网关 · 隧道</div>
+        </div>
+        <div class="topo-edge">
+          <div class="topo-edge-dir">↑上 {{ fmtBytes(link?.tunnel.tx ?? 0) }} <span class="topo-rate">{{ fmtRate(link?.tunnel.tx_bps) }}</span></div>
+          <div class="topo-arrow" :class="link ? (link.tunnel.up ? 'up' : 'down') : ''">⇆ 隧道{{ link ? (link.tunnel.up ? ' 通' : ' 断') : '' }}</div>
+          <div class="topo-edge-dir">↓下 {{ fmtBytes(link?.tunnel.rx ?? 0) }} <span class="topo-rate">{{ fmtRate(link?.tunnel.rx_bps) }}</span></div>
+        </div>
+        <div class="topo-node">
+          <div class="topo-node-h"><Database :size="13" />NAS</div>
+          <div class="topo-sub topo-center">api · minio<br />redis · scheduler</div>
+        </div>
+      </div>
+
+      <div v-if="link && link.tunnel.tunnels.length" class="topo-tunnels">
+        <span class="topo-tn" v-for="t in link.tunnel.tunnels" :key="t.name" :title="t.fwd"><b>{{ t.name }}</b> ↓{{ fmtBytes(t.rx) }} ↑{{ fmtBytes(t.tx) }}</span>
+      </div>
+      <div v-else-if="link" class="topo-tunnels"><span class="topo-empty">隧道无连接(ECS 不可达?)</span></div>
+
+      <div v-if="link && link.timeline && link.timeline.length > 2" class="topo-spark">
+        <span class="topo-spark-l">隧道趋势</span>
+        <svg viewBox="0 0 100 20" preserveAspectRatio="none" class="spk">
+          <polyline :points="sparkPoints(spark('tun_rx'))" class="spk-rx" />
+          <polyline :points="sparkPoints(spark('tun_tx'))" class="spk-tx" />
+        </svg>
+        <span class="topo-spark-leg"><i class="spk-d spk-rx-d"></i>下行 <i class="spk-d spk-tx-d"></i>上行</span>
+      </div>
+    </div>
+
     <!-- 3. 系统历史事件 -->
     <div class="seclabel" style="margin-bottom:12px"><AlertTriangle :size="14" />系统事件</div>
     <div class="card pad" style="margin-bottom:24px">
@@ -808,4 +887,35 @@ const usageByProvider = computed(() => {
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 summary::-webkit-details-marker { display: none; }
+
+/* 通联 / 链路流量拓扑 */
+.topo { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; }
+.topo-node { flex: 1 1 150px; min-width: 130px; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 9px 11px; background: var(--surface); }
+.topo-ecs { background: var(--brand-50); border-color: var(--brand-200); }
+.topo-node-h { display: flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; color: var(--ink-800); margin-bottom: 6px; }
+.topo-sub { font-size: 11px; color: var(--ink-500); line-height: 1.5; }
+.topo-center { text-align: center; padding-top: 4px; }
+.topo-empty { font-size: 11px; color: var(--ink-400); }
+.topo-wl { display: flex; justify-content: space-between; gap: 8px; }
+.topo-wn { color: var(--ink-700); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 90px; }
+.topo-wb { color: var(--ink-500); flex: none; font-variant-numeric: tabular-nums; }
+.topo-edge { flex: 0 0 auto; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 2px; padding: 0 4px; min-width: 96px; }
+.topo-edge-dir { font-size: 11px; color: var(--ink-600); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.topo-rate { color: var(--ink-400); }
+.topo-arrow { font-size: 11.5px; font-weight: 600; color: var(--ink-500); padding: 1px 0; }
+.topo-arrow.up { color: var(--ok); }
+.topo-arrow.down { color: var(--bad); }
+.topo-tunnels { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); font-size: 11.5px; color: var(--ink-500); }
+.topo-tn { font-variant-numeric: tabular-nums; }
+.topo-tn b { color: var(--ink-700); font-weight: 600; }
+.topo-spark { display: flex; align-items: center; gap: 9px; margin-top: 10px; }
+.topo-spark-l { font-size: 11px; color: var(--ink-400); flex: none; }
+.spk { width: 160px; height: 22px; flex: none; }
+.spk polyline { fill: none; stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+.spk-rx { stroke: var(--brand-500); }
+.spk-tx { stroke: var(--warn); }
+.topo-spark-leg { font-size: 10.5px; color: var(--ink-400); display: inline-flex; align-items: center; gap: 4px; }
+.spk-d { width: 8px; height: 2.5px; border-radius: 1px; display: inline-block; }
+.spk-rx-d { background: var(--brand-500); }
+.spk-tx-d { background: var(--warn); }
 </style>
