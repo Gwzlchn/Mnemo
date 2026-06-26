@@ -172,8 +172,24 @@ async function render() {
     })
     network.on('hoverNode', (params: any) => highlightNeighbors(String(params.node)))
     network.on('blurNode', () => clearHighlight())
+    // 关键:深链 ?tab=graph 直开时容器要数百 ms 才稳定到真实尺寸,autoResize 初测取到 0→画布 0×0。
+    // 轮询重试 setSize+redraw+fit,直到画布拿到非零尺寸(或 ~2s 放弃),覆盖深链初次加载的时序。
+    ensureSized()
   } catch {
     network = null  // 库缺失/无 canvas → 不渲染,不抛(测试/SSR 友好)。
+  }
+}
+
+function ensureSized(attempts = 0): void {
+  const el = containerEl.value
+  if (!network || !el) return
+  const cv = el.querySelector('canvas') as HTMLCanvasElement | null
+  if (cv && cv.width > 0 && cv.height > 0) return  // 已成功,停。
+  if (el.clientWidth > 0 && el.clientHeight > 0) {
+    try { network.setSize(`${el.clientWidth}px`, `${el.clientHeight}px`); network.redraw(); network.fit() } catch { /* noop */ }
+  }
+  if (attempts < 20 && typeof setTimeout !== 'undefined') {
+    setTimeout(() => ensureSized(attempts + 1), 100)  // 重试 ~2s
   }
 }
 
