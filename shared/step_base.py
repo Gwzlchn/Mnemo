@@ -57,6 +57,9 @@ class StepBase:
         # 最近一次 AI 调用实际命中的 provider / model(供版本化笔记标记)。
         self.last_ai_provider: str | None = None
         self.last_ai_model: str | None = None
+        # AI 审计日志(prompt 白盒化):本步每次 LLM 调用一条,内存累积后落 output/ai_logs/{step}.jsonl。
+        # 留内存副本是为 call_ai_json 解析后能回填 output_processed(amend 最后一条)。
+        self._ai_log_records: list[dict] = []
 
     # ── 统一入口 ──
 
@@ -442,15 +445,25 @@ class StepBase:
                 {"steps": [{"name": self.step_name, "ai": self.config.get("ai", {})}]},
             )
 
+        system = self._load_system_prompt()
         request = LLMRequest(
             messages=[{"role": "user", "content": prompt}],
             images=images or [],
-            system=self._load_system_prompt(),
+            system=system,
             **kwargs,
         )
 
         import asyncio
-        response = asyncio.run(self._gateway.call(self.step_name, request))
+        ts_start = datetime.now()
+        try:
+            response = asyncio.run(self._gateway.call(self.step_name, request))
+        except Exception as e:
+            # 失败也整条记审计(含尝试链 + 当时 prompt),诊断"喂了啥/哪个 provider 挂了"。
+            self._write_ai_log_safe(prompt, system, images, request, None,
+                                    ts_start, datetime.now(), error=e)
+            self._call_index += 1
+            raise
+        ts_end = datetime.now()
         self.last_ai_provider = response.provider
         self.last_ai_model = response.model
 
@@ -482,8 +495,216 @@ class StepBase:
             ),
             log_dir,
         )
+        self._write_ai_log_safe(prompt, system, images, request, response,
+                                ts_start, ts_end, error=None)
         self._call_index += 1
         return response.content
+
+    # ── AI 审计日志(prompt 白盒化:每次 LLM 调用一条 → output/ai_logs/{step}.jsonl)──
+
+    def _ai_log_path(self) -> Path:
+        return self.job_dir / "output" / "ai_logs" / f"{self.step_name}.jsonl"
+
+    def _flush_ai_logs(self) -> None:
+        path = self._ai_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".jsonl.tmp")
+        tmp.write_text(
+            "".join(json.dumps(r, ensure_ascii=False, default=str) + "\n"
+                    for r in self._ai_log_records),
+            encoding="utf-8",
+        )
+        tmp.replace(path)
+
+    def _write_ai_log_safe(self, prompt, system, images, request, response,
+                           ts_start, ts_end, error=None) -> None:
+        """落一条 AI 审计记录(best-effort,绝不影响主流程)。"""
+        try:
+            rec = self._build_ai_log_record(prompt, system, images, request,
+                                            response, ts_start, ts_end, error)
+            self._ai_log_records.append(rec)
+            self._flush_ai_logs()
+        except Exception:
+            self.log.warn("ai_log_write_failed", step=self.step_name)
+
+    def _amend_last_ai_log(self, patch: dict) -> None:
+        """call_ai_json 解析后回填 output_processed 到最后一条(best-effort)。"""
+        try:
+            if not self._ai_log_records:
+                return
+            self._ai_log_records[-1].update(patch)
+            self._flush_ai_logs()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _flori_meta() -> dict:
+        return {
+            "image_tag": os.environ.get("FLORI_IMAGE_TAG") or os.environ.get("IMAGE_TAG"),
+            "version": os.environ.get("FLORI_VERSION"),
+            "git_commit": os.environ.get("FLORI_GIT_COMMIT"),
+        }
+
+    def _build_ai_log_record(self, prompt, system, images, request, response,
+                             ts_start, ts_end, error) -> dict:
+        import socket
+        cfg = self.config or {}
+        paths = cfg.get("paths") or {}
+        prompts_dir = paths.get("prompts_dir")
+        domain = (cfg.get("domain") or {}).get("name")
+
+        profile: dict = {}
+        try:
+            profile = self.load_domain_prompt_profile() or {}
+        except Exception:
+            profile = {}
+        profile_hash = None
+        try:
+            if prompts_dir and domain:
+                pf = Path(prompts_dir) / "profiles" / f"{domain}.yaml"
+                if pf.exists():
+                    profile_hash = file_hash(pf)
+        except Exception:
+            pass
+
+        template_source = "default"
+        try:
+            if prompts_dir and (Path(prompts_dir) / f"{self.step_name}.md").exists():
+                template_source = "override"
+        except Exception:
+            pass
+
+        try:
+            in_hashes = self.input_hashes()
+        except Exception:
+            in_hashes = {}
+
+        job_meta: dict = {}
+        try:
+            job_meta = json.loads((self.job_dir / "job.json").read_text(encoding="utf-8"))
+        except Exception:
+            job_meta = {}
+
+        images = images or []
+        img_recs = []
+        for p in images:
+            d: dict = {"path": str(p)}
+            try:
+                pp = Path(p)
+                if pp.exists():
+                    d["hash"] = file_hash(pp)
+                    d["bytes"] = pp.stat().st_size
+            except Exception:
+                pass
+            img_recs.append(d)
+
+        ok = error is None and response is not None
+        if response is not None:
+            attempts, tier_used = response.attempts, response.tier_used
+        else:
+            attempts, tier_used = (getattr(error, "attempts", []) or []), None
+
+        ct = job_meta.get("content_type") or cfg.get("content_type")
+        return {
+            # 标识/归组
+            "job_id": self.job_dir.name,
+            "step": self.step_name,
+            "content_type": ct,
+            "pipeline": ct,                       # pipeline 名即 content_type
+            "domain": domain,
+            "call_index": self._call_index,
+            "exec_id": f"{os.environ.get('STEP_EXEC_ID', self.job_dir.name + ':' + self.step_name)}:{self._call_index}",
+            "session_id": getattr(response, "session_id", None),
+            "ts_start": ts_start.isoformat(),
+            "ts_end": ts_end.isoformat(),
+            # A 溯源/可复现
+            "flori": self._flori_meta(),
+            "config": {
+                "step_config_resolved": {
+                    "ai": cfg.get("ai"), "pool": cfg.get("pool"),
+                    "tags": cfg.get("tags"), "style_tags": cfg.get("style_tags"),
+                },
+                "provider_override": self._read_override() or None,
+            },
+            "injected": {
+                "domain_profile": {"name": domain, "hash": profile_hash},
+                "style_tags": cfg.get("style_tags") or [],
+                "terminology_snapshot": profile.get("terminology"),
+            },
+            "input_hashes": in_hashes,
+            # B 调用/性能
+            "routing": {
+                "requested_ai": cfg.get("ai"),
+                "tier_used": tier_used,
+                "provider": getattr(response, "provider", None),
+                "model": getattr(response, "model", None),
+                "attempts": attempts,
+            },
+            "latency": {
+                "ttft_ms": getattr(response, "ttft_ms", None),
+                "api_ms": getattr(response, "api_ms", None),
+                "duration_total_sec": (
+                    getattr(response, "duration_sec", None) if response is not None
+                    else round((ts_end - ts_start).total_seconds(), 2)
+                ),
+            },
+            "call_meta": {
+                "max_tokens": request.max_tokens,
+                "temperature": request.temperature,
+                "response_format": request.response_format,
+                "allowed_tools": request.allowed_tools,
+                "max_turns": request.max_turns,
+                "images_count": len(images),
+            },
+            # C 输入溯源(模板⊕值=渲染)
+            "prompt": {
+                "rendered": {"system": system, "user": prompt},
+                "template": {"source": template_source},
+                "values": {
+                    "domain_profile_name": domain,
+                    "terminology_snapshot": profile.get("terminology"),
+                    "style_tags": cfg.get("style_tags") or [],
+                },
+                "images": img_recs,
+            },
+            # D 输出
+            "output": {
+                "content": getattr(response, "content", None),
+                "num_turns": getattr(response, "num_turns", None),
+                "finish_reason": getattr(response, "finish_reason", None),
+            },
+            "output_processed": None,             # call_ai_json 解析后回填
+            # 用量/成本/raw
+            "usage": {
+                "input_tokens": getattr(response, "input_tokens", 0),
+                "output_tokens": getattr(response, "output_tokens", 0),
+                "cache_creation_input_tokens": getattr(response, "cache_creation_input_tokens", 0),
+                "cache_read_input_tokens": getattr(response, "cache_read_input_tokens", 0),
+            },
+            "cost": {
+                "cost_usd": getattr(response, "cost_usd", 0.0),
+                "basis": "subscription-equiv" if getattr(response, "provider", None) == "claude-cli" else "priced",
+            },
+            "raw": getattr(response, "raw", None),
+            # F 关联(produced_artifact 此刻未知,留空)
+            "links": {
+                "source": {
+                    "job_url": job_meta.get("url"),
+                    "collection": job_meta.get("collection_id"),
+                    "published_at": job_meta.get("published_at"),
+                },
+            },
+            # G 评估(前瞻,留空槽)
+            "feedback": None,
+            # H 环境
+            "env": {
+                "worker_id": os.environ.get("WORKER_ID") or os.environ.get("FLORI_WORKER_ID"),
+                "host": socket.gethostname(),
+                "pool": cfg.get("pool"),
+            },
+            "ok": ok,
+            "error": None if ok else (str(error)[:2000] if error else "unknown"),
+        }
 
     def call_ai_json(
         self,
@@ -501,6 +722,7 @@ class StepBase:
         kwargs.setdefault("temperature", 0)
         raw = self.call_ai(prompt, images=images, **kwargs)
         parse_failed = False
+        did_salvage = False
         try:
             result = json.loads(self._extract_json(raw))
             # claude 有时把分数包进 "scores" 子对象(+rationale),抬平到顶层再按维度取键,
@@ -514,6 +736,7 @@ class StepBase:
             salvaged = self._salvage_scores(raw, score_keys)
             if salvaged is not None:
                 # 用救回的真分数;丢掉 fallback 的占位 overall,让其按真分重算(否则恒 3.0)。
+                did_salvage = True
                 result = {**fallback, **salvaged, "raw_response": raw[:500]}
                 result.pop("overall", None)
             else:
@@ -523,6 +746,12 @@ class StepBase:
         if score_keys and "overall" not in result:
             scores = [result.get(k, 3) for k in score_keys]
             result["overall"] = round(sum(scores) / max(len(scores), 1), 1)
+        # 回填审计 D 输出处理:解析成功/抢救/失败 + 抽出的结构化结果(供 review 步看产了哪些概念)。
+        self._amend_last_ai_log({"output_processed": {
+            "json_parse": {"ok": not parse_failed, "salvaged": did_salvage},
+            "parse_failed": parse_failed,
+            "extracted": {k: v for k, v in result.items() if k != "raw_response"},
+        }})
         return result, parse_failed
 
     @staticmethod

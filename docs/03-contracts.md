@@ -172,6 +172,17 @@ GET /api/jobs/j_xxx/steps/10_smart/log?raw=1  → 完整
 
 错误：`400` 非法 step（含 `/` / `..` / 空字节）、`404` 日志不存在。
 
+#### GET /api/jobs/{id}/ai-logs — 完整 AI 审计日志（prompt 白盒化）
+
+返回该 job 各 AI 步的**完整 AI 调用审计**（只读）。读 `output/ai_logs/{step}.jsonl`（每个 AI 步、**每次 LLM 调用一条**；经 StorageBackend，本地/MinIO 通用），按 `job_id` 归成一条 trace。`?step={step}` 只返回该步。每条记录含:路由(provider/api/model/tier_used + 逐 tier `attempts` 尝试链)、延迟(ttft_ms/api_ms/总时长)、prompt(`rendered`=渲染后实际发出的 system+user[常量] / `template`=模板来源 / `values`=注入值)、输出、用量(in/out/cache)、成本、原始返回 `raw`、溯源(flori 版本/git_commit、input_hashes、env worker)、`ok`/`error`(失败调用也整条记)。落盘点 `shared/step_base.call_ai`(best-effort,不破坏主流程)。
+
+```
+GET /api/jobs/j_xxx/ai-logs                  → {job_id, steps:[{step, calls:[...]}]}
+GET /api/jobs/j_xxx/ai-logs?step=11_smart    → 只该步
+```
+
+错误：`400` 非法 job_id/step。无日志时返回 `{job_id, steps: []}`（非 404）。
+
 #### POST /api/jobs/{id}/retry — 重试失败任务
 
 从失败步骤开始重跑（仅对 status=failed 的 Job）。Response `200`：

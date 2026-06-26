@@ -61,9 +61,12 @@ class AllProvidersFailedError(AIProviderError):
 
     error_type = "ai"
 
-    def __init__(self, message: str = "", error_type: str = "ai"):
+    def __init__(self, message: str = "", error_type: str = "ai",
+                 attempts: list[dict] | None = None):
         super().__init__(message)
         self.error_type = error_type
+        # 逐 tier 尝试链(provider/model/ok/error_class/...),供 AI 审计日志记录失败全过程。
+        self.attempts = attempts or []
 
 
 # 重试策略：按 error_type 区分 BUILD（步骤自身确定性失败，重试无意义）

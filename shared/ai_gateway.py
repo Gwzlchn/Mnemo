@@ -92,6 +92,7 @@ class DryRunProvider:
             output_tokens=0,
             cost_usd=0.0,
             duration_sec=0.0,
+            raw={"dry_run": True},
         )
 
 
@@ -140,6 +141,12 @@ class AnthropicProvider:
 
         cc = getattr(response.usage, "cache_creation_input_tokens", 0) or 0
         cr = getattr(response.usage, "cache_read_input_tokens", 0) or 0
+        # 原始返回尽量保真(SDK 对象 → dict);失败不影响主流程。
+        try:
+            raw = response.model_dump(mode="json")
+        except Exception:
+            raw = {"id": getattr(response, "id", None),
+                   "stop_reason": getattr(response, "stop_reason", None)}
         return LLMResponse(
             content=content,
             model=request.model,
@@ -151,6 +158,10 @@ class AnthropicProvider:
             cost_usd=calc_cost("anthropic", request.model, input_tokens, output_tokens, cc, cr),
             duration_sec=round(duration, 2),
             cached=cr > 0,
+            api_ms=round(duration * 1000, 1),
+            finish_reason=getattr(response, "stop_reason", None),
+            session_id=getattr(response, "id", None),
+            raw=raw,
         )
 
     # Anthropic 支持的图片 media subtype(后缀大小写归一;其余后缀显式报错,避免发出非法 media_type 被 API 拒)。
@@ -233,6 +244,11 @@ class OpenAICompatibleProvider:
         usage = response.usage
         input_tokens = usage.prompt_tokens if usage else 0
         output_tokens = usage.completion_tokens if usage else 0
+        try:
+            raw = response.model_dump(mode="json")
+        except Exception:
+            raw = {"id": getattr(response, "id", None),
+                   "finish_reason": getattr(choice, "finish_reason", None)}
 
         return LLMResponse(
             content=choice.message.content or "",
@@ -242,6 +258,10 @@ class OpenAICompatibleProvider:
             output_tokens=output_tokens,
             cost_usd=calc_cost(self._provider_name, request.model, input_tokens, output_tokens),
             duration_sec=round(duration, 2),
+            api_ms=round(duration * 1000, 1),
+            finish_reason=getattr(choice, "finish_reason", None),
+            session_id=getattr(response, "id", None),
+            raw=raw,
         )
 
 
@@ -347,9 +367,14 @@ class ClaudeCLIProvider:
         cc = cr = turns = 0
         cost = 0.0
         model = "subscription"
+        raw_obj: dict | None = None
+        session_id = None
+        api_ms = None
+        finish_reason = None
         try:
             obj = json.loads(raw)
             if isinstance(obj, dict):
+                raw_obj = obj
                 content = obj.get("result", raw) or raw
                 u = obj.get("usage") or {}
                 in_tok = int(u.get("input_tokens", 0) or 0)
@@ -359,6 +384,10 @@ class ClaudeCLIProvider:
                 cost = float(obj.get("total_cost_usd", 0.0) or 0.0)
                 turns = int(obj.get("num_turns", 0) or 0)
                 model = _extract_cli_model(obj)
+                session_id = obj.get("session_id")
+                _api = obj.get("duration_api_ms") or obj.get("duration_ms")
+                api_ms = float(_api) if isinstance(_api, (int, float)) else None
+                finish_reason = obj.get("subtype") or obj.get("stop_reason")
         except (json.JSONDecodeError, ValueError, TypeError):
             pass
         # 订阅路径:claude -p 一般已回 total_cost_usd(=等价 API 成本,非真实账单,前端标「等价」)。
@@ -377,6 +406,10 @@ class ClaudeCLIProvider:
             duration_sec=round(duration, 2),
             num_turns=turns,
             cached=cr > 0,
+            session_id=session_id,
+            api_ms=api_ms,
+            finish_reason=finish_reason,
+            raw=raw_obj,
         )
 
 
@@ -404,6 +437,15 @@ class AIGateway:
         has_images = bool(request.images)
         errors: list[str] = []   # 累计各 provider 真实报错，附进异常→落 error.json，便于排错
         rate_limited = False     # 任一 provider 限流 → 整体按 ai_rate_limit 走长退避
+        # 逐 tier 尝试链(含成功/失败),写进返回 response.attempts(成功)或异常 .attempts(全败),供 AI 审计。
+        attempts: list[dict] = []
+
+        def _attempt(tier: str, cfg: dict, *, ok: bool, err: Exception | None = None) -> dict:
+            a = {"tier": tier, "provider": cfg.get("provider"), "model": cfg.get("model"), "ok": ok}
+            if err is not None:
+                a["error_class"] = type(err).__name__
+                a["error"] = str(err)[:500]
+            return a
 
         for tier in ["primary", "fallback"]:
             if tier not in ai_config:
@@ -413,9 +455,13 @@ class AIGateway:
             try:
                 provider = self._get_provider(cfg["provider"])
                 response = await provider.complete(request)
+                attempts.append(_attempt(tier, cfg, ok=True))
+                response.tier_used = tier
+                response.attempts = attempts
                 return response
             except (AIProviderError, AIRateLimitError) as e:
                 rate_limited = rate_limited or isinstance(e, AIRateLimitError)
+                attempts.append(_attempt(tier, cfg, ok=False, err=e))
                 _log.warning("provider_failed", step=step_name, tier=tier,
                              provider=cfg.get("provider"), model=cfg.get("model"),
                              rate_limited=isinstance(e, AIRateLimitError), error=str(e)[:400])
@@ -429,9 +475,13 @@ class AIGateway:
             try:
                 provider = self._get_provider(cfg["provider"])
                 response = await provider.complete(fb_request)
+                attempts.append(_attempt("text_fallback", cfg, ok=True))
+                response.tier_used = "text_fallback"
+                response.attempts = attempts
                 return response
             except (AIProviderError, AIRateLimitError) as e:
                 rate_limited = rate_limited or isinstance(e, AIRateLimitError)
+                attempts.append(_attempt("text_fallback", cfg, ok=False, err=e))
                 _log.warning("provider_failed", step=step_name, tier="text_fallback",
                              provider=cfg.get("provider"), model=cfg.get("model"),
                              rate_limited=isinstance(e, AIRateLimitError), error=str(e)[:400])
@@ -440,6 +490,7 @@ class AIGateway:
         raise AllProvidersFailedError(
             f"All providers failed for step {step_name} :: " + " || ".join(errors),
             error_type="ai_rate_limit" if rate_limited else "ai",
+            attempts=attempts,
         )
 
     def _get_step_ai_config(self, step_name: str) -> dict:

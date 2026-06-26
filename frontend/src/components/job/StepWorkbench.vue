@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useApi } from '../../composables/useApi'
 import MarkdownViewer from '../notes/MarkdownViewer.vue'
+import AiLogPanel from './AiLogPanel.vue'
 import { fmtDateTime, fmtDuration } from '../../utils/datetime'
 import { fmtBytes } from '../../utils/format'
 import { statusLabel } from '../../utils/status'
@@ -50,6 +51,7 @@ const logOpen = ref(false)       // 日志默认折叠
 const logText = ref('')
 const logLoading = ref(false)
 const logErr = ref('')
+const aiLogOpen = ref(false)      // AI 审计日志(prompt 白盒化)默认折叠
 
 const selStep = computed(() => props.steps.find(s => s.name === sel.value) || null)
 const selFiles = computed(() => filesByStep.value[sel.value] || [])
@@ -140,6 +142,7 @@ const jobUsage = computed(() => {
 watch(sel, (name) => {
   selFile.value = null; fileContent.value = ''; fileErr.value = ''
   logOpen.value = false; logText.value = ''; logErr.value = ''
+  aiLogOpen.value = false
   const f = (filesByStep.value[name] || [])[0]
   if (f) viewFile(f)
 })
@@ -251,6 +254,18 @@ onMounted(async () => {
                 <span v-if="u.worker_id">worker <span class="font-mono">{{ u.worker_id }}</span></span>
               </div>
             </div>
+          </div>
+
+          <!-- ════ AI 日志(本步每次 LLM 调用的完整审计;只读)════ -->
+          <div v-if="selUsage.length" class="mt-3 pt-3 border-t border-gray-100">
+            <div class="flex items-center gap-2 mb-1.5">
+              <span class="text-xs font-semibold text-gray-700 flex items-center gap-1.5"><Braces :size="13" class="text-gray-500" />AI 日志</span>
+              <button @click="aiLogOpen = !aiLogOpen" class="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-0.5">
+                <ChevronRight :size="12" :class="aiLogOpen ? 'rotate-90' : ''" class="transition-transform" />{{ aiLogOpen ? '收起' : '展开' }}
+              </button>
+              <span class="text-xs text-gray-400">prompt / 输出 / token / 尝试链 / raw</span>
+            </div>
+            <AiLogPanel v-if="aiLogOpen" :job-id="jobId" :step="sel" />
           </div>
 
           <!-- ════ 产物(本步产出的文件)════ -->

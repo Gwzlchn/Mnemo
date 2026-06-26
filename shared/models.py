@@ -170,6 +170,14 @@ class LLMResponse:
     duration_sec: float = 0.0
     num_turns: int = 0
     cached: bool = False
+    # ── AI 审计字段(prompt 白盒化 / ai_logs)──
+    session_id: str | None = None        # provider 会话 id(claude-cli 有,可溯/可续)
+    api_ms: float | None = None          # 服务端 API 耗时(claude-cli duration_api_ms / SDK 测得)
+    ttft_ms: float | None = None         # 首 token 延迟(provider 提供时)
+    finish_reason: str | None = None     # stop_reason / finish_reason
+    tier_used: str | None = None         # 实际命中的 tier(primary/fallback/text_fallback),由 gateway 写
+    attempts: list[dict] = field(default_factory=list)   # 逐 tier 尝试链,由 gateway 写
+    raw: dict | None = None              # provider 原始返回(尽量保真),供审计 raw
 
 
 def derive_job_id(url: str | None, content_type: str | None = None, source: str | None = None) -> str:

@@ -395,6 +395,43 @@ async def get_step_log(
     return PlainTextResponse(data.decode("utf-8", errors="replace"))
 
 
+@router.get("/{job_id}/ai-logs")
+async def job_ai_logs(
+    job_id: str,
+    step: str | None = None,
+    storage: StorageBackend = Depends(get_storage),
+):
+    """该 job 各 AI 步的【完整 AI 审计日志】(prompt 白盒化)。
+    读 output/ai_logs/{step}.jsonl —— 每次 LLM 调用一条(含路由/尝试链/prompt 渲染/输出/用量/raw),
+    按 job_id 归成一条 trace;给 step 时只返回该步。经 storage 读,兼容本地/MinIO。"""
+    validate_path_segment(job_id, "job_id")
+    if step is not None:
+        validate_path_segment(step, "step")
+    try:
+        files = await storage.list_files(job_id)
+    except Exception:
+        files = []
+    targets = [f for f in files if f.startswith("output/ai_logs/") and f.endswith(".jsonl")]
+    if step is not None:
+        targets = [f for f in targets if f == f"output/ai_logs/{step}.jsonl"]
+    steps: list[dict] = []
+    for rel in sorted(targets):
+        data = await storage.read_file(job_id, rel)
+        if not data:
+            continue
+        calls = []
+        for line in data.decode("utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                calls.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        steps.append({"step": rel.rsplit("/", 1)[-1][: -len(".jsonl")], "calls": calls})
+    return {"job_id": job_id, "steps": steps}
+
+
 @router.delete("/{job_id}", status_code=204)
 async def delete_job(
     job_id: str,

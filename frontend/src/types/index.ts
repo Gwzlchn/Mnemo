@@ -55,6 +55,41 @@ export interface StepUsage {
   cache_hit_rate_pct: number
 }
 
+// 完整 AI 审计日志(prompt 白盒化 Phase 1):每次 LLM 调用一条。字段尽量全,UI 可只用子集。
+export interface AiLogAttempt {
+  tier?: string; provider?: string; model?: string; ok?: boolean
+  error_class?: string; error?: string
+}
+export interface AiLogCall {
+  job_id?: string
+  step?: string
+  content_type?: string | null
+  domain?: string | null
+  call_index?: number
+  exec_id?: string
+  session_id?: string | null
+  ts_start?: string
+  ts_end?: string
+  routing?: { requested_ai?: any; tier_used?: string | null; provider?: string | null; model?: string | null; attempts?: AiLogAttempt[] }
+  latency?: { ttft_ms?: number | null; api_ms?: number | null; duration_total_sec?: number | null }
+  call_meta?: { max_tokens?: number; temperature?: number; response_format?: string | null; allowed_tools?: string[] | null; max_turns?: number | null; images_count?: number }
+  prompt?: { rendered?: { system?: string | null; user?: string }; template?: { source?: string }; values?: any; images?: { path: string; hash?: string; bytes?: number }[] }
+  output?: { content?: string | null; num_turns?: number | null; finish_reason?: string | null }
+  output_processed?: { json_parse?: { ok?: boolean; salvaged?: boolean }; parse_failed?: boolean; extracted?: any } | null
+  usage?: { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number }
+  cost?: { cost_usd?: number; basis?: string }
+  raw?: any
+  injected?: { domain_profile?: { name?: string | null; hash?: string | null }; style_tags?: string[]; terminology_snapshot?: string[] | null }
+  input_hashes?: Record<string, string>
+  flori?: { image_tag?: string | null; version?: string | null; git_commit?: string | null }
+  env?: { worker_id?: string | null; host?: string | null; pool?: string | null }
+  links?: { source?: { job_url?: string | null; collection?: string | null; published_at?: string | null } }
+  ok?: boolean
+  error?: string | null
+}
+export interface AiLogStep { step: string; calls: AiLogCall[] }
+export interface AiLogsResponse { job_id: string; steps: AiLogStep[] }
+
 export interface JobMedia {
   resolution?: string           // 视频:如 "1920x1080"
   width?: number
