@@ -1,13 +1,19 @@
 """Flori MCP server(v1)。
 
 借鉴 Notion:单 server 管整库 + 工具少而精(search/fetch 式)+ Markdown 输出省 token。
-3 个只读工具薄包 api.services.kb(单一来源);domain 作为作用域参数(非一库一 server)。
+只读工具薄包 api.services.kb(单一来源);domain 作为作用域参数(非一库一 server)。
 检索后端可插拔(默认 FtsSearch;未来换 sqlite-vec 语义,工具签名不变)。
+
+按库作用域(/mcp/{domain} 端点 / stdio FLORI_MCP_DEFAULT_DOMAIN):仍是同一个 server,
+靠请求级 contextvar(current_domain)+ 环境变量给工具一个「生效 domain」(见 scope_domain)。
+设了作用域后工具自动锁定该库(search 忽略入参 domain、get_note 校验归属、其余只读工具默认/覆盖
+domain),无法越库;未设作用域(全局 /mcp + 未限定 stdio)行为不变。
 """
 
 from __future__ import annotations
 
 import os
+from contextvars import ContextVar
 
 import structlog
 from mcp.server.fastmcp import FastMCP
@@ -17,6 +23,34 @@ from shared.db import Database
 from shared.storage import StorageBackend
 
 log = structlog.get_logger()
+
+# 当前请求的「作用域 domain」。HTTP 端点 /mcp/{domain} 经中间件 set;stdio 用环境变量。
+# 默认 None = 全局(无作用域),工具行为不变。
+current_domain: ContextVar[str | None] = ContextVar("flori_mcp_domain", default=None)
+
+
+def scope_domain() -> str | None:
+    """解析当前生效的作用域 domain:请求级 contextvar 优先,其次环境(stdio 用),否则 None。
+
+    None = 无作用域(全局 /mcp + 未限定 stdio),工具按传入参数走。
+    非 None = 工具锁定该 domain:search 忽略入参 domain、list_knowledge_bases 只回该库、
+    get_note 校验归属、其余只读工具 domain 默认/覆盖为该作用域。
+    """
+    return current_domain.get(None) or os.environ.get("FLORI_MCP_DEFAULT_DOMAIN") or None
+
+
+async def get_note_for_scope(
+    db: Database, storage: StorageBackend, job_id: str
+) -> dict:
+    """取笔记并施加当前作用域:有作用域且 job 不属该库 → KeyError(不泄露其它库)。
+
+    抽成模块级函数,既供 get_note 工具复用,也便于直接对作用域校验做单测。
+    """
+    res = await kb.get_note(db, storage, job_id)
+    sc = scope_domain()
+    if sc is not None and res.get("domain") != sc:
+        raise KeyError(f"job not found: {job_id}")
+    return res
 
 
 def build_server(
@@ -38,9 +72,13 @@ def build_server(
         """列出所有知识库(domain)及其 集合/内容/概念/订阅 计数。
 
         agent 探索的起点:先用它知道有哪些知识库,再用 search 在某个库里检索。
+        作用域端点(/mcp/{domain})下只返回该库一条。
         """
         res = kb.list_knowledge_bases(db)
-        log.info("mcp.list_knowledge_bases", n=len(res))
+        sc = scope_domain()
+        if sc is not None:
+            res = [r for r in res if r.get("domain") == sc]
+        log.info("mcp.list_knowledge_bases", n=len(res), scope=sc)
         return res
 
     @mcp.tool()
@@ -52,6 +90,9 @@ def build_server(
         - 典型用法:先用本工具按关键词找到候选,再用 get_note(job_id) 取整篇 Markdown。
         - 注意:中文 trigram 检索,查询词至少 3 个字符才会命中。
         """
+        sc = scope_domain()
+        if sc is not None:
+            domain = sc  # 作用域端点:强制锁定该库,忽略入参 domain(防越库检索)
         try:
             res = backend.search(query, domain, limit)
         except Exception as e:  # noqa: BLE001 — 工具边界,记录后回抛给 client
@@ -69,11 +110,12 @@ def build_server(
         - markdown 为 null 表示该内容的智能笔记尚未生成(如 job 未完成)。
         """
         try:
-            res = await kb.get_note(db, storage, job_id)
+            res = await get_note_for_scope(db, storage, job_id)
         except KeyError:
-            log.warning("mcp.get_note.not_found", job_id=job_id)
+            log.warning("mcp.get_note.not_found", job_id=job_id, scope=scope_domain())
             raise
-        log.info("mcp.get_note", job_id=job_id, has_md=bool(res.get("markdown")))
+        log.info("mcp.get_note", job_id=job_id, has_md=bool(res.get("markdown")),
+                 scope=scope_domain())
         return res
 
     @mcp.tool()
@@ -82,6 +124,9 @@ def build_server(
 
         返回 [{id, name, domain, job_count, 及订阅集合的 source_type/source_id/last_synced_at/last_sync_status}]。
         """
+        sc = scope_domain()
+        if sc is not None:
+            domain = sc  # 作用域端点:锁定该库
         res = kb.list_collections(db, domain)
         log.info("mcp.list_collections", domain=domain, n=len(res))
         return res
@@ -93,6 +138,9 @@ def build_server(
         - domain 必填(来自 list_knowledge_bases);status 可选(如 accepted / review)。
         - 返回 [{term, definition, status, is_topic, occurrence_count}]。要单条详情(出处/相关)用 get_term。
         """
+        sc = scope_domain()
+        if sc is not None:
+            domain = sc  # 作用域端点:锁定该库,忽略入参 domain
         res = kb.get_glossary(db, domain, status)
         log.info("mcp.get_glossary", domain=domain, n=len(res))
         return res
@@ -103,6 +151,9 @@ def build_server(
 
         - domain + term 必填(term 来自 get_glossary / search)。未命中返回 null。
         """
+        sc = scope_domain()
+        if sc is not None:
+            domain = sc  # 作用域端点:锁定该库,忽略入参 domain
         res = kb.get_term(db, domain, term)
         log.info("mcp.get_term", domain=domain, term=term, found=res is not None)
         return res
@@ -113,6 +164,9 @@ def build_server(
 
         - domain 必填;granularity = day | week | month(默认 month)。
         """
+        sc = scope_domain()
+        if sc is not None:
+            domain = sc  # 作用域端点:锁定该库,忽略入参 domain
         res = kb.concept_timeline(db, domain, granularity)
         log.info("mcp.concept_timeline", domain=domain, granularity=granularity)
         return res

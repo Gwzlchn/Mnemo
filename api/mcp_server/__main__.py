@@ -3,7 +3,10 @@
 MCP_TRANSPORT(默认 stdio):
 - stdio:agent 端(如 Claude Code)以 stdio 启动本进程作为 MCP server
     claude mcp add flori -- <docker 包装,跑本模块>
+  · 按库作用域:设 FLORI_MCP_DEFAULT_DOMAIN=<domain>,该 stdio server 的工具即锁定到该库
+    (与 http 端点 /mcp/{domain} 同语义,经 server.scope_domain 读环境;无需 contextvar)。
 - http:streamable-http + Bearer token,uvicorn 监听 MCP_PORT(默认 8090),经 Caddy 暴露 /mcp。
+  · 按库作用域:用路径 /mcp/{domain}(由 DomainScopeASGI 中间件处理),无需每库起进程。
 """
 
 from __future__ import annotations

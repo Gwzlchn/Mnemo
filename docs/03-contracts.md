@@ -1693,11 +1693,22 @@ RETRY_POLICY = {
 <!-- contract: 两种传输,同一套工具/逻辑 -->
 **传输**(`python -m api.mcp_server`,由 `MCP_TRANSPORT` 选,默认 stdio):
 - **stdio**:agent 端 `claude mcp add flori -- <docker 包装,跑该模块>`(`-T` 关 TTY 保 stdio 干净)。本机/容器内,无网络鉴权。
+  · 按库作用域:env **`FLORI_MCP_DEFAULT_DOMAIN=<domain>`** → 该 stdio server 的工具锁定到该库(与 http `/mcp/{domain}` 同语义)。
 - **http**(`MCP_TRANSPORT=http`):streamable-http,uvicorn 监听 `MCP_PORT`(默认 8090),端点路径 **`/mcp`**;经 Caddy 暴露到公网。
   · 鉴权:**`Authorization: Bearer <FLORI_MCP_TOKEN>`**。fail-closed(对齐 API):设了 `FLORI_MCP_TOKEN`→不匹配 401;
     未设→503,除非 `FLORI_MCP_ALLOW_NO_AUTH=1`(仅可信内网放行)。compose 服务 `mcp-http`(profile `mcp`,默认绑 127.0.0.1)。
   · curl 冒烟:`curl -H "Authorization: Bearer $TOK" -H "Accept: application/json, text/event-stream" -H "Content-Type: application/json" -X POST https://<host>/mcp -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`
-v2(未做):写工具(submit);按库 `/mcp/{domain}` 端点;sqlite-vec 语义后端。
+
+<!-- contract: 按库作用域端点 /mcp/{domain} —— 单 server + contextvar,非一库一 server -->
+**按库作用域端点 `/mcp/{domain}`**(给某 agent 一个只见某知识库的 MCP):
+- 仍是**同一个** MCP server。`DomainScopeASGI` 中间件(在 Bearer 鉴权内层)把 `/mcp/{domain}` 及子路径
+  **改写为 `/mcp[/...]`**(streamable_http_path 是 `/mcp`),并经请求级 contextvar 给工具一个「生效 domain」。
+- 该端点下工具**自动锁定**该库,无法越库:`search` 忽略入参 domain 强制锁定;`list_knowledge_bases` 只回该库一条;
+  `get_note` 校验 job 归属(越库视同 not-found,不泄露其它库笔记);`get_glossary/get_term/concept_timeline/list_collections`
+  的 domain 默认/覆盖为作用域。精确 `/mcp`(无 domain 段)= 全局端点,行为不变。
+- 鉴权同 `/mcp`(Bearer)。**Caddy/隧道无需改**:`/mcp*` 路由按前缀已覆盖 `/mcp/{domain}`。
+  · curl:`... -X POST https://<host>/mcp/<domain> -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`
+v2(未做):写工具(submit);sqlite-vec 语义后端。
 
 **接入信息端点**(供系统页「接入 MCP」卡片渲染;只读,挂 /api 经 Caddy basic_auth / API_ALLOW_NO_AUTH 收口):
 - `GET /api/mcp/info` → `{enabled, http_path:"/mcp", stdio_module:"api.mcp_server", token_configured:bool, tools:[{name, description}]}`。tools 从 MCP server 实时派生(不写死);不回传 token 明文。前端公网端点 = `window.location.origin + http_path`。

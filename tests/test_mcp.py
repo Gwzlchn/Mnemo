@@ -121,6 +121,116 @@ class TestMcpServer:
         assert result is not None and "j1" in str(result)
 
 
+def _structured(result):
+    """从 FastMCP.call_tool 结果取结构化值,兼容两种返回形态:
+    (content_blocks, structured) 元组,或仅 content_blocks 序列。
+    structured 多为 {"result": <payload>}(FastMCP 给非 dict 顶层结果套一层 result)。"""
+    structured = result[1] if isinstance(result, tuple) and len(result) == 2 else None
+    if isinstance(structured, dict) and set(structured) == {"result"}:
+        return structured["result"]
+    return structured
+
+
+class TestMcpDomainScope:
+    """按库作用域(/mcp/{domain} 与 stdio FLORI_MCP_DEFAULT_DOMAIN 同语义):
+    经 contextvar current_domain 设作用域后,工具自动锁定该库、无法越库。"""
+
+    @pytest.mark.asyncio
+    async def test_search_locked_to_scope_ignores_param(self, db, test_config):
+        from api.mcp_server.server import current_domain
+
+        _seed(db)
+        mcp = build_server(db, LocalStorage(test_config.jobs_dir))
+        token = current_domain.set("finance")
+        try:
+            # 作用域=finance:即便入参 domain=deep-learning,也只搜 finance
+            res = await mcp.call_tool("search", {"query": "注意力", "domain": "deep-learning"})
+            assert "j2" not in str(res)  # deep-learning 的 j2 不应出现
+            res2 = await mcp.call_tool("search", {"query": "坐庄收割"})
+            assert "j1" in str(res2)  # finance 的 j1 命中
+        finally:
+            current_domain.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_list_kbs_returns_only_scope(self, db, test_config):
+        from api.mcp_server.server import current_domain
+
+        _seed(db)
+        mcp = build_server(db, LocalStorage(test_config.jobs_dir))
+        token = current_domain.set("finance")
+        try:
+            rows = _structured(await mcp.call_tool("list_knowledge_bases", {}))
+            domains = {r["domain"] for r in rows}
+            assert domains == {"finance"}  # 只回作用域那一条
+        finally:
+            current_domain.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_get_note_foreign_domain_rejected(self, db, test_config):
+        from api.mcp_server.server import current_domain, get_note_for_scope
+
+        _seed(db)
+        storage = LocalStorage(test_config.jobs_dir)
+        token = current_domain.set("finance")
+        try:
+            # 直接验作用域校验逻辑:j2 属 deep-learning,作用域=finance 时视同不存在
+            with pytest.raises(KeyError):
+                await get_note_for_scope(db, storage, "j2")
+            # 而 MCP 工具层(call_tool)也应回错(FastMCP 把 KeyError 包成工具错误)
+            mcp = build_server(db, storage)
+            with pytest.raises(Exception):  # noqa: B017,PT011 — 跨 mcp 版本异常类型不一,只验「出错」
+                await mcp.call_tool("get_note", {"job_id": "j2"})
+        finally:
+            current_domain.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_get_note_same_domain_ok(self, db, test_config):
+        from api.mcp_server.server import current_domain
+
+        _seed(db)
+        mcp = build_server(db, LocalStorage(test_config.jobs_dir))
+        token = current_domain.set("finance")
+        try:
+            res = await mcp.call_tool("get_note", {"job_id": "j1"})
+            note = _structured(res)
+            if isinstance(note, dict):
+                assert note["job_id"] == "j1" and note["domain"] == "finance"
+            else:  # 无结构化输出时,内容块里至少出现 j1 + finance
+                assert "j1" in str(res) and "finance" in str(res)
+        finally:
+            current_domain.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_no_scope_unchanged(self, db, test_config):
+        """无作用域(默认 None):工具按入参走,可跨库。"""
+        from api.mcp_server.server import current_domain, scope_domain
+
+        _seed(db)
+        assert scope_domain() is None
+        mcp = build_server(db, LocalStorage(test_config.jobs_dir))
+        rows = _structured(await mcp.call_tool("list_knowledge_bases", {}))
+        domains = {r["domain"] for r in rows}
+        assert {"finance", "deep-learning"} <= domains
+        # 入参 domain 生效
+        res = await mcp.call_tool("search", {"query": "注意力", "domain": "deep-learning"})
+        assert "j2" in str(res)
+        assert current_domain.get(None) is None
+
+    def test_scope_domain_reads_env(self, monkeypatch):
+        """stdio 用环境变量:FLORI_MCP_DEFAULT_DOMAIN 经 scope_domain 生效(无 contextvar 时)。"""
+        from api.mcp_server.server import current_domain, scope_domain
+
+        monkeypatch.setenv("FLORI_MCP_DEFAULT_DOMAIN", "finance")
+        assert current_domain.get(None) is None
+        assert scope_domain() == "finance"
+        # contextvar 优先于环境
+        token = current_domain.set("deep-learning")
+        try:
+            assert scope_domain() == "deep-learning"
+        finally:
+            current_domain.reset(token)
+
+
 def test_stdio_logging_to_stderr_keeps_stdout_clean(capsys):
     """MCP stdio:stdout 必须是纯 JSON-RPC。_configure_stdio_logging 后 structlog 日志须走 stderr,
     否则 tool 调用时的 log 行会污染协议流(回归保护:之前默认 PrintLogger 写 stdout)。"""

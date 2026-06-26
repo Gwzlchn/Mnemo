@@ -7,6 +7,9 @@
 认证语义对齐 api/deps.verify_token 的 fail-closed:
 - 设了 FLORI_MCP_TOKEN → 必须 Bearer 精确匹配,否则 401;
 - 未设 → 503,除非 FLORI_MCP_ALLOW_NO_AUTH 为真(仅可信内网,放行并告警一次)。
+
+按库作用域 /mcp/{domain}:DomainScopeASGI(在鉴权内层)把 /mcp/{domain}[/...] 改写到 /mcp[/...]
+(同一 streamable_http_app),并经 contextvar 锁定该库,使工具无法越库;/mcp 仍是全局端点。
 """
 
 from __future__ import annotations
@@ -79,6 +82,62 @@ class TokenAuthASGI:
         await send({"type": "http.response.body", "body": body})
 
 
+class DomainScopeASGI:
+    """纯 ASGI 中间件:把 /mcp/{domain}(及其子路径)映射到单个 streamable-http app(挂 /mcp),
+    并经 contextvar 给工具一个「作用域 domain」,使该端点只能访问对应知识库。
+
+    - 不另起 N 个 server:同一 streamable_http_app(path=/mcp),按请求改写 scope.path + set contextvar。
+    - 路径 /mcp 或 /mcp/(无 domain 段)→ 不作用域(全局),原样直通。
+    - 路径 /mcp/{domain} 或 /mcp/{domain}/... → 抽出 domain,把 path 改写为 "/mcp" + 余下部分,
+      在 await 内层前 current_domain.set(domain),finally reset(同一 async task,工具调用可见)。
+    - 非 http scope(lifespan 等)直通 —— 放行才不破坏 session manager 生命周期。
+    - 纯 ASGI 不缓冲,保流式 SSE。
+
+    放在 TokenAuthASGI 内层:TokenAuthASGI(DomainScopeASGI(streamable_http_app))。
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        from api.mcp_server.server import current_domain
+
+        path: str = scope.get("path", "") or ""
+        domain = self._extract_domain(path)
+        if domain is None:
+            # /mcp 或 /mcp/ —— 全局端点,无作用域,原样直通
+            await self.app(scope, receive, send)
+            return
+
+        # /mcp/{domain}[/...] → 改写为 /mcp[/...](streamable_http_path 是 /mcp)
+        remainder = path[len("/mcp/") + len(domain):]  # "" 或 "/sub..."
+        new_path = "/mcp" + remainder
+        scope = dict(scope)  # 不就地改原 scope(避免污染上游)
+        scope["path"] = new_path
+        scope["raw_path"] = new_path.encode("latin-1")
+
+        token = current_domain.set(domain)
+        try:
+            log.info("mcp_domain_scope", domain=domain, path=path, rewritten=new_path)
+            await self.app(scope, receive, send)
+        finally:
+            current_domain.reset(token)
+
+    @staticmethod
+    def _extract_domain(path: str) -> str | None:
+        """从 path 抽出作用域 domain;无作用域(精确 /mcp 或 /mcp/)返回 None。"""
+        prefix = "/mcp/"
+        if not path.startswith(prefix):
+            return None  # 不以 /mcp/ 开头(含精确 /mcp)→ 无作用域
+        rest = path[len(prefix):]
+        seg = rest.split("/", 1)[0]
+        return seg or None  # /mcp/ → seg 为空 → None
+
+
 def build_http_app():
     """构造带鉴权的 streamable-http ASGI app(默认挂 /mcp)。供 uvicorn 启动。"""
     from mcp.server.transport_security import TransportSecuritySettings
@@ -102,4 +161,5 @@ def build_http_app():
         )
 
     app = mcp.streamable_http_app()  # Starlette ASGI;path 默认 /mcp
-    return TokenAuthASGI(app)
+    # 鉴权在最外层(先认证再作用域);作用域中间件把 /mcp/{domain} 改写到 /mcp 并 set contextvar
+    return TokenAuthASGI(DomainScopeASGI(app))
