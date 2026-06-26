@@ -261,15 +261,21 @@ paper:
       outputs: ["output/versions/review_*"]   # 版本化评审(与笔记版本 1:1 配对);笔记页另渲染可读面板
 
 article:
+  # v2(2026-06-27):provider 统一 claude-cli/subscription(订阅 worker 可跑,对齐 09 决策、避开
+  # 无 key 的 anthropic/deepseek 全挂);智能笔记/评审随投递开关 smart_note 可选;概念步必跑。
   variables:
-    AI_SMART_PRIMARY_PROVIDER: anthropic
-    AI_SMART_PRIMARY_MODEL: claude-sonnet-4-6
-    AI_SMART_FALLBACK_PROVIDER: deepseek
-    AI_SMART_FALLBACK_MODEL: deepseek-v4-pro
-    AI_REVIEW_PRIMARY_PROVIDER: anthropic
-    AI_REVIEW_PRIMARY_MODEL: claude-haiku-4-5
-    AI_REVIEW_FALLBACK_PROVIDER: deepseek
-    AI_REVIEW_FALLBACK_MODEL: deepseek-v4-flash
+    AI_SMART_PRIMARY_PROVIDER: claude-cli
+    AI_SMART_PRIMARY_MODEL: subscription
+    AI_SMART_FALLBACK_PROVIDER: claude-cli
+    AI_SMART_FALLBACK_MODEL: subscription
+    AI_REVIEW_PRIMARY_PROVIDER: claude-cli
+    AI_REVIEW_PRIMARY_MODEL: subscription
+    AI_REVIEW_FALLBACK_PROVIDER: claude-cli
+    AI_REVIEW_FALLBACK_MODEL: subscription
+    AI_CONCEPTS_PRIMARY_PROVIDER: claude-cli
+    AI_CONCEPTS_PRIMARY_MODEL: subscription
+    AI_CONCEPTS_FALLBACK_PROVIDER: claude-cli
+    AI_CONCEPTS_FALLBACK_MODEL: subscription
   jobs:
     "01_download":
       label: "下载"
@@ -277,7 +283,8 @@ article:
       pool: io
       timeout: 120
       retry: 3
-      outputs: ["input/source.html", "input/metadata.json", "input/article_meta.json"]
+      # v2:正文内图片本地化 → assets/(下载步抓取,供原文 MD 内嵌)。
+      outputs: ["input/source.html", "input/metadata.json", "input/article_meta.json", "assets/*"]
 
     "02_parse_article":
       label: "正文解析"
@@ -285,7 +292,8 @@ article:
       run: steps.article.step_02_parse_article
       needs: ["01_download"]
       timeout: 60
-      outputs: ["intermediate/parsed.json"]
+      # v2:补全元信息(abstract/image/tags/author)+ 产出可读原文 Markdown(图片本地引用)。
+      outputs: ["intermediate/parsed.json", "output/original.md"]
 
     "03_article_sections":
       label: "章节切分"
@@ -301,17 +309,41 @@ article:
       run: steps.article.step_04_smart_article
       needs: ["03_article_sections"]
       tags: []
+      # v2:投递开关 smart_note=on 才生成笔记;否则跳过(短文走轻链路)。
+      rules:
+        - if_flag: smart_note
+          when: on
+        - when: skip
       ai:
         primary: {provider: $AI_SMART_PRIMARY_PROVIDER, model: $AI_SMART_PRIMARY_MODEL}
         fallback: {provider: $AI_SMART_FALLBACK_PROVIDER, model: $AI_SMART_FALLBACK_MODEL}
       outputs: ["output/versions/notes_smart_*"]
 
-    "05_review":
+    "05_concepts":
+      label: "概念 + 摘要"
+      extends: .ai-step
+      run: steps.article.step_05_concepts
+      # 必跑(无 rules):有智能笔记则从笔记抽概念,否则从原文/章节抽;一句话摘要同出。
+      # needs 04:保证笔记(若开)先就绪;04 被跳过时依赖视为满足,本步照常跑(读原文)。
+      needs: ["04_smart_article"]
+      timeout: 120
+      tags: []
+      ai:
+        primary: {provider: $AI_CONCEPTS_PRIMARY_PROVIDER, model: $AI_CONCEPTS_PRIMARY_MODEL}
+        fallback: {provider: $AI_CONCEPTS_FALLBACK_PROVIDER, model: $AI_CONCEPTS_FALLBACK_MODEL}
+      outputs: ["output/concepts.json"]
+
+    "06_review":
       label: "评审"
       extends: .review
       run: steps.article.step_05_review
-      needs: ["04_smart_article"]
+      needs: ["05_concepts"]
       tags: []
+      # v2:评审跟随智能笔记(smart_note=on 才评审)。
+      rules:
+        - if_flag: smart_note
+          when: on
+        - when: skip
       ai:
         primary: {provider: $AI_REVIEW_PRIMARY_PROVIDER, model: $AI_REVIEW_PRIMARY_MODEL}
         fallback: {provider: $AI_REVIEW_FALLBACK_PROVIDER, model: $AI_REVIEW_FALLBACK_MODEL}

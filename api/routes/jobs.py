@@ -105,6 +105,7 @@ async def create_job_core(
     domain: str = "general", style_tags: list[str] | None = None,
     collection_id: str | None = None, title: str | None = None,
     upload: tuple[str, bytes] | None = None,
+    smart_note: bool | None = None,
 ) -> Job:
     """建 job 的核心流程(create_job 路由 + upload + 订阅同步共用)。返回 Job。
     upload=(ext, data):上传路径,把源文件经 storage 写入 input/source{ext}(兼容本地/MinIO)。"""
@@ -112,6 +113,10 @@ async def create_job_core(
     ctype = content_type or _detect_content_type(url)
     pipeline = _pipeline_for(ctype)
     source = detect_source(url) if url else "upload"
+    # 投递开关:smart_note None=按类型默认(article 轻链路默认关,其余默认开)。
+    # 存进 flags 随 job 落库 → scheduler 读 redis flags 求值 rules 的 if_flag(条件跳步)。
+    resolved_smart = smart_note if smart_note is not None else (ctype != "article")
+    flags = {"smart_note": bool(resolved_smart)}
 
     # 有意义的 id: jobs_{类别}_{inner}(bili=BV);撞已存在(同 BV 重投/上传随机撞库)加随机后缀。
     job_id = derive_job_id(url, ctype, source)
@@ -120,6 +125,7 @@ async def create_job_core(
     job_doc = {
         "id": job_id, "url": url, "source": source, "content_type": ctype,
         "domain": domain, "style_tags": style_tags, "created_at": _now_iso(),
+        "flags": flags,
     }
     await storage.write_file(
         job_id, "job.json",
@@ -142,6 +148,7 @@ async def create_job_core(
     job = Job(
         id=job_id, content_type=ctype, pipeline=pipeline, url=url, title=title,
         domain=domain, source=source, style_tags=style_tags, collection_id=collection_id,
+        meta={"flags": flags},
     )
     await asyncio.to_thread(db.create_job, job)
     if collection_id:
@@ -168,6 +175,7 @@ async def create_job(
     job = await create_job_core(
         db, redis, storage, req.url, req.content_type,
         req.domain, req.style_tags, req.collection_id,
+        smart_note=req.smart_note,
     )
     return {"job_id": job.id, "content_type": job.content_type,
             "status": "pending", "created_at": job.created_at.isoformat()}
@@ -309,9 +317,18 @@ async def get_job(
         try:
             raw = await storage.read_file(job_id, "intermediate/parsed.json")
             if raw:
-                wc = json.loads(raw.decode("utf-8")).get("word_count")
-                if wc is not None:
-                    media["word_count"] = wc
+                p = json.loads(raw.decode("utf-8"))
+                if p.get("word_count") is not None:
+                    media["word_count"] = p["word_count"]
+                # v2:文章元信息进元信息 tab(作者/摘要/标签/封面图)
+                if p.get("authors"):
+                    media["authors"] = p["authors"]
+                if p.get("abstract"):
+                    media["abstract"] = p["abstract"]
+                if p.get("tags"):
+                    media["tags"] = p["tags"]
+                if p.get("image"):
+                    media["image"] = p["image"]
         except Exception:
             pass
     # 产物路径(元信息"产物路径"):NAS 宿主绝对路径。job 产物实际落在对象存储/本地盘,

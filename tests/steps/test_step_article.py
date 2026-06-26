@@ -10,8 +10,28 @@ import pytest
 from steps.article.step_02_parse_article import ParseArticleStep
 from steps.article.step_03_article_sections import ArticleSectionsStep
 from steps.article.step_04_smart_article import SmartArticleStep
+from steps.article.step_05_concepts import ArticleConceptsStep
 from steps.article.step_05_review import ArticleReviewStep
+from shared.models import LLMResponse
 from tests.steps.conftest import make_step_config
+
+
+class _FakeGW:
+    """注入式假 gateway:call_ai 走它,返回固定内容(测概念步不真调 AI)。"""
+    def __init__(self, content: str):
+        self._c = content
+
+    async def call(self, step_name, request):
+        return LLMResponse(content=self._c, model="m", provider="claude-cli")
+
+
+def _write_sections(job_dir, title="示例文章"):
+    (job_dir / "intermediate" / "sections.json").write_text(json.dumps({
+        "title": title, "authors": [], "abstract": "",
+        "sections": [{"level": 1, "title": "正文", "page": 1,
+                      "text": "注意力机制是一种权重分配方法。", "children": []}],
+        "total_sections": 1,
+    }))
 
 
 SAMPLE_HTML = """<!DOCTYPE html>
@@ -259,3 +279,94 @@ class TestArticleReviewStep:
         review = json.loads((job_dir / "output" / "review.json").read_text())
         assert result["parse_failed"] is False
         assert review["overall"] == 4.6      # (5+5+5+4+4)/5 = 4.6,非 3.0
+
+
+class TestConceptsStep:
+    def test_validate_inputs(self, tmp_path):
+        job_dir = _mk_job(tmp_path)
+        config = make_step_config(tmp_path, step_name="05_concepts", pool="ai")
+        step = ArticleConceptsStep("05_concepts", job_dir, config)
+        assert step.validate_inputs() == ["intermediate/sections.json"]
+
+    def test_execute_from_original(self, tmp_path):
+        # 无智能笔记 → 概念抽自原文;产出 concepts.json(key_terms + summary)。
+        job_dir = _mk_job(tmp_path)
+        _write_sections(job_dir)
+        config = make_step_config(tmp_path, step_name="05_concepts", pool="ai")
+        step = ArticleConceptsStep("05_concepts", job_dir, config)
+        step._gateway = _FakeGW(json.dumps(
+            {"summary": "讲注意力", "key_terms": [{"term": "注意力机制", "definition": "权重分配"}]}))
+        result = step.execute()
+        assert result["source"] == "original"
+        assert result["concepts"] == 1
+        out = json.loads((job_dir / "output" / "concepts.json").read_text())
+        assert out["key_terms"][0]["term"] == "注意力机制"
+        assert out["summary"] == "讲注意力"
+        assert out["source"] == "original"
+
+    def test_source_prefers_smart_note(self, tmp_path):
+        # 有智能笔记 → 概念抽自笔记(source=smart_note)。
+        job_dir = _mk_job(tmp_path)
+        _write_sections(job_dir)
+        (job_dir / "output" / "versions").mkdir(parents=True)
+        (job_dir / "output" / "versions" / "notes_smart_claude-cli_x_20260101-000000.md").write_text(
+            "# 笔记\n注意力机制是核心。")
+        config = make_step_config(tmp_path, step_name="05_concepts", pool="ai")
+        step = ArticleConceptsStep("05_concepts", job_dir, config)
+        step._gateway = _FakeGW(json.dumps({"summary": "s", "key_terms": []}))
+        result = step.execute()
+        assert result["source"] == "smart_note"
+
+    def test_dry_run_smoke_still_writes(self, tmp_path, monkeypatch):
+        # DRY_RUN 返回非 JSON → 回退空概念,但必跑步仍产出 concepts.json(不报错)。
+        monkeypatch.setenv("DRY_RUN", "1")
+        job_dir = _mk_job(tmp_path)
+        _write_sections(job_dir)
+        config = make_step_config(tmp_path, step_name="05_concepts", pool="ai")
+        step = ArticleConceptsStep("05_concepts", job_dir, config)
+        step.execute()
+        assert (job_dir / "output" / "concepts.json").exists()
+
+
+class TestArticleImageAndAuthor:
+    def test_content_image_filter_keeps_large_drops_chrome(self):
+        # 正文大图(w/680)保留;缩略图(w/108)、头像、data: 丢弃;同图去重。
+        html = (
+            '<img src="https://wpimg/a.jpeg?imageView2/2/w/680" class="mx-auto">'
+            '<img src="https://wpimg/b.jpg?imageView2/1/w/108">'
+            '<img src="https://dn-wscn-avatar/u.png?imageView2/1/w/800">'
+            '<img src="data:image/png;base64,xxx">'
+            '<img src="https://wpimg/a.jpeg?imageView2/2/w/680">'  # 同图再现
+        )
+        urls = ParseArticleStep._content_image_urls(html)
+        assert len(urls) == 1
+        assert "w/680" in urls[0]
+
+    def test_content_image_keeps_unsized(self):
+        # 无尺寸提示的非头像图保留(无法判定大小,默认当正文)。
+        html = '<img src="https://site/photo.jpg"><img src="https://site/icon.svg">'
+        urls = ParseArticleStep._content_image_urls(html)
+        assert urls == ["https://site/photo.jpg"]
+
+    def test_content_image_drops_anchor_wrapped(self):
+        # <a> 链接包裹的大图 = 广告/促销 banner → 丢;裸大图(图表)→ 留。
+        html = (
+            '<a href="/promo"><img src="https://wpimg/ad.png?imageView2/2/w/680"></a>'
+            '<img src="https://wpimg/chart.jpeg?imageView2/2/w/680" class="mx-auto">'
+        )
+        urls = ParseArticleStep._content_image_urls(html)
+        assert urls == ["https://wpimg/chart.jpeg?imageView2/2/w/680"]
+
+    def test_author_from_page_json(self, tmp_path):
+        # SPA 内嵌 "author":{...,"display_name":"李丹"} 兜底抽作者。
+        job_dir = _mk_job(tmp_path)
+        config = make_step_config(tmp_path, step_name="02_parse_article", pool="cpu")
+        step = ParseArticleStep("02_parse_article", job_dir, config)
+        html = 'x "author":{"article_count":5513,"display_name":"李丹","id":75} y'
+        assert step._authors_from_page_json(html) == ["李丹"]
+
+    def test_author_page_json_absent(self, tmp_path):
+        job_dir = _mk_job(tmp_path)
+        config = make_step_config(tmp_path, step_name="02_parse_article", pool="cpu")
+        step = ParseArticleStep("02_parse_article", job_dir, config)
+        assert step._authors_from_page_json("<html>no author</html>") == []

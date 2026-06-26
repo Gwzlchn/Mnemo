@@ -100,6 +100,10 @@ export interface JobMedia {
   has_subtitle?: boolean
   has_danmaku?: boolean
   word_count?: number           // 文章:字数
+  authors?: string[]            // 文章:作者(v2)
+  abstract?: string             // 文章:摘要(v2)
+  tags?: string[]               // 文章:标签(v2)
+  image?: string                // 文章:封面图(v2;站点占位图已剔除)
   video_codec?: string          // 视频编码,如 "h264" / "av1"
   audio_codec?: string          // 音频编码,如 "aac" / "opus"
   fps?: number                  // 帧率

@@ -15,6 +15,8 @@ const globalStore = useGlobalStore()
 
 const url = ref('')
 const domain = ref('general')
+// AI 智能笔记开关:auto=按内容类型默认(文章关/其余开)、on=强制生成、off=强制不生成。
+const smartNote = ref<'auto' | 'on' | 'off'>('auto')
 const selectedTags = ref<string[]>([])
 const file = ref<File | null>(null)
 const submitting = ref(false)
@@ -61,6 +63,8 @@ async function submit() {
         url: url.value.trim(),
         domain: domain.value,
         style_tags: selectedTags.value,
+        // auto 时省略字段(后端按内容类型定默认);on/off 显式传布尔。
+        ...(smartNote.value === 'auto' ? {} : { smart_note: smartNote.value === 'on' }),
       })
       jobId = res.job_id
     }
@@ -91,6 +95,13 @@ async function submit() {
       <div class="flex flex-wrap items-center gap-2">
         <select v-model="domain" class="px-2 py-1.5 border border-gray-300 rounded-lg text-sm bg-white">
           <option v-for="d in domains" :key="d" :value="d">{{ d }}</option>
+        </select>
+
+        <!-- AI 智能笔记开关:文章默认走轻链路(关),可强制开/关 -->
+        <select v-model="smartNote" class="px-2 py-1.5 border border-gray-300 rounded-lg text-sm bg-white" title="是否生成 AI 智能笔记(概念提取与摘要始终生成)">
+          <option value="auto">智能笔记:自动</option>
+          <option value="on">智能笔记:开</option>
+          <option value="off">智能笔记:关</option>
         </select>
 
         <button

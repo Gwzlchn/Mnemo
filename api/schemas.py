@@ -11,6 +11,9 @@ class JobCreateRequest(BaseModel):
     domain: str = "general"
     style_tags: list[str] = Field(default_factory=list)
     collection_id: str | None = None
+    # 投递开关:是否生成 AI 智能笔记(及随附评审)。None=按内容类型默认
+    # (article 默认 False 走轻链路;video/paper/audio 默认 True)。概念提取+摘要始终跑。
+    smart_note: bool | None = None
 
 
 class JobResponse(BaseModel):

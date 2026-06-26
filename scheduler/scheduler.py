@@ -56,6 +56,9 @@ _NOTE_FILES = {
 }
 # 评审步：完成后读 review.json，把 key_terms(①讲清楚的概念+候选定义)采集为候选术语。
 _REVIEW_STEPS = {"12_review", "06_review", "05_review"}  # video / paper / (article|audio)
+# article v2:概念独立步(必跑),是 glossary 的主采集源(评审可选时仍能进图谱);
+# 与 review 双触发无害——add_glossary_suggestion 按 job_id 去重 occurrence(幂等)。
+_CONCEPT_STEPS = {"05_concepts"}
 
 
 def _markdown_to_text(md: str) -> str:
@@ -351,6 +354,8 @@ class Scheduler:
             "style_tags": job.style_tags,
             "url": job.url or "",
             "source": job.source or "",
+            # 投递开关(如 smart_note)→ 供 rules 的 if_flag 求值(条件跳步,见 _eval_rules)。
+            "flags": (job.meta or {}).get("flags", {}),
         })
 
         for name, cfg in pipeline_steps.items():
@@ -435,7 +440,7 @@ class Scheduler:
                 await self._sync_published_at(job_id)
             elif step in _NOTE_STEPS:
                 await self._index_job_notes(job_id, _NOTE_STEPS[step])
-            elif step in _REVIEW_STEPS:
+            elif step in _REVIEW_STEPS or step in _CONCEPT_STEPS:
                 await self._collect_glossary(job_id)
         except Exception:
             logger.warning("index_step_done_failed", job_id=job_id, step=step)
@@ -469,8 +474,12 @@ class Scheduler:
 
     async def _collect_glossary(self, job_id: str) -> None:
         """读评审产物 review.json，把 key_terms(①这篇讲清楚的概念 + 候选定义)采集为候选术语。
-        主喂养源是「讲清楚了什么」(§1.8)；missing_concepts(知识缺口)只留评审面板，不喂术语库。"""
-        data = await self.storage.read_file(job_id, "output/review.json")
+        主喂养源是「讲清楚了什么」(§1.8)；missing_concepts(知识缺口)只留评审面板，不喂术语库。
+        采集源:优先 output/concepts.json(article v2 的独立概念步,必跑),回退 output/review.json
+        (video/paper/audio 仍由评审步出 key_terms)。"""
+        data = await self.storage.read_file(job_id, "output/concepts.json")
+        if not data:
+            data = await self.storage.read_file(job_id, "output/review.json")
         if not data:
             return
         try:
@@ -768,9 +777,20 @@ class Scheduler:
 
     async def _eval_rules(self, job_id: str, rules: list) -> bool:
         """声明式 rules 求值器：自上而下首条命中生效，命中 when=skip 则跳过，
-        当前支持 exists(相对 job 根的 glob)，无命中默认运行。
-        存在性查 storage(产物在 MinIO,不在调度器本地盘)。"""
+        当前支持 exists(相对 job 根的 glob)与 if_flag(投递开关),无命中默认运行。
+        存在性查 storage(产物在 MinIO,不在调度器本地盘);if_flag 查 redis job info。"""
         files = await self._list_job_files(job_id)
+        _flags_cache: dict | None = None
+
+        async def _flags() -> dict:
+            nonlocal _flags_cache
+            if _flags_cache is None:
+                info = await self.redis.get_job_info(job_id)
+                try:
+                    _flags_cache = json.loads(info.get("flags") or "{}")
+                except (json.JSONDecodeError, ValueError, AttributeError):
+                    _flags_cache = {}
+            return _flags_cache
 
         def _when(rule: dict) -> str:
             when = rule.get("when", "on")
@@ -788,7 +808,12 @@ class Scheduler:
                 hit = any(fnmatch.fnmatch(f, glob) for f in files)
                 if not hit:
                     continue
-            # exists 命中、或无 exists 的兜底规则：本条生效。
+            # if_flag:投递开关为真才命中(假则本条不生效,落到后续兜底规则)。
+            flag = rule.get("if_flag")
+            if flag is not None:
+                if not (await _flags()).get(flag):
+                    continue
+            # exists/if_flag 命中、或无条件的兜底规则：本条生效。
             return _when(rule) != "skip"
         return True
 
@@ -856,13 +881,20 @@ class Scheduler:
             return
         try:
             raw = await self.storage.read_file(job_id, "input/metadata.json")
-            if not raw:
+            md = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
+            # 文章的 title/date 在 input/article_meta.json(metadata.json 常无这两项)→ 合并兜底:
+            # 以 metadata.json 的非空值优先,article_meta 填补 title/date。
+            am_raw = await self.storage.read_file(job_id, "input/article_meta.json")
+            if am_raw:
+                am = json.loads(am_raw.decode("utf-8", errors="replace"))
+                md = {**am, **{k: v for k, v in md.items() if v}}
+            if not md:
                 return
-            md = json.loads(raw.decode("utf-8", errors="replace"))
             fields: dict = {}
-            if md.get("published_at"):
-                fields["published_at"] = md["published_at"]
-            # 标题:01_download 从源(youtube info.json 等)写入 metadata 时回填——仅当 DB 标题为空,
+            published = md.get("published_at") or md.get("date")
+            if published:
+                fields["published_at"] = published
+            # 标题:01_download 从源(youtube info.json / article_meta)写入时回填——仅当 DB 标题为空,
             # 不覆盖订阅/用户已填的标题。覆盖所有创建路径(手动 URL 投递此前无标题)。
             title = (md.get("title") or "").strip()
             if title:

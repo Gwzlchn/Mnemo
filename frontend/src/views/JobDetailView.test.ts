@@ -237,14 +237,30 @@ describe('JobDetailView 笔记 tab', () => {
     expect(w.text()).toContain('笔记尚未生成')
   })
 
-  it('智能版/机械版分段开关存在', async () => {
+  it('有智能笔记时显示 智能版/机械版分段开关', async () => {
     fetchDetail.mockResolvedValue(makeDetail({ status: 'done' }))
+    // 有 note-versions → hasSmartNote=true → seg 显示
+    api.get.mockImplementation((url: string) =>
+      url.includes('note-versions')
+        ? Promise.resolve({ versions: [{ provider: 'p', model: 'm', version: '20260101-000000', file: 'f.md', review_file: null, overall: 4 }] })
+        : Promise.resolve([]))
     const w = mountView()
     await flushPromises()
     const seg = w.find('.seg')
     expect(seg.exists()).toBe(true)
     expect(seg.text()).toContain('智能版')
     expect(seg.text()).toContain('机械版')
+  })
+
+  it('文章无智能笔记时隐藏智能版,机械版显示为「原文」', async () => {
+    fetchDetail.mockResolvedValue(makeDetail({ status: 'done', content_type: 'article' }))
+    api.get.mockResolvedValue([])         // note-versions 空 → 无智能笔记
+    api.getText.mockResolvedValue('# 原文\n正文')
+    const w = mountView()
+    await flushPromises()
+    expect(w.find('.seg').exists()).toBe(false)   // 智能版/机械版分段隐藏
+    expect(w.text()).toContain('原文')
+    expect(w.text()).not.toContain('智能版')
   })
 })
 

@@ -56,7 +56,7 @@ const GROUP_BADGE: Record<string, { text: string; icon: Icon; cls: string }> = {
 // 注意这是「内容检测来源」枚举,与上面订阅的 source_type 是两套取值。
 export const JOB_SOURCE_LABELS: Record<string, string> = {
   bilibili: 'Bilibili', youtube: 'YouTube', arxiv: 'arXiv',
-  http_article: '公众号', podcast: '播客', upload: '本地', other: '其它',
+  http_article: '网页文章', podcast: '播客', upload: '本地', other: '其它',
 }
 export function jobSourceLabel(s: string | null | undefined): string {
   return s ? (JOB_SOURCE_LABELS[s] || s) : '—'

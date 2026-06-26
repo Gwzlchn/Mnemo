@@ -44,7 +44,7 @@ const SOURCE_OPTS: { key: string; label: string; match: string[] }[] = [
   { key: 'bilibili', label: 'Bilibili', match: ['bilibili'] },
   { key: 'youtube', label: 'YouTube', match: ['youtube'] },
   { key: 'arxiv', label: 'arXiv', match: ['arxiv'] },
-  { key: 'http_article', label: '公众号', match: ['http_article'] },
+  { key: 'http_article', label: '网页文章', match: ['http_article'] },
   { key: 'podcast', label: '播客', match: ['podcast'] },
   { key: 'upload', label: '本地', match: ['upload'] },
 ]

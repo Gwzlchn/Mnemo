@@ -521,6 +521,22 @@ class TestConditions:
         assert await s._eval_rules("j_remote", [{"exists": "input/*.ass", "when": True}]) is True
 
     @pytest.mark.asyncio
+    async def test_rules_if_flag(self, redis, db, config):
+        """if_flag:投递开关求值——flag 真→本条生效(run);假→落兜底规则(skip)。
+        article v2 的 smart_note 用此机制让智能笔记/评审可选。"""
+        from unittest.mock import AsyncMock
+        storage = AsyncMock()
+        storage.list_files.return_value = []
+        s = _stub_workers_present(Scheduler(redis, db, config, storage=storage))
+        rules = [{"if_flag": "smart_note", "when": "on"}, {"when": "skip"}]
+        await redis.init_job("j_on", "article", {"flags": {"smart_note": True}})
+        assert await s._eval_rules("j_on", rules) is True
+        await redis.init_job("j_off", "article", {"flags": {"smart_note": False}})
+        assert await s._eval_rules("j_off", rules) is False
+        await redis.init_job("j_none", "article", {})   # 无 flags → 视为假 → skip
+        assert await s._eval_rules("j_none", rules) is False
+
+    @pytest.mark.asyncio
     async def test_condition_storage_empty_means_absent(self, redis, db, config):
         from unittest.mock import AsyncMock
         storage = AsyncMock()

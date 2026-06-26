@@ -15,13 +15,26 @@ from scheduler.scheduler import Scheduler
 
 
 class _StorageStub:
-    """read_file 返回固定 review.json 字节流。"""
+    """read_file:concepts.json 缺(None)→ 回退 review.json(video/paper/audio 路径)。"""
 
     def __init__(self, payload: dict):
         self._data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
-    async def read_file(self, job_id: str, rel: str) -> bytes:
+    async def read_file(self, job_id: str, rel: str) -> bytes | None:
+        if rel == "output/concepts.json":
+            return None
         assert rel == "output/review.json"
+        return self._data
+
+
+class _ConceptsStorageStub:
+    """article v2:concepts.json 存在 → 优先采集自它(不读 review)。"""
+
+    def __init__(self, payload: dict):
+        self._data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+    async def read_file(self, job_id: str, rel: str) -> bytes | None:
+        assert rel == "output/concepts.json"
         return self._data
 
 
@@ -110,3 +123,19 @@ async def test_no_key_terms_collects_nothing():
     await engine._collect_glossary("j_g_001")
 
     assert db.calls == []
+
+
+@pytest.mark.asyncio
+async def test_prefers_concepts_json_when_present():
+    # article v2:concepts.json 存在 → 采集源是它(不读 review)。_ConceptsStorageStub
+    # 的 read_file 断言只被以 concepts.json 调用,确保不回退 review。
+    concepts = {"summary": "一句话", "key_terms": [{"term": "注意力机制", "definition": "权重分配"}]}
+    db = _DBStub(domain="dl", content_type="article")
+    engine = _make_engine(_ConceptsStorageStub(concepts), db)
+
+    await engine._collect_glossary("j_c_001")
+
+    terms = {c["term"]: c for c in db.calls}
+    assert "注意力机制" in terms
+    assert terms["注意力机制"]["definition"] == "权重分配"
+    assert terms["注意力机制"]["domain"] == "dl"

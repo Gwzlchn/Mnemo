@@ -36,6 +36,8 @@ JSON 创建不接受文件；文件上传走独立的 `POST /api/jobs/upload`（
 
 `content_type` 可显式指定，也可由 API 根据 URL 自动推断（arxiv→paper、网页→article、播客→audio，其余按 video）。
 
+可选字段 `smart_note`（bool，默认 `null`）：是否生成 AI 智能笔记及随附评审。`null`＝按内容类型默认（`article` 默认 `false` 走轻链路；video/paper/audio 默认 `true`）。无论开关如何，**概念提取 + 一句话摘要始终生成**（article v2 的 `05_concepts` 步，进概念库/图谱）。`smart_note=false` 时跳过 `04_smart_article`/`06_review`。该开关存入 `job.meta.flags`，由调度器在 `rules.if_flag` 求值时决定相应步骤是否运行。
+
 #### POST /api/jobs/upload — 文件上传创建
 
 `multipart/form-data`：`file`（必填）+ `domain`（默认 `general`）+ `style_tags`（JSON 字符串，默认 `[]`）。
