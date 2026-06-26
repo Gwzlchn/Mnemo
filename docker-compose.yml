@@ -38,7 +38,7 @@ services:
     container_name: flori-mcp-http
     image: ghcr.io/${IMAGE_OWNER:-gwzlchn}/flori:${IMAGE_TAG:-latest}
     restart: unless-stopped
-    profiles: ["mcp"]
+    # 无 profile:随栈常驻自动起(不再需要 --profile mcp);MCP 是默认能力。
     command: python -m api.mcp_server
     environment:
       <<: *common-env
