@@ -85,10 +85,11 @@ services:
       - "${API_BIND_IP:-127.0.0.1}:${API_PORT:-8000}:8000"
     volumes:
       - ${FLORI_DATA_DIR:-flori-data}:/data
-      # local_dir 订阅来源约定监听目录:把文件放进 ${FLORI_INBOX_DIR}(默认宿主 ./inbox)
+      # local_dir 订阅来源约定监听目录:把文件放进 ${FLORI_INBOX_DIR}(默认 .local/inbox,gitignored 本地区;
+      # 生产经 .env 设到数据盘如 /volume2/DATA/flori/inbox —— 运行时数据永不放仓库树)
       # 即被 source_type=local_dir、source_id=/data/inbox 的订阅枚举入库。
       # api 跑 enumerate_source→scan_dir(枚举,只读即可);与 worker-cpu 挂同一容器内路径。
-      - ${FLORI_INBOX_DIR:-./inbox}:/data/inbox:ro
+      - ${FLORI_INBOX_DIR:-.local/inbox}:/data/inbox:ro
     environment:
       <<: *common-env
       WORK_DIR: ${WORK_DIR:-/tmp/flori-work}
@@ -176,7 +177,7 @@ services:
       - ${HOST_WORK_DIR:-flori-work}:/tmp/flori-work
       # local_dir 订阅:worker 跑 step_01_download._copy_local_file 复制源文件,
       # 须与 api 挂同一容器内路径 /data/inbox(file:// url 在 worker 容器内按此解析)。只读即可。
-      - ${FLORI_INBOX_DIR:-./inbox}:/data/inbox:ro
+      - ${FLORI_INBOX_DIR:-.local/inbox}:/data/inbox:ro
     environment:
       <<: *common-env
       STEP_RUNTIME: ${STEP_RUNTIME:-subprocess}

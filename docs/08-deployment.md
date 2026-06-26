@@ -156,10 +156,10 @@ docker compose up -d
 
 ### 本地目录订阅（`source_type=local_dir`）的监听目录
 
-`local_dir` 订阅把宿主某目录当作来源：放进去的文件被枚举并经 `file://` 复制进 pipeline，无网络下载。compose 已把宿主 `${FLORI_INBOX_DIR}`（默认仓库根 `./inbox`）挂到 **api 与 worker-cpu 同一容器内路径 `/data/inbox`**（两端路径必须一致：api 跑枚举/扫描，worker 复制源文件，`file://` url 在 worker 容器内按该路径解析）。
+`local_dir` 订阅把宿主某目录当作来源：放进去的文件被枚举并经 `file://` 复制进 pipeline，无网络下载。compose 已把宿主 `${FLORI_INBOX_DIR}`（默认 `.local/inbox`，gitignored 本地区，避免运行时数据落仓库树）挂到 **api 与 worker-cpu 同一容器内路径 `/data/inbox`**（两端路径必须一致：api 跑枚举/扫描，worker 复制源文件，`file://` url 在 worker 容器内按该路径解析）。
 
 - 用法：把文件丢进宿主 `${FLORI_INBOX_DIR}`，建订阅时填 `source_type=local_dir`、`source_id=/data/inbox`（**容器内**路径，不是宿主路径）。
-- 换目录：在 `.env` 设 `FLORI_INBOX_DIR=/srv/my-inbox`（宿主绝对路径），容器内仍是 `/data/inbox`。
+- 换目录：在 `.env` 设 `FLORI_INBOX_DIR=/srv/my-inbox`（宿主绝对路径），容器内仍是 `/data/inbox`。生产建议设到数据盘、与 `FLORI_DATA_DIR` 同源（如 `/volume2/DATA/flori/inbox`），运行时数据统一不进仓库树。
 - 安全：`file://` 分支绕过 SSRF 防护（本地文件非网络），`source_id` 是受信任的运维输入；个人工具 Basic Auth 场景风险可接受。挂载为只读（`:ro`）。
 
 ## 3. 加公网：边缘机 Caddy + 反向 SSH 隧道
