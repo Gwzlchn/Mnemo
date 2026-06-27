@@ -1621,17 +1621,23 @@ exclusive_groups:
     scene_acquires_all_cpu: true
 ```
 
-### 4.2.1 sources.yaml — 来源网络路由（可选）
+### 4.2.1 sources.yaml + net-zone 网络区域路由
 
-把"哪些步骤按来源分网络出口 / 哪些来源需走出站代理"从 `scheduler` 代码外置到配置。缺此文件时 scheduler 回落内置默认（`_NET_STEPS` / `_PROXY_SOURCES`），向后兼容。
+下载步（`net_steps`：`01_download` / `07_danmaku`）按**网络可达区域**路由,支持分布式 worker（NAS 国内 / 香港 ECS 等）。配置外置到 `configs/sources.yaml`,缺此文件回落内置默认（`_NET_STEPS`）。
 
 ```yaml
 net_routing:
-  net_steps: ["01_download", "07_danmaku"]   # 受来源网络路由影响的步骤
-  proxy_sources: ["youtube"]                  # 需走出站代理的来源(其余直连)
+  net_steps: ["01_download", "07_danmaku"]   # 受网络区域路由影响的步骤
 ```
 
-`enqueue_step` 对 `net_steps` 命中的步骤，按来源站点判 `net-proxy` / `net-direct`：`net-proxy` 同时进 `require_tags`（硬门控，只有声明该 tag 的 worker 能认领），`net-direct` 仅进软 `tags`。新增需代理的境外源改此 YAML 即可，不必动 Python。经 `AppConfig.net_routing` 注入；`reload_config` / `resubmit` 后即时生效。
+**区域 tag（只有两个）**：`net-cn`（大陆视角,B站等 geo 限大陆站可达）/ `net-global`（可达国际站）。**旧 `net-proxy` / `net-direct` / `bili` 路由 tag 已移除。**
+
+- **worker 自动探测**（`worker/worker.py:_probe_net_zones`）：启动试连探针 URL（`NET_PROBE_CN` 默认 `api.bilibili.com`、`NET_PROBE_GLOBAL` 默认 `github.com`,用自己网络含自带代理）→ 通则自报对应 zone tag。`NET_ZONES=cn,global` 可强制覆盖（如香港 worker 设 `NET_ZONES=global`）。探针 URL 是**启动配置**（compose `common-env` 注入,**不烤镜像**）。worker 详情页展示「可达区域」。
+- **URL→区域分类**（`shared/net_zone.py:required_zone`,**任务分发时判**）：平台源 `bilibili`→net-cn、`youtube`→net-global（权威）；其余按 host 查 **CN 域名表** + `.cn` TLD → net-cn,否则 net-global。CN 表 = `felixonmars/dnsmasq-china-list`,**构建时拉取烤进镜像** `/app/data/cn_domains.txt`（`base.Dockerfile`,`USE_USTC_MIRROR=1`→jsdelivr/ghproxy 国内源优先；约 11 万域名；失败回退仅 `.cn` TLD）。
+- **路由**：`enqueue_step` 对 `net_steps` 步设 `require_tags += [zone]`（硬门控,只有自报覆盖该区域的 worker 能认领）；境外 URL→net-global→香港/带代理 worker,都没有则等待（不误派到到不了的 worker）。代理这件事完全是 worker 本地的事,scheduler 不碰代理。
+- **B站登录态**：`bili` 路由 tag 已删；SESSDATA 经 **per-job 凭证文件**传给 worker（`create_job_core` 写 + 下载步 `step_01` 自读）,与区域路由正交。
+
+经 `AppConfig.net_routing` 注入；`reload_config` / `resubmit` 后即时生效。
 
 ### 4.3 scenes.json — 场景检测输出
 
