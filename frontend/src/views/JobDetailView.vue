@@ -777,12 +777,14 @@ watch(job, (j) => {
             <tr v-if="job.media?.fps"><td>帧率</td><td>{{ job.media.fps }} fps</td></tr>
             <tr v-if="job.media?.bitrate_kbps ?? job.media?.video_bitrate_kbps"><td>码率</td><td>{{ fmtBitrate(job.media.bitrate_kbps ?? job.media.video_bitrate_kbps) }}</td></tr>
             <tr v-if="job.media?.word_count"><td>字数</td><td>{{ job.media.word_count.toLocaleString() }} 字</td></tr>
+            <tr v-if="job.media?.pages"><td>页数</td><td>{{ job.media.pages }} 页</td></tr>
+            <tr v-if="job.media?.lang"><td>语言</td><td>{{ job.media.lang === 'zh' ? '中文' : (job.media.lang === 'non-zh' ? '非中文(英文等,自动翻译)' : job.media.lang) }}</td></tr>
             <tr v-if="job.media?.tags?.length"><td>标签</td><td>{{ job.media.tags.join('、') }}</td></tr>
             <tr v-if="job.media?.abstract"><td>摘要</td><td style="line-height:1.6">{{ job.media.abstract }}</td></tr>
             <tr v-if="job.media && (job.media.file_size_bytes != null || job.media.file_size_mb != null)">
               <td>原始文件大小</td><td>{{ fmtSize(job.media) }}</td>
             </tr>
-            <tr v-if="job.media && (job.media.has_subtitle !== undefined || job.media.has_danmaku !== undefined)">
+            <tr v-if="['video','audio'].includes(job.content_type) && job.media && (job.media.has_subtitle !== undefined || job.media.has_danmaku !== undefined)">
               <td>字幕/弹幕</td>
               <td>
                 <span class="badge" :class="job.media.has_subtitle ? 'b-ok' : 'b-mut'">{{ job.media.has_subtitle ? '有字幕' : '无字幕' }}</span>

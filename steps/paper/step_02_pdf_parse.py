@@ -100,25 +100,20 @@ class PdfParseStep(StepBase):
         return []
 
     def _extract_abstract(self, doc) -> str:
-        if len(doc) == 0:
-            return ""
-        text = doc[0].get_text()
-        # 终止于「空行 / introduction / 文末(\Z)」:补 \Z 兜底,避免首页无空行又无
-        # introduction 时整段匹配失败而直接返回空。
-        m = re.search(
-            r"(?i)abstract[:\s]*\n?(.*?)(?:\n\s*\n|introduction|\Z)",
-            text, re.DOTALL,
-        )
-        if not m:
-            return ""
-        abstract = m.group(1).strip()
-        # 长度上限:无显式终止符时可能吞进正文,截断到合理范围。
+        # 扫前几页找 Abstract:会议 PDF(USENIX/OSDI 等)首页常是封面/版权页,真正摘要在第 2-3 页;
+        # arxiv 等无封面则首页即命中。终止于「空行 / introduction / 文末(\Z)」。
         MAX_ABSTRACT = 3000
-        if len(abstract) > MAX_ABSTRACT:
-            abstract = abstract[:MAX_ABSTRACT].rstrip()
-        if not abstract:
-            self.log.warning("abstract_empty", page0_chars=len(text))
-        return abstract
+        for i in range(min(3, len(doc))):
+            text = doc[i].get_text()
+            m = re.search(
+                r"(?i)abstract[:\s]*\n?(.*?)(?:\n\s*\n|introduction|\Z)",
+                text, re.DOTALL,
+            )
+            abstract = (m.group(1).strip() if m else "")
+            if abstract:
+                return abstract[:MAX_ABSTRACT].rstrip() if len(abstract) > MAX_ABSTRACT else abstract
+        self.log.warning("abstract_empty", pages_scanned=min(3, len(doc)))
+        return ""
 
     def _extract_sections(self, page, page_num: int) -> list[dict]:
         blocks = page.get_text("dict")["blocks"]

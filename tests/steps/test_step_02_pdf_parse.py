@@ -149,3 +149,22 @@ class TestExtractAbstract:
         step = _mk_step(tmp_path)
         doc = _FakeDoc({"title": "t"}, page_text="Abstract\n" + "w" * 5000)
         assert len(step._extract_abstract(doc)) <= 3000
+
+    def test_scans_later_pages_when_cover_page(self, tmp_path):
+        # 会议 PDF(USENIX/OSDI):首页是封面/版权页(无 Abstract),真正摘要在第 2 页 → 应扫到。
+        step = _mk_step(tmp_path)
+
+        class _MultiDoc:
+            metadata = {"title": "t"}
+            _pages = [
+                _FakePage({"blocks": []}, "This paper is included in the Proceedings of OSDI."),
+                _FakePage({"blocks": []}, "Abstract\nThe real abstract on page two.\n\nIntroduction"),
+            ]
+
+            def __len__(self):
+                return len(self._pages)
+
+            def __getitem__(self, i):
+                return self._pages[i]
+
+        assert step._extract_abstract(_MultiDoc()) == "The real abstract on page two."
