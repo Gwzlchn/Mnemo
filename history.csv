@@ -23,3 +23,7 @@ date,module,killed,survived
 2026-06-26,shared.db,24,15
 2026-06-26,scheduler,61,19
 2026-06-26,worker,138,184
+2026-06-27,shared.ai_gateway,200,32
+2026-06-27,shared.db,24,15
+2026-06-27,scheduler,61,19
+2026-06-27,worker,127,215
