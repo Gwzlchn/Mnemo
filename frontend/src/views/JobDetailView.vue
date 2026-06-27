@@ -457,6 +457,21 @@ async function rerunFromStep() {
     jobStatus.value = 'processing'
   } catch (e: any) { showToast(e?.message || '重跑失败', 'error') }
 }
+// P2c:重建为【新版本快照】(fork 当前 job:只重跑定义已变的步骤及下游,旧版本保留对比)。
+const rebuilding = ref(false)
+async function rebuildJob() {
+  if (rebuilding.value) return
+  if (!confirm('重建为新版本?将基于当前 pipeline/prompt 建一个新版本(只重跑变化的步骤及下游,旧版本保留可对比)。')) return
+  rebuilding.value = true
+  try {
+    const { job_id } = await jobStore.rebuildJob(jobId.value)
+    showToast('已重建为新版本', 'success')
+    router.push(`/content/${encodeURIComponent(job_id)}`)
+  } catch (e: any) {
+    showToast(e?.message || '重建失败', 'error')
+    rebuilding.value = false
+  }
+}
 
 // ════════════════════ 删除 ════════════════════
 const showDelete = ref(false)
@@ -774,6 +789,10 @@ watch(job, (j) => {
         <div v-if="jobStatus === 'done' || jobStatus === 'failed'" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
           <button v-if="jobStatus === 'failed'" class="btn pri" @click="retryJob"><RotateCcw :size="14" />重试</button>
           <button v-if="selectedStep" class="btn" @click="rerunFromStep"><Play :size="14" />从「{{ selectedStepLabel }}」重跑</button>
+          <button class="btn" :disabled="rebuilding" @click="rebuildJob"
+            title="基于当前 pipeline/prompt 重建为新版本(只重跑变化步骤及下游,旧版本保留对比)">
+            <GitBranch :size="14" />{{ rebuilding ? '重建中…' : '重建新版本' }}
+          </button>
         </div>
         <StepWorkbench :job-id="jobId" :steps="steps" :selected-step="selectedStep" />
       </div>

@@ -448,3 +448,48 @@ class TestProviderVersions:
         doc = _j.loads((await storage.read_file(jid, "job.json")).decode())
         assert doc["ai_overrides"]["11_smart"] == "claude-cli"
         assert doc["ai_overrides"]["12_review"] == "claude-cli"
+
+
+class TestRebuildP2c:
+    """P2c:/rebuild 建新快照(fork:clone 产物+.done、父降级、新版 current);/rebuild-stale 只挑过期。"""
+
+    @pytest.mark.asyncio
+    async def test_rebuild_creates_snapshot(self, client, app):
+        db, storage, config = app.state.db, app.state.storage, app.state.config
+        first = config.pipelines["paper"]["steps"][0]["name"]
+        db.create_job(Job(id="jobs_paper_p1", content_type="paper", pipeline="paper",
+                          url="https://arxiv.org/abs/1810.04805", source="arxiv",
+                          lineage_key="jobs_paper_p1"))
+        await storage.write_file("jobs_paper_p1", "job.json", b'{"id":"jobs_paper_p1"}')
+        await storage.write_file("jobs_paper_p1", "output/note.md", b"hello")
+        await storage.write_file("jobs_paper_p1", f".{first}.done", b'{"def_digest":"sha256:old"}')
+        resp = await client.post("/api/jobs/jobs_paper_p1/rebuild")
+        assert resp.status_code == 200
+        body = resp.json()
+        new_id = body["job_id"]
+        assert new_id != "jobs_paper_p1"
+        assert body["parent_job_id"] == "jobs_paper_p1"
+        assert body["lineage_key"] == "jobs_paper_p1"
+        new = db.get_job(new_id)
+        assert new is not None and new.parent_job_id == "jobs_paper_p1"
+        assert new.is_current is True
+        assert db.get_job("jobs_paper_p1").is_current is False        # 父降级
+        assert await storage.read_file(new_id, "output/note.md") == b"hello"   # 产物 clone
+        assert await storage.read_file(new_id, f".{first}.done") is not None   # .done 播种
+
+    @pytest.mark.asyncio
+    async def test_rebuild_stale_only_expired(self, client, app):
+        db, storage, config = app.state.db, app.state.storage, app.state.config
+        first = config.pipelines["paper"]["steps"][0]["name"]
+        db.create_job(Job(id="jobs_paper_stale", content_type="paper", pipeline="paper",
+                          source="arxiv", lineage_key="jobs_paper_stale"))
+        await storage.write_file("jobs_paper_stale", "job.json", b"{}")
+        await storage.write_file("jobs_paper_stale", f".{first}.done", b'{"def_digest":"sha256:STALE"}')
+        db.create_job(Job(id="jobs_paper_fresh", content_type="paper", pipeline="paper",
+                          source="arxiv", lineage_key="jobs_paper_fresh"))  # 无 .done → 不过期
+        resp = await client.post("/api/jobs/rebuild-stale")
+        assert resp.status_code == 200
+        body = resp.json()
+        parents = [it["parent_job_id"] for it in body["items"]]
+        assert "jobs_paper_stale" in parents
+        assert "jobs_paper_fresh" not in parents

@@ -66,6 +66,16 @@ export const useJobStore = defineStore('jobs', () => {
     return api.post(`/api/jobs/${jobId}/rerun`, { from_step: fromStep })
   }
 
+  // P2c:重建为新快照(fork 父 job,只重跑分叉步及下游;旧版保留 A/B)。返回新 job_id。
+  async function rebuildJob(jobId: string): Promise<{ job_id: string }> {
+    return api.post<{ job_id: string }>(`/api/jobs/${jobId}/rebuild`)
+  }
+
+  // P2c:批量重建所有"过期"(pipeline 定义已变)的 current job 为新快照。
+  async function rebuildStale(): Promise<{ rebuilt: number }> {
+    return api.post<{ rebuilt: number }>('/api/jobs/rebuild-stale')
+  }
+
   async function deleteJob(jobId: string) {
     await api.del(`/api/jobs/${jobId}`)
   }
@@ -90,5 +100,5 @@ export const useJobStore = defineStore('jobs', () => {
     return api.get<JobConcept[]>(`/api/jobs/${encodeURIComponent(jobId)}/concepts`)
   }
 
-  return { list, total, loading, fetchList, fetchDetail, createJob, uploadJob, retryJob, retryAllFailed, retryFailedInCollection, rerunJob, deleteJob, deleteJobs, fetchFacets, fetchConcepts }
+  return { list, total, loading, fetchList, fetchDetail, createJob, uploadJob, retryJob, retryAllFailed, retryFailedInCollection, rerunJob, rebuildJob, rebuildStale, deleteJob, deleteJobs, fetchFacets, fetchConcepts }
 })

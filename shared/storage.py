@@ -52,6 +52,9 @@ class StorageBackend(Protocol):
     # 删 job 时清掉该 job 的全部产物:LocalStorage 删 job 目录、RemoteStorage 删 {job_id}/ 前缀对象。
     # 幂等(无产物即 no-op),避免 MinIO/分布式部署删 job 后中心存储留孤儿产物。
     async def delete(self, job_id: str) -> None: ...
+    # 把 src job 的全部产物 + .done 复制到 dst job(P2c fork 重建:播种新快照,只重跑分叉步及下游)。
+    # 排除凭证侧载文件;Local=copytree、Remote=服务端 copy_object;Gateway 不支持(重建在 API/中心侧跑)。
+    async def clone(self, src_job_id: str, dst_job_id: str) -> None: ...
     # 供 api 按需取单个产物(笔记/日志等);找不到返回 None。
     async def read_file(self, job_id: str, rel_path: str) -> bytes | None: ...
     # 供 api 写入 job 初始文件(job.json、上传源文件等),worker 才能 pull 到。
@@ -105,6 +108,27 @@ class LocalStorage:
         # _safe_path 兜底防穿越(job_id 不得逃出 jobs_dir);ignore_errors 保证幂等(目录不存在即 no-op)。
         root = self._safe_path(job_id)
         await asyncio.to_thread(shutil.rmtree, root, ignore_errors=True)
+
+    async def clone(self, src_job_id: str, dst_job_id: str) -> None:
+        # 整目录复制(含 .done dotfile,供 fork 播种);★排除凭证侧载文件,不克隆到新 job。源不存在=no-op。
+        src = self._safe_path(src_job_id)
+        dst = self._safe_path(dst_job_id)
+
+        def _ignore(directory: str, names: list[str]) -> list[str]:
+            base = str(src)
+            out = []
+            for n in names:
+                rel = os.path.relpath(os.path.join(directory, n), base).replace("\\", "/")
+                if is_credential_file(rel):
+                    out.append(n)
+            return out
+
+        def _copy() -> None:
+            if not src.is_dir():
+                return
+            shutil.copytree(src, dst, dirs_exist_ok=True, ignore=_ignore)
+
+        await asyncio.to_thread(_copy)
 
     async def read_file(self, job_id: str, rel_path: str) -> bytes | None:
         path = self._safe_path(job_id, rel_path)
@@ -300,6 +324,31 @@ class RemoteStorage:
         work_dir = self._tmp_root / job_id
         self._snapshots.pop(str(work_dir), None)
         shutil.rmtree(work_dir, ignore_errors=True)
+
+    async def clone(self, src_job_id: str, dst_job_id: str) -> None:
+        await asyncio.to_thread(self._clone_sync, src_job_id, dst_job_id)
+
+    def _clone_sync(self, src_job_id: str, dst_job_id: str) -> None:
+        # 服务端 copy_object 逐对象复制 {src}/ → {dst}/(零下载);中心本无凭证(write_file 已跳过)。
+        from minio.commonconfig import CopySource
+
+        client = self._client()
+        src_prefix = f"{src_job_id}/"
+        for o in client.list_objects(self._bucket, prefix=src_prefix, recursive=True):
+            rel = o.object_name[len(src_prefix):]
+            if is_credential_file(rel):
+                continue
+            try:
+                client.copy_object(
+                    self._bucket, f"{dst_job_id}/{rel}",
+                    CopySource(self._bucket, o.object_name),
+                )
+            except Exception as e:
+                # 大对象(>~5GiB)copy_object 单 PUT 超限等:记 warning 跳过(多数产物小;大源视频常 NO_PUSH 不在中心)。
+                import structlog
+                structlog.get_logger().warning(
+                    "storage_clone_skip", src=o.object_name, dst=f"{dst_job_id}/{rel}", error=str(e),
+                )
 
     async def write_file(self, job_id: str, rel_path: str, data: bytes) -> None:
         if is_credential_file(rel_path):
@@ -566,6 +615,10 @@ class GatewayStorage:
         work_dir = self._work_root / job_id
         self._snapshots.pop(str(work_dir), None)
         await asyncio.to_thread(shutil.rmtree, work_dir, ignore_errors=True)
+
+    async def clone(self, src_job_id: str, dst_job_id: str) -> None:
+        # worker 侧 gateway 不负责中心产物复制(fork 重建在 API/中心存储侧走 Local/Remote)。
+        raise NotImplementedError("GatewayStorage.clone: fork rebuild runs on API/central storage (Local/Remote)")
 
     async def read_file(self, job_id: str, rel_path: str) -> bytes | None:
         resp = await self._client().get(

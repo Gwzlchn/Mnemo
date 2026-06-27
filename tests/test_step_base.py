@@ -84,6 +84,32 @@ class TestShouldRun:
         assert step.should_run() is True
 
 
+class TestDefDigestHelpers:
+    """P2c:def_digest_for / pipeline_digest_for 共享 helper(_def_digest 与"过期"判断共用,防漂移)。"""
+
+    def test_def_digest_for_stable_and_sensitive(self):
+        from shared.step_base import def_digest_for
+        a = def_digest_for("1", {"primary": "x"})
+        assert a.startswith("sha256:") and a == def_digest_for("1", {"primary": "x"})  # 稳定
+        assert a != def_digest_for("2", {"primary": "x"})        # version 变
+        assert a != def_digest_for("1", {"primary": "y"})        # ai 变
+        assert def_digest_for(None, None) == def_digest_for("1", {})  # version 缺省="1"、ai 缺省={}
+
+    def test_def_digest_for_matches_step_def_digest(self, tmp_path):
+        # helper 必须与 StepBase._def_digest 逐字一致(单一来源)
+        from shared.step_base import def_digest_for
+        step = DummyStep(tmp_path, config={"step": {"version": "3"}, "ai": {"primary": "m"}})
+        assert step._def_digest() == def_digest_for("3", {"primary": "m"})
+
+    def test_pipeline_digest_for_aggregates(self):
+        from shared.step_base import pipeline_digest_for
+        steps = [{"name": "a", "version": "1", "ai": {}}, {"name": "b", "version": "1", "ai": {}}]
+        d = pipeline_digest_for(steps)
+        assert d.startswith("sha256:") and d == pipeline_digest_for(list(reversed(steps)))  # 与顺序无关
+        bumped = [{"name": "a", "version": "2", "ai": {}}, {"name": "b", "version": "1", "ai": {}}]
+        assert d != pipeline_digest_for(bumped)   # 任一步变 → 聚合变
+
+
 class TestDefDigest:
     """pipeline 定义版本(version/ai 来自 YAML)进指纹 → 改 YAML 即重跑;旧 .done 向后兼容不强制重跑。"""
 

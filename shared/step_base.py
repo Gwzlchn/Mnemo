@@ -33,6 +33,23 @@ def file_hash(path: Path) -> str:
     return f"sha256:{h.hexdigest()}"
 
 
+def def_digest_for(version: str | int | None, ai: dict | None) -> str:
+    """本步【pipeline 定义指纹】= sha256(version + ai)。单一来源:StepBase._def_digest 与
+    "重建过期"判断(api 侧 is_job_expired)都调它,防公式漂移。版本来自 pipelines.yaml(使用者维护),
+    不取代码/git;prompt 内容定制走 {step}.md/profiles/styles(经 input_hashes 纳入,与此正交)。"""
+    defn = {"version": str(version if version is not None else "1"), "ai": ai or {}}
+    blob = json.dumps(defn, sort_keys=True, ensure_ascii=False)
+    return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def pipeline_digest_for(steps: list[dict]) -> str:
+    """整条 pipeline 的定义指纹聚合 = sha256(各步 name→def_digest 排序后)。
+    任一步 version/ai 变 → 聚合变;落 job.pipeline_digest 供"过期"批量快查(免逐 .done 比对)。"""
+    per = {s.get("name", ""): def_digest_for(s.get("version"), s.get("ai")) for s in steps}
+    blob = json.dumps(per, sort_keys=True, ensure_ascii=False)
+    return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
 class SubprocessFailed(subprocess.CalledProcessError):
     """CalledProcessError 子类:str() 附带 stderr 尾部,便于诊断(原类 str() 只有退出码,丢 capture 的 stderr)。
     仍是 CalledProcessError 子类——既有 `except CalledProcessError` 的调用方不受影响(审计:子进程失败丢 stderr)。"""
@@ -127,12 +144,8 @@ class StepBase:
         改 YAML 的 version 或 ai 模型 → 该指纹变 → should_run 判需重跑(该步+下游;上游指纹未变仍跳过)。
         prompt 内容定制走 {step}.md/profiles/styles(已在各步 input_hashes 经 prompt_profile_style_hashes 纳入)。"""
         step = self.config.get("step", {}) if isinstance(self.config, dict) else {}
-        defn = {
-            "version": str(step.get("version", "1")),
-            "ai": self.config.get("ai", {}) if isinstance(self.config, dict) else {},
-        }
-        blob = json.dumps(defn, sort_keys=True, ensure_ascii=False)
-        return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
+        ai = self.config.get("ai", {}) if isinstance(self.config, dict) else {}
+        return def_digest_for(step.get("version", "1"), ai)
 
     # ── 幂等 ──
 

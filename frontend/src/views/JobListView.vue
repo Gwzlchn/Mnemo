@@ -8,7 +8,7 @@ import { fmtDateTime } from '../utils/datetime'
 import { contentTypeIcon, contentTypePill } from '../utils/contentType'
 import { jobSourceLabel } from '../constants/sources'
 import type { JobSummary, JobFacets } from '../types'
-import { Inbox, ChevronRight, X, RotateCcw, Trash2 } from 'lucide-vue-next'
+import { Inbox, ChevronRight, X, RotateCcw, Trash2, History } from 'lucide-vue-next'
 
 const showToast = inject<(m: string, t?: 'success' | 'error' | 'info') => void>('showToast', () => {})
 
@@ -206,6 +206,22 @@ async function onRetryAllFailed() {
   }
 }
 
+// P2c:批量重建所有"过期"(pipeline/prompt 定义已变)的内容为新版本(旧版保留可对比)。
+const rebuilding = ref(false)
+async function onRebuildStale() {
+  if (!confirm('重建所有「定义已过期」的内容?为受影响内容建新版本(只重跑变化的步骤及下游,旧版本保留对比)。')) return
+  rebuilding.value = true
+  try {
+    const { rebuilt } = await jobStore.rebuildStale()
+    showToast(rebuilt > 0 ? `已重建 ${rebuilt} 个过期内容` : '没有过期内容', 'success')
+    await load()
+  } catch {
+    showToast('批量重建失败', 'error')
+  } finally {
+    rebuilding.value = false
+  }
+}
+
 async function loadMore() {
   if (jobStore.loading || !hasMore.value) return
   offset.value += PAGE
@@ -267,6 +283,10 @@ const isInitialLoading = computed(() => jobStore.loading && jobStore.list.length
       </div>
       <button class="btn" style="margin-left:auto" :disabled="retryingAll" @click="onRetryAllFailed">
         <RotateCcw :size="14" />{{ retryingAll ? '重试中…' : '重试全部失败' }}
+      </button>
+      <button class="btn" data-testid="rebuild-stale" :disabled="rebuilding" @click="onRebuildStale"
+        title="为「pipeline/prompt 定义已变」的内容重建新版本(只重跑变化步骤,旧版保留)">
+        <History :size="14" />{{ rebuilding ? '重建中…' : '重建所有过期' }}
       </button>
       <button class="btn" data-testid="select-toggle" :class="{ on: selecting }" @click="toggleSelecting">
         <component :is="selecting ? X : Trash2" :size="14" />{{ selecting ? '退出选择' : '选择删除' }}

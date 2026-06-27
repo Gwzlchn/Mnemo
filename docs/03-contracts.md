@@ -245,6 +245,28 @@ Response `200`:
 {"job_id": "j_20260516_abc123", "status": "processing"}
 ```
 
+#### POST /api/jobs/{id}/rebuild — 重建为新版本快照(P2c fork)
+
+基于当前 pipeline/prompt 定义,把该 job【fork 成一个新版本快照】(同 lineage、新时间戳 id):
+clone 父 job 的产物 + `.{step}.done` 播种新 job_dir → 走 `submit_job`,worker `should_run` 指纹自动只重跑
+【定义已变(`def_digest` 不符)的步及其下游】,未变步跳过;**旧版本保留供 A/B**,新版自动成为该 lineage 的 `is_current`。
+(不走 `rerun(from_step)`——那 unlink 本地 `.done` 在对象存储是 no-op;用 clone 播种 + 指纹。)
+
+Response `200`:
+```json
+{"job_id": "jobs_paper_xxx_260627...", "parent_job_id": "jobs_paper_xxx", "lineage_key": "jobs_paper_xxx", "status": "pending"}
+```
+
+#### POST /api/jobs/rebuild-stale — 批量重建所有过期内容(P2c)
+
+遍历 current 作业,对【过期者】(其某步 `.done` 存的 `def_digest` ≠ 当前 pipeline 该步 `def_digest`;
+缺 `def_digest` 键的老 `.done` 保守判过期)逐个走 `/rebuild`。Response `200`:
+```json
+{"rebuilt": 3, "items": [{"parent_job_id": "...", "job_id": "...", "from_step": "04_smart_article"}]}
+```
+> 「过期」判定单一来源:`shared.step_base.def_digest_for(version, ai)`(`_def_digest` 与本端点共用,防漂移);
+> `job.pipeline_digest` = `pipeline_digest_for(steps)` 聚合,创建/重建时落库(供快查)。
+
 #### DELETE /api/jobs/{id} — 删除任务
 
 精准级联删除(顺序保证 **DB 行最后删 + 每步幂等**,崩溃可原样重删,不依赖周期 GC):

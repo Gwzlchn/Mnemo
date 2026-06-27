@@ -176,6 +176,16 @@ describe('JobListView 交互', () => {
     expect(del).toHaveBeenCalledWith('/api/jobs/b')
   })
 
+  it('「重建所有过期」按钮调用 rebuild-stale(POST /api/jobs/rebuild-stale)', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    setupApi({ jobs: { items: [job({ job_id: 'x', status: 'done' })], total: 1 } })
+    post.mockResolvedValue({ rebuilt: 1 })
+    const w = await mountView()
+    await w.find('[data-testid="rebuild-stale"]').trigger('click')
+    await flushPromises()
+    expect(post).toHaveBeenCalledWith('/api/jobs/rebuild-stale')
+  })
+
   it('点击状态 chip 触发带 status 参数的重新加载', async () => {
     setupApi({ jobs: { items: [], total: 0 }, facets: { status: { done: 1 }, source: {}, domain: {} } })
     const w = await mountView()

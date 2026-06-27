@@ -84,6 +84,25 @@ class TestLocalStorage:
         assert path == tmp_path / "nonexistent"
 
     @pytest.mark.asyncio
+    async def test_clone_copies_products_and_done_excludes_credentials(self, storage, tmp_path):
+        # 父 job:产物 + .done dotfile + 凭证侧载文件
+        src = tmp_path / "j_parent"
+        (src / "output").mkdir(parents=True)
+        (src / "input").mkdir(parents=True)
+        (src / "output" / "sections.json").write_text("[]")
+        (src / ".04_smart.done").write_text('{"def_digest":"sha256:x"}')
+        (src / "input" / ".credentials.json").write_text("{}")  # 内容无关:is_credential_file 按文件名判,clone 须按名排除
+        await storage.clone("j_parent", "j_child")
+        child = tmp_path / "j_child"
+        assert (child / "output" / "sections.json").read_text() == "[]"
+        assert (child / ".04_smart.done").exists()             # .done 被播种(供 fork 跳过未变步)
+        assert not (child / "input" / ".credentials.json").exists()  # ★凭证不克隆
+
+    @pytest.mark.asyncio
+    async def test_clone_missing_src_noop(self, storage):
+        await storage.clone("nope", "dst")   # 源不存在=no-op,不抛
+
+    @pytest.mark.asyncio
     async def test_read_file(self, storage, tmp_path):
         out = tmp_path / "j_xxx" / "output"
         out.mkdir(parents=True)

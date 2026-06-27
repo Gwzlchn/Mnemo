@@ -14,9 +14,11 @@ from fastapi.responses import PlainTextResponse
 from shared.audit import audit
 from shared.config import AppConfig
 from shared.db import Database
+from shared.ids import lineage_key_of as _lineage_key_of
 from shared.models import Job, JobStatus, Step, StepStatus, derive_job_id
 from shared.redis_client import RedisClient
 from shared.source_detect import detect_source
+from shared.step_base import def_digest_for, pipeline_digest_for
 from shared.storage import CREDENTIAL_REL, StorageBackend
 
 from api.deps import get_config, get_db, get_redis, get_storage, validate_path_segment, verify_token
@@ -108,6 +110,7 @@ async def create_job_core(
     upload: tuple[str, bytes] | None = None,
     smart_note: bool | None = None,
     item_id: str | None = None, actor: str = "api",
+    config: AppConfig | None = None,
 ) -> Job:
     """建 job 的核心流程(create_job 路由 + upload + 订阅同步共用)。返回 Job。
     upload=(ext, data):上传路径,把源文件经 storage 写入 input/source{ext}(兼容本地/MinIO)。"""
@@ -151,10 +154,13 @@ async def create_job_core(
     job_meta: dict = {"flags": flags}
     if item_id:
         job_meta["source_item_id"] = item_id
+    # pipeline_digest:当前 pipeline 各步定义指纹聚合(供"重建过期"批量快查);config 缺省(如订阅同步)则留空,
+    # is_job_expired 会回退逐 .done 比对,不影响正确性。
+    pdigest = _pipeline_digest(config, pipeline)
     job = Job(
         id=job_id, content_type=ctype, pipeline=pipeline, url=url, title=title,
         domain=domain, source=source, style_tags=style_tags, collection_id=collection_id,
-        meta=job_meta,
+        meta=job_meta, pipeline_digest=pdigest,
     )
     await asyncio.to_thread(db.create_job, job)
     if collection_id:
@@ -167,12 +173,88 @@ async def create_job_core(
     return job
 
 
+def _pipeline_digest(config: AppConfig | None, pipeline: str) -> str | None:
+    if config is None:
+        return None
+    try:
+        return pipeline_digest_for(config.pipelines[pipeline]["steps"])
+    except Exception:
+        return None
+
+
+async def is_job_expired(storage: StorageBackend, config: AppConfig, job: Job) -> dict:
+    """job 是否"过期"= 其某步 .done 存档的 def_digest 与【当前】pipeline 该步 def_digest 不同。
+    逐步读 .done(权威,覆盖含 P2c 前无 pipeline_digest 的旧 job);老 .done 缺 def_digest 键→保守判过期。
+    返回 {expired, first_changed_step}。"""
+    try:
+        steps = config.pipelines[job.pipeline]["steps"]
+    except Exception:
+        return {"expired": False, "first_changed_step": None}
+    for s in steps:
+        name = s.get("name")
+        raw = await storage.read_file(job.id, f".{name}.done")
+        if raw is None:
+            continue  # 该步未跑(无 .done),不算过期
+        try:
+            stored = json.loads(raw).get("def_digest")
+        except Exception:
+            stored = None
+        if stored is None or stored != def_digest_for(s.get("version"), s.get("ai")):
+            return {"expired": True, "first_changed_step": name}
+    return {"expired": False, "first_changed_step": None}
+
+
+async def create_job_snapshot(
+    db: Database, redis: RedisClient, storage: StorageBackend,
+    config: AppConfig, parent_job_id: str, actor: str = "api",
+) -> Job:
+    """从父 job fork 一个新快照(同 lineage、新时间戳 id):clone 父产物+.done 播种 → submit_job,
+    worker should_run 指纹自然只重跑分叉步及下游;旧快照保留供 A/B。不走 rerun(from_step)(它 unlink
+    本地 .done 在 MinIO 是 no-op);用 submit_job + 被播种的中心 .done。"""
+    parent = await asyncio.to_thread(db.get_job, parent_job_id)
+    if not parent:
+        raise HTTPException(404, "job not found")
+    new_id = derive_job_id(parent.url, parent.content_type, parent.source)  # 带时间戳
+    if new_id == parent.id or await asyncio.to_thread(db.get_job, new_id):
+        new_id = f"{new_id}_{secrets.token_hex(3)}"   # 极小概率撞;绝不复用父 id
+    lineage = parent.lineage_key or _lineage_key_of(parent.id)
+    await storage.clone(parent.id, new_id)            # 播种父产物 + .done
+    raw = await storage.read_file(parent.id, "job.json")
+    doc = {}
+    if raw:
+        try:
+            doc = json.loads(raw)
+        except Exception:
+            doc = {}
+    doc.update({"id": new_id, "created_at": _now_iso()})
+    await storage.write_file(
+        new_id, "job.json", json.dumps(doc, ensure_ascii=False, indent=2).encode("utf-8"),
+    )
+    job = Job(
+        id=new_id, content_type=parent.content_type, pipeline=parent.pipeline,
+        url=parent.url, title=parent.title, domain=parent.domain, source=parent.source,
+        style_tags=parent.style_tags, collection_id=parent.collection_id, meta=parent.meta,
+        lineage_key=lineage, is_current=True, parent_job_id=parent.id,
+        pipeline_digest=_pipeline_digest(config, parent.pipeline),
+    )
+    await asyncio.to_thread(db.create_job, job)        # P2b create_job 自动 demote 同 lineage 旧版
+    if parent.collection_id:
+        await asyncio.to_thread(db.increment_collection_count, parent.collection_id, 1)
+    await redis.publish(
+        "job_command", {"action": "new_job", "job_id": new_id, "pipeline": parent.pipeline},
+    )
+    audit("job", new_id, "create", actor=actor,
+          detail={"rebuilt_from": parent.id, "lineage_key": lineage})
+    return job
+
+
 @router.post("", status_code=201)
 async def create_job(
     req: JobCreateRequest,
     db: Database = Depends(get_db),
     redis: RedisClient = Depends(get_redis),
     storage: StorageBackend = Depends(get_storage),
+    config: AppConfig = Depends(get_config),
 ):
     # 注:url 接受 http(s) 链接或裸 BV 号(detect_source 解析),故不强校验 http(s) 前缀;
     # 契约的 invalid_url 语义改由 docs/03-contracts.md 对齐(见 C12 处置)。
@@ -183,7 +265,7 @@ async def create_job(
     job = await create_job_core(
         db, redis, storage, req.url, req.content_type,
         req.domain, req.style_tags, req.collection_id,
-        smart_note=req.smart_note,
+        smart_note=req.smart_note, config=config,
     )
     return {"job_id": job.id, "content_type": job.content_type,
             "status": "pending", "created_at": job.created_at.isoformat()}
@@ -199,6 +281,7 @@ async def upload_job(
     db: Database = Depends(get_db),
     redis: RedisClient = Depends(get_redis),
     storage: StorageBackend = Depends(get_storage),
+    config: AppConfig = Depends(get_config),
 ):
     content_type = _detect_content_type(None, file.filename)
     try:
@@ -223,7 +306,7 @@ async def upload_job(
     job = await create_job_core(
         db, redis, storage, url=None, content_type=content_type,
         domain=domain, style_tags=tags, collection_id=collection_id, title=title,
-        upload=(ext, bytes(buf)),
+        upload=(ext, bytes(buf)), config=config,
     )
     return {"job_id": job.id, "content_type": job.content_type,
             "status": "pending", "created_at": job.created_at.isoformat()}
@@ -590,6 +673,42 @@ async def rerun_job(
         "action": "rerun", "job_id": job_id, "from_step": req.from_step,
     })
     return {"job_id": job_id, "status": "processing", "from_step": req.from_step}
+
+
+@router.post("/{job_id}/rebuild")
+async def rebuild_job(
+    job_id: str,
+    db: Database = Depends(get_db),
+    redis: RedisClient = Depends(get_redis),
+    storage: StorageBackend = Depends(get_storage),
+    config: AppConfig = Depends(get_config),
+):
+    """重建为【新快照】(fork 父 job:播种产物+.done,只重跑分叉步及下游;旧版保留 A/B)。
+    返回新 job_id;新版自动成为该 lineage 的 current。"""
+    validate_path_segment(job_id, "job_id")
+    job = await create_job_snapshot(db, redis, storage, config, job_id)
+    return {"job_id": job.id, "parent_job_id": job.parent_job_id,
+            "lineage_key": job.lineage_key, "status": "pending"}
+
+
+@router.post("/rebuild-stale")
+async def rebuild_stale(
+    db: Database = Depends(get_db),
+    redis: RedisClient = Depends(get_redis),
+    storage: StorageBackend = Depends(get_storage),
+    config: AppConfig = Depends(get_config),
+):
+    """批量重建【所有过期 current job】(其某步定义指纹 def_digest 与当前 pipeline 不符)为新快照。
+    仿 retry-failed:逐个判过期 → create_job_snapshot。返回重建清单。"""
+    _, jobs = await asyncio.to_thread(db.list_jobs, None, None, 10000, 0, None, None, False, True)
+    rebuilt = []
+    for job in jobs:
+        exp = await is_job_expired(storage, config, job)
+        if exp["expired"]:
+            new = await create_job_snapshot(db, redis, storage, config, job.id)
+            rebuilt.append({"parent_job_id": job.id, "job_id": new.id,
+                            "from_step": exp["first_changed_step"]})
+    return {"rebuilt": len(rebuilt), "items": rebuilt}
 
 
 def _provider_available(name: str, cfg: dict) -> bool:
