@@ -27,16 +27,6 @@ const showToast = inject<(m: string, t?: 'success' | 'error' | 'info') => void>(
 const workerId = computed(() => String(route.params.id))
 
 const worker = ref<Worker | null>(null)
-// 可达区域:从自动探测出的 net-cn/net-global tag 映射成友好展示(决策E:worker 页展示)。
-const netZones = computed(() => {
-  const t = worker.value?.tags || []
-  const z: string[] = []
-  if (t.includes('net-cn')) z.push('国内 net-cn')
-  if (t.includes('net-global')) z.push('全球 net-global')
-  return z
-})
-// 「标签」行排除 net-cn/net-global —— 它们已在「可达区域」行友好展示,避免两行重复。
-const otherTags = computed(() => (worker.value?.tags || []).filter(t => t !== 'net-cn' && t !== 'net-global'))
 const tasks = ref<WorkerTask[]>([])
 const loading = ref(true)
 const error = ref('')
@@ -222,19 +212,10 @@ onBeforeUnmount(() => global.setCrumbs(null))
               </td>
             </tr>
             <tr>
-              <td>可达区域</td>
-              <td>
-                <template v-if="netZones.length">
-                  <span v-for="z in netZones" :key="z" class="tag" style="margin-right:6px;background:var(--info-bg, #e6f0ff)">{{ z }}</span>
-                </template>
-                <span v-else class="dim">未探测到(无网络下载能力)</span>
-              </td>
-            </tr>
-            <tr>
               <td>标签</td>
               <td>
-                <template v-if="otherTags.length">
-                  <span v-for="t in otherTags" :key="t" class="tag" style="margin-right:6px">{{ t }}</span>
+                <template v-if="worker.tags.length">
+                  <span v-for="t in worker.tags" :key="t" class="tag" style="margin-right:6px">{{ t }}</span>
                 </template>
                 <span v-else class="dim">无</span>
               </td>
