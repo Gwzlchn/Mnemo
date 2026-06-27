@@ -896,8 +896,9 @@ class StepBase:
         )
 
     def prompt_profile_style_hashes(self) -> dict[str, str]:
-        """smart 步共用的指纹块:可选外置 prompt 覆盖({step_name}.md)+ domain profile + style tags。
-        与各 smart 步此前逐字重复的 input_hashes 片段等价(键名/取值不变,保持幂等指纹一致)。"""
+        """smart 步共用的指纹块:可选外置 prompt 覆盖({step_name}.md)+ 默认 prompt 模板(templates/{step_name}.md)
+        + domain profile + style tags。改默认模板(外置可编辑)即变指纹 → should_run 重跑。
+        与各 smart 步此前逐字重复的 input_hashes 片段等价(profile/styles 键名取值不变,保持幂等一致)。"""
         import json
         prompts_dir = Path(self.config["paths"]["prompts_dir"])
         domain_name = self.config["domain"]["name"]
@@ -905,6 +906,9 @@ class StepBase:
         prompt_path = prompts_dir / f"{self.step_name}.md"
         if prompt_path.exists():
             hashes["prompt"] = file_hash(prompt_path)
+        tpl = self.template_hash(self.step_name)
+        if tpl:
+            hashes["template"] = tpl
         profile_path = prompts_dir / "profiles" / f"{domain_name}.yaml"
         if profile_path.exists():
             hashes["profile"] = file_hash(profile_path)
@@ -914,3 +918,25 @@ class StepBase:
             if (prompts_dir / "styles" / f"{tag}.yaml").exists()
         }, sort_keys=True)
         return hashes
+
+    # ── 外置默认 prompt 模板(templates/<name>.md;改文件不碰代码、自动进指纹)──
+    def _templates_dir(self) -> Path:
+        """默认 prompt 模板目录 = prompts_dir/templates(与 profiles/styles 同卷不同子路径;
+        部署可把该子路径 bind-mount 到仓库 configs/prompts/templates,改模板即生效不 rebuild)。"""
+        return Path(self.config["paths"]["prompts_dir"]) / "templates"
+
+    def _load_prompt_template(self, name: str, default: str) -> str:
+        """读 templates/{name}.md 作可编辑的默认 prompt 骨架;不存在则用代码内 default 兜底
+        (空卷/旧部署/测试 tmp prompts_dir 下模板缺失仍能跑——沿用 _load_system_prompt 的兜底哲学)。
+        ★调用方对动态部分用 str.replace 注入(prompt 含字面 {},不可 str.format)。"""
+        p = self._templates_dir() / f"{name}.md"
+        if p.exists():
+            return p.read_text(encoding="utf-8")
+        return default
+
+    def template_hash(self, *names: str) -> str:
+        """默认 prompt 模板文件指纹(改模板→重跑)。多名(如 punctuate 双态)合并;全缺则空串。"""
+        import json
+        td = self._templates_dir()
+        present = {n: file_hash(td / f"{n}.md") for n in sorted(names) if (td / f"{n}.md").exists()}
+        return json.dumps(present, sort_keys=True) if present else ""

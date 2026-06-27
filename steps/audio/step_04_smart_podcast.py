@@ -35,14 +35,8 @@ class SmartPodcastStep(StepBase):
     def _build_prompt(self, transcript: dict) -> str:
         profile = self.load_domain_prompt_profile()
 
-        parts = [
-            "请将以下播客/音频的口语转写重组为中文结构化学习笔记。\n",
-            "要求：\n",
-            "- 去除口语停顿、重复、语气词，提炼为精准书面表达\n",
-            "- 净化中英混用，专业术语保留英文并括号附中文\n",
-            "- 按逻辑主题组织章节，不必按口播时间线\n",
-            "- 使用 Markdown 格式，包含 ## 章节标题\n",
-        ]
+        # 静态指令头外置 templates/04_smart_podcast.md(经 prompt_profile_style_hashes 进指纹);缺失回退 _DEFAULT_HEADER。
+        parts = [self._load_prompt_template("04_smart_podcast", _DEFAULT_HEADER)]
 
         parts.append(self.terminology_block(profile))  # 已沉淀标准概念注入(共用,审计 R-M9)
 
@@ -56,6 +50,18 @@ class SmartPodcastStep(StepBase):
         parts.append(full_text[:MAX_TRANSCRIPT_CHARS])
 
         return "".join(parts)
+
+
+# 静态指令头(= 外置模板 templates/04_smart_podcast.md 内容)。动态(转写/术语)仍在代码拼。
+_DEFAULT_HEADER = (
+    "请将以下播客/音频的口语转写重组为中文结构化学习笔记。\n"
+    "要求：\n"
+    "- 去除口语停顿、重复、语气词，提炼为精准书面表达\n"
+    "- 净化中英混用，专业术语保留英文并括号附中文\n"
+    "- 按逻辑主题组织章节，不必按口播时间线\n"
+    "- 使用 Markdown 格式，包含 ## 章节标题\n"
+)
+
 
 if __name__ == "__main__":
     SmartPodcastStep.cli_main("04_smart_podcast")

@@ -34,7 +34,11 @@ class PunctuateStep(StepBase):
         if not sub:
             return {}
         # 语言纳入指纹:同字幕在「加标点」与「翻译」两种模式下产物不同,须各自重算。
-        return {sub.name: file_hash(sub), "mode": "zh" if is_zh else "translate"}
+        h = {sub.name: file_hash(sub), "mode": "zh" if is_zh else "translate"}
+        t = self.template_hash("08_punctuate.zh", "08_punctuate.translate")
+        if t:
+            h["template"] = t
+        return h
 
     def execute(self) -> dict | None:
         sub, is_zh = self._pick()
@@ -43,7 +47,11 @@ class PunctuateStep(StepBase):
         lines = [f"{format_timestamp(e.start_sec)} {e.text}" for e in all_entries]
         full_text = "\n".join(lines)
 
-        header = _PUNCTUATE_PROMPT if is_zh else _TRANSLATE_PROMPT
+        # 模板外置 templates/08_punctuate.{zh,translate}.md(改文件不碰代码,进指纹);缺失回退内联常量。
+        header = self._load_prompt_template(
+            "08_punctuate.zh" if is_zh else "08_punctuate.translate",
+            _PUNCTUATE_PROMPT if is_zh else _TRANSLATE_PROMPT,
+        )
         chunks = self._split_chunks(full_text, CHUNK_SIZE)
         results = []
         action = "punctuating" if is_zh else "translating"

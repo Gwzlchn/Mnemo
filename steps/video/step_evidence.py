@@ -41,11 +41,15 @@ class EvidenceStep(StepBase):
         if not self._is_case():
             return {"skip": "non-case"}
         mech = self.job_dir / "output" / "notes_mechanical.md"
-        # 指纹=机械稿(锚点来源)+provider；锚点不变不重抓（省外网/省钱）。
-        return {
+        # 指纹=机械稿(锚点来源)+provider+模板；锚点不变不重抓（省外网/省钱）。
+        h = {
             "mechanical": file_hash(mech) if mech.exists() else "",
             "provider": self.override_provider(),
         }
+        t = self.template_hash("10_evidence")
+        if t:
+            h["template"] = t
+        return h
 
     def _refs(self, mech: str) -> list[str]:
         return sorted({m.strip() for m in _REF_RE.findall(mech)})
@@ -72,32 +76,10 @@ class EvidenceStep(StepBase):
 
     def _build_prompt(self, refs: list[str], mech_clip: str) -> str:
         ref_hint = ("视频 OCR 里的处罚文号/案号：" + "、".join(refs)) if refs else "OCR 未显式给出文号/案号"
-        return (
-            "你是案例取证助手。为下面这条视频笔记取**一手权威来源**（证监会处罚决定书 / 法院裁定 / "
-            "上市公司公告），不要用泛泛新闻分析冒充。\n\n"
-            f"{ref_hint}\n\n"
-            "任务：\n"
-            "1) 从机械稿识别：当事人、涉及股票、处罚文号/案号、年份。\n"
-            "2) 用 WebSearch 找一手——在查询里加 `site:csrc.gov.cn`（证监会案，省局子域亦可）或 "
-            "`site:wenshu.court.gov.cn`（法院案）优先官方；法院一手常被登录墙挡，可退**上市公司公告**"
-            "（《关于收到行政处罚/刑事裁定的公告》逐字转载）。可多次搜。\n"
-            "3) 用 Bash curl 抓正文——中国政府/法院/交易所站点**必须直连不走代理**（走代理会失败）：\n"
-            "   env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy "
-            "curl -sL -m 25 -A \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0\" \"<url>\"\n"
-            "   （csrc 页多为 GBK，原样取字节即可。）\n"
-            "4) 文号 case-match：抓回正文含上面 OCR 的文号/当事人→confidence=high；只对上当事人=medium；"
-            "对不上或只找到二手新闻=low。\n\n"
-            "只输出如下**扁平 JSON**（不要任何别的文字、不要代码围栏、字符串值内用「」不用半角双引号以免坏 JSON）：\n"
-            '{"case_match":{"subject":"案件一句话","anchors":["命中锚点"],"confidence":"high|medium|low",'
-            '"note":"一手命中/缺口说明"},'
-            '"evidence":[{"id":"E1","type":"行政处罚决定|刑事裁定|公司公告|报道",'
-            '"title":"标题","url":"真实URL","publisher":"发布方","ref":"文号/案号",'
-            '"source_tier":"一手官方|上市公司公告|媒体逐字转载|二手新闻",'
-            '"match_confidence":"high|medium|low","excerpt":"原文摘要(一句)",'
-            '"key_facts":[{"figure":"金额/数字/事实","quote":"原文片段"}]}],'
-            '"notes":"取证说明:抓到哪层、什么没抓到"}\n\n'
-            f"机械稿（节选）：\n{mech_clip}"
-        )
+        # 模板外置 templates/10_evidence.md(含 JSON schema 字面量;改文件不碰代码,进指纹);缺失回退 _DEFAULT。
+        # ★用 replace 注入(prompt 含字面 {},不可 str.format)。
+        tmpl = self._load_prompt_template("10_evidence", _DEFAULT)
+        return tmpl.replace("<<REF_HINT>>", ref_hint).replace("<<MECH_CLIP>>", mech_clip)
 
     def _parse(self, raw: str, refs: list[str]) -> dict:
         try:
@@ -117,6 +99,35 @@ class EvidenceStep(StepBase):
         obj["fetched_at"] = datetime.now().strftime("%Y-%m-%d")
         obj["ocr_refs"] = refs
         return obj
+
+
+# 静态默认 prompt(= 外置模板 templates/10_evidence.md 内容;<<REF_HINT>>/<<MECH_CLIP>> 由 replace 注入)。
+_DEFAULT = (
+    "你是案例取证助手。为下面这条视频笔记取**一手权威来源**（证监会处罚决定书 / 法院裁定 / "
+    "上市公司公告），不要用泛泛新闻分析冒充。\n\n"
+    "<<REF_HINT>>\n\n"
+    "任务：\n"
+    "1) 从机械稿识别：当事人、涉及股票、处罚文号/案号、年份。\n"
+    "2) 用 WebSearch 找一手——在查询里加 `site:csrc.gov.cn`（证监会案，省局子域亦可）或 "
+    "`site:wenshu.court.gov.cn`（法院案）优先官方；法院一手常被登录墙挡，可退**上市公司公告**"
+    "（《关于收到行政处罚/刑事裁定的公告》逐字转载）。可多次搜。\n"
+    "3) 用 Bash curl 抓正文——中国政府/法院/交易所站点**必须直连不走代理**（走代理会失败）：\n"
+    "   env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy "
+    "curl -sL -m 25 -A \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0\" \"<url>\"\n"
+    "   （csrc 页多为 GBK，原样取字节即可。）\n"
+    "4) 文号 case-match：抓回正文含上面 OCR 的文号/当事人→confidence=high；只对上当事人=medium；"
+    "对不上或只找到二手新闻=low。\n\n"
+    "只输出如下**扁平 JSON**（不要任何别的文字、不要代码围栏、字符串值内用「」不用半角双引号以免坏 JSON）：\n"
+    '{"case_match":{"subject":"案件一句话","anchors":["命中锚点"],"confidence":"high|medium|low",'
+    '"note":"一手命中/缺口说明"},'
+    '"evidence":[{"id":"E1","type":"行政处罚决定|刑事裁定|公司公告|报道",'
+    '"title":"标题","url":"真实URL","publisher":"发布方","ref":"文号/案号",'
+    '"source_tier":"一手官方|上市公司公告|媒体逐字转载|二手新闻",'
+    '"match_confidence":"high|medium|low","excerpt":"原文摘要(一句)",'
+    '"key_facts":[{"figure":"金额/数字/事实","quote":"原文片段"}]}],'
+    '"notes":"取证说明:抓到哪层、什么没抓到"}\n\n'
+    "机械稿（节选）：\n<<MECH_CLIP>>"
+)
 
 
 if __name__ == "__main__":

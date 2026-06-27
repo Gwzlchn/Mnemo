@@ -69,19 +69,24 @@ class ArticleConceptsStep(StepBase):
     def _build_prompt(self, text: str) -> str:
         profile = self.load_domain_prompt_profile()
         clip = text[:12000]   # 概念抽取不需全文逐字,限长防超
-        parts = [
-            "请从以下内容提取【核心概念】并写一句话摘要,严格输出 JSON。\n",
-            "要求:\n",
-            "- key_terms:文中讲清楚的关键概念(术语),每个给一句简洁中文定义;",
-            "英文专有名词原样保留、不翻译。\n",
-            "- summary:用一句话(≤60 字)概括全文要点。\n",
-            '- 输出格式:{"summary": "...", "key_terms": [{"term": "...", "definition": "..."}]}\n',
-            "- 只输出 JSON,不要额外解释或代码块标记。\n",
-        ]
+        # 静态指令头外置 templates/05_concepts.md(经 prompt_profile_style_hashes 进指纹);缺失回退 _DEFAULT_HEADER。
+        parts = [self._load_prompt_template("05_concepts", _DEFAULT_HEADER)]
         parts.append(self.terminology_block(profile))   # 已沉淀标准概念注入(共用)
         parts.append("\n--- 内容 ---\n")
         parts.append(clip)
         return "".join(parts)
+
+
+# 静态指令头(= 外置模板 templates/05_concepts.md 内容)。动态(术语/内容)仍在代码拼。
+_DEFAULT_HEADER = (
+    "请从以下内容提取【核心概念】并写一句话摘要,严格输出 JSON。\n"
+    "要求:\n"
+    "- key_terms:文中讲清楚的关键概念(术语),每个给一句简洁中文定义;"
+    "英文专有名词原样保留、不翻译。\n"
+    "- summary:用一句话(≤60 字)概括全文要点。\n"
+    '- 输出格式:{"summary": "...", "key_terms": [{"term": "...", "definition": "..."}]}\n'
+    "- 只输出 JSON,不要额外解释或代码块标记。\n"
+)
 
 
 if __name__ == "__main__":

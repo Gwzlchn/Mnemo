@@ -20,7 +20,10 @@ class SmartStep(StepBase):
         hashes: dict[str, str] = {
             "mechanical": file_hash(self.job_dir / "output" / "notes_mechanical.md"),
         }
-        hashes.update(self.prompt_profile_style_hashes())  # prompt(可选覆盖)+ profile + styles
+        hashes.update(self.prompt_profile_style_hashes())  # prompt(覆盖)+ 11_smart 模板 + profile + styles
+        vt = self.template_hash("11_smart.vision")  # 视觉指令模板(11_smart.md 已由 prompt_profile_style_hashes 含)
+        if vt:
+            hashes["template_vision"] = vt
         # 取证产物(ADR-0012)纳入指纹:evidence 更新→笔记重生成(引用 [E#])。非案例类无 evidence 则空。
         ev = self.job_dir / "output" / "evidence.json"
         hashes["evidence"] = file_hash(ev) if ev.exists() else ""
@@ -73,13 +76,8 @@ class SmartStep(StepBase):
 
     def _build_vision_prompt(self, frames: list[dict]) -> str:
         """视觉 pass:让 claude 逐张看帧,只产结构化"逐帧视觉描述"清单(按序号 N),不写笔记正文。"""
-        parts = [
-            "请用 Read 工具逐张查看下列截图(每张前的 [N] 是它的序号)。为**有信息量**的截图各输出一行,"
-            "格式:\n`N | 这张图 OCR 文本给不出的视觉信息(箭头指向、红框位置、K线/分时形态、"
-            "放量特征、配色、版式等)`\n"
-            "N 原样照抄方括号里的序号。纯氛围/装饰帧(空镜、背景板、片头片尾)直接跳过、不输出。\n"
-            "只输出这个清单,**不要写任何笔记正文、不要总结、不要保存文件**。\n\n",
-        ]
+        # 视觉指令头外置 templates/11_smart.vision.md(改文件不碰代码,进指纹);缺失回退 _DEFAULT_VISION。
+        parts = [self._load_prompt_template("11_smart.vision", _DEFAULT_VISION)]
         for f in frames:
             parts.append(f"[{f['n']}] {(self.job_dir / 'assets' / f['filename']).resolve()}\n")
         return "".join(parts)
@@ -110,7 +108,8 @@ class SmartStep(StepBase):
         profile = self.load_domain_prompt_profile()
         style_hints = self._load_style_hints()
 
-        parts = ["请将以下机械版笔记重组为结构化学习笔记。\n"]
+        # 用户指令头外置 templates/11_smart.md(经 prompt_profile_style_hashes 进指纹);缺失回退 _DEFAULT_USER_HEADER。
+        parts = [self._load_prompt_template("11_smart", _DEFAULT_USER_HEADER)]
 
         if profile:
             if profile.get("role"):
@@ -161,6 +160,18 @@ class SmartStep(StepBase):
                 if data:
                     hints.append(data)
         return hints
+
+
+# 静态指令头(= 外置模板内容)。动态(profile/术语/风格/帧路径/取证/机械稿)仍在代码拼。
+# templates/11_smart.vision.md(视觉 pass)+ templates/11_smart.md(用户笔记 pass 头)由此生成。
+_DEFAULT_VISION = (
+    "请用 Read 工具逐张查看下列截图(每张前的 [N] 是它的序号)。为**有信息量**的截图各输出一行,"
+    "格式:\n`N | 这张图 OCR 文本给不出的视觉信息(箭头指向、红框位置、K线/分时形态、"
+    "放量特征、配色、版式等)`\n"
+    "N 原样照抄方括号里的序号。纯氛围/装饰帧(空镜、背景板、片头片尾)直接跳过、不输出。\n"
+    "只输出这个清单,**不要写任何笔记正文、不要总结、不要保存文件**。\n\n"
+)
+_DEFAULT_USER_HEADER = "请将以下机械版笔记重组为结构化学习笔记。\n"
 
 
 if __name__ == "__main__":

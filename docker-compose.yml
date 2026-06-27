@@ -168,6 +168,9 @@ services:
       # local_dir 订阅:worker 跑 step_01_download._copy_local_file 复制源文件,
       # 须与 api 挂同一容器内路径 /data/inbox(file:// url 在 worker 容器内按此解析)。只读即可。
       - ${FLORI_INBOX_DIR:-.local/inbox}:/data/inbox:ro
+      # 默认 prompt 模板外挂(只读):覆盖 /data/prompts/templates 子路径,改仓库 configs/prompts/templates
+      # 即生效、不用 rebuild;profiles/styles 仍走 /data 卷(API 运行时可写,不能挂只读)。缺挂载时步骤回退内联 _DEFAULT。
+      - ${FLORI_TEMPLATES_DIR:-./configs/prompts/templates}:/data/prompts/templates:ro
     environment:
       <<: *common-env
       STEP_RUNTIME: ${STEP_RUNTIME:-subprocess}
@@ -195,6 +198,8 @@ services:
     volumes:
       - ${FLORI_DATA_DIR:-flori-data}:/data
       - ${HOST_WORK_DIR:-flori-work}:/tmp/flori-work
+      # 默认 prompt 模板外挂(只读,同 worker-cpu):改 configs/prompts/templates 即生效不 rebuild;缺挂载回退内联 _DEFAULT。
+      - ${FLORI_TEMPLATES_DIR:-./configs/prompts/templates}:/data/prompts/templates:ro
     environment:
       <<: *common-env
       STEP_RUNTIME: ${STEP_RUNTIME:-subprocess}
