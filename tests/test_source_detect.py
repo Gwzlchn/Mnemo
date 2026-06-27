@@ -25,6 +25,11 @@ class TestDetectSource:
     def test_arxiv_pdf(self):
         assert detect_source("https://arxiv.org/pdf/2301.00001") == "arxiv"
 
+    def test_direct_pdf_non_arxiv(self):
+        # 非 arxiv 直链 PDF(OSDI/usenix 等)→ pdf 源(走论文流水线,下载存 source.pdf)。
+        assert detect_source("https://www.usenix.org/system/files/osdi23-li-zhuohan.pdf") == "pdf"
+        assert detect_source("https://example.com/papers/foo.PDF?x=1") == "pdf"
+
     def test_empty_string(self):
         assert detect_source("") == "other"
 

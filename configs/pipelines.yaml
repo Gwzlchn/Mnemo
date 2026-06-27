@@ -395,11 +395,13 @@ audio:
       label: "语音转写"
       run: steps.video.step_02_whisper
       image: flori/step-gpu
-      pool: gpu
+      # 对齐 video 的 whisper:cpu-pool + 无 tag → 任意 cpu worker 可跑(faster-whisper CPU int8);
+      # worker 有 GPU 时 select_whisper_model 自动用 GPU(gpu 更好,无 gpu 也行)。原 gpu-pool 致无 GPU 时卡死。
+      pool: cpu
       needs: ["01_download"]
       timeout: 1800
       retry: 2
-      tags: ["gpu"]
+      tags: []
       outputs: ["input/subtitle.srt"]
 
     "03_transcript_parse":

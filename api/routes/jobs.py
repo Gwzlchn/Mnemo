@@ -66,7 +66,7 @@ def _detect_content_type(url: str | None, filename: str | None = None) -> str:
             return "article"
     if url:
         source = detect_source(url)
-        if source == "arxiv":
+        if source in ("arxiv", "pdf"):   # arxiv 摘要页 / 直链 PDF(OSDI/usenix 等)→ 论文
             return "paper"
         if source == "http_article":
             return "article"

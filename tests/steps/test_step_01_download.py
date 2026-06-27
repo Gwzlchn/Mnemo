@@ -67,6 +67,19 @@ class TestDownloadStep:
             mock_dl.assert_called_once_with("https://arxiv.org/abs/2301.00001")
             assert result["source"] == "arxiv"
 
+    def test_source_detection_pdf(self, tmp_path):
+        # 非 arxiv 直链 PDF(OSDI/usenix 等)→ source=pdf,走 _download_pdf(存 source.pdf)。
+        job_dir = tmp_path / "job"
+        job_dir.mkdir()
+        for d in ["input", "intermediate", "output", "assets", "logs"]:
+            (job_dir / d).mkdir()
+        url = "https://www.usenix.org/system/files/osdi23-li-zhuohan.pdf"
+        step = self._make(job_dir, tmp_path, url=url, content_type="paper")
+        with patch.object(step, "_download_pdf") as mock_dl:
+            result = step.execute()
+            mock_dl.assert_called_once_with(url)
+            assert result["source"] == "pdf"
+
     def test_upload_mode_skips_download(self, tmp_path):
         job_dir = tmp_path / "job"
         job_dir.mkdir()

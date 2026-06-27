@@ -45,6 +45,8 @@ class DownloadStep(StepBase):
             self._download_youtube(url)
         elif source == "arxiv":
             self._download_arxiv(url)
+        elif source == "pdf":
+            self._download_pdf(url)
         elif source == "http_article":
             self._download_article(url)
         elif source == "podcast":
@@ -248,6 +250,16 @@ class DownloadStep(StepBase):
 
         pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
         cmd = ["curl", "-fSL", "-o", str(input_dir / "source.pdf"), pdf_url]
+        self.run_subprocess(cmd, timeout=120)
+
+    def _download_pdf(self, url: str) -> None:
+        """非 arxiv 的直链 PDF(OSDI/usenix/会议/期刊等)→ input/source.pdf,供 02_pdf_parse 消费。"""
+        from shared.net import assert_public_url
+
+        assert_public_url(url)   # 抓取前挡内网/回环目标(SSRF),与 _download_article 一致
+        input_dir = self.job_dir / "input"
+        input_dir.mkdir(parents=True, exist_ok=True)
+        cmd = ["curl", "-fSL", "-o", str(input_dir / "source.pdf"), url]
         self.run_subprocess(cmd, timeout=120)
 
     def _download_article(self, url: str) -> None:

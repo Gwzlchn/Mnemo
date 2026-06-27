@@ -45,6 +45,11 @@ def detect_source(url: str) -> str:
         if pat.search(url):
             return "arxiv"
 
+    # 非 arxiv 的直链 PDF(OSDI/usenix/会议/期刊等)→ 'pdf' 源,走论文流水线(下载存 source.pdf)。
+    # arxiv 已在上面命中,故此处只匹配其它 .pdf。
+    if url.lower().split("?")[0].endswith(".pdf"):
+        return "pdf"
+
     # 音频后缀优先于通用文章:同为 http(s) 链接,音频走播客单集。
     if url.lower().split("?")[0].endswith(AUDIO_SUFFIXES):
         return "podcast"
