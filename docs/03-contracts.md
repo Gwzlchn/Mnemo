@@ -1682,6 +1682,7 @@ video:
 - **paper**：`01_download` → `02_pdf_parse` → (`03_sections`, `04_figures`) → `04_translate_paper`(条件) → `05_smart_paper` → `06_review`。
   - `02_pdf_parse` 检测正文主语言写 `parsed.json.lang`(判据与文章共用 `steps.utils.lang`);**非中文**额外写 `intermediate/needs_translation.json`;元信息(title/authors/abstract/pages/lang/**venue**)经 JobDetail `media` 透出「元信息」tab(与文章同)。
   - **来源(`media.venue` / `media.sitename`)**:论文 `02_pdf_parse._extract_venue` 抽会议/期刊+年份(`OSDI 2023`/`arXiv`;全名→缩写映射在 `configs/venues.yaml`,配置与代码分离);文章 `02_parse_article` 取 trafilatura `sitename`(URL 域名兜底)。前端「来源」= `venue`/`sitename`,无则回退来源类型标签。
+  - **arxiv 元数据**:`01_download._fetch_arxiv_meta` 查 arxiv API(`export.arxiv.org/api/query`,feedparser 解析)→ `title/authors/abstract/published_at` 写入 `input/metadata.json`(权威来源);`02_pdf_parse` 优先用其 `title/authors/abstract` 覆盖 PDF 启发(PDF 标题常误抓左边距 arXiv 戳、作者为空)。best-effort,API 失败回退 PDF 解析。
   - `04_translate_paper`(AI,`rules.exists` 门控,仅非中文论文):章节文本忠实翻译为简体中文 → `output/translated.md`(保留结构/公式/图表引用),供「译文」tab。
   - `05_smart_paper` `needs` 含 `04_translate_paper`:非中文论文笔记**基于 章节+图表+译文**(有译文则用译文正文);译文跳过(中文论文)依赖视为满足、读原文。
 - **article**：`01_download` → `02_parse_article` → `03_article_sections` → `04_smart_article`(可选,`smart_note`)/`04_translate_article`(条件) → `05_concepts`(必跑) → `06_review`(可选)。

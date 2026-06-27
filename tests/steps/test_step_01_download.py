@@ -110,6 +110,45 @@ class TestDownloadStep:
         assert meta["file_size_mb"] > 0
         assert meta["duration_sec"] == 42.0
 
+    _ARXIV_ATOM = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>BERT: Pre-training of Deep
+      Bidirectional Transformers</title>
+    <summary>We introduce BERT.</summary>
+    <published>2018-10-11T17:08:54Z</published>
+    <author><name>Jacob Devlin</name></author>
+    <author><name>Ming-Wei Chang</name></author>
+  </entry>
+</feed>"""
+
+    def test_fetch_arxiv_meta_and_merge(self, tmp_path):
+        # arxiv API 元数据解析(标题去换行/作者/摘要/发布日)+ 并入 _extract_metadata(权威,优先 PDF)。
+        from types import SimpleNamespace
+        job_dir = tmp_path / "job"; job_dir.mkdir(); (job_dir / "input").mkdir()
+        step = self._make(job_dir, tmp_path, url="https://arxiv.org/abs/1810.04805", content_type="paper")
+        with patch.object(step, "run_subprocess", return_value=SimpleNamespace(stdout=self._ARXIV_ATOM)):
+            step._fetch_arxiv_meta("1810.04805")
+        m = step._arxiv_meta
+        assert m["title"] == "BERT: Pre-training of Deep Bidirectional Transformers"
+        assert m["authors"] == ["Jacob Devlin", "Ming-Wei Chang"]
+        assert m["abstract"] == "We introduce BERT."
+        assert m["published_at"] == "2018-10-11"
+        (job_dir / "input" / "source.pdf").write_bytes(b"%PDF-1.4")
+        meta = step._extract_metadata("arxiv", "paper")
+        assert meta["title"].startswith("BERT") and meta["authors"] == ["Jacob Devlin", "Ming-Wei Chang"]
+
+    def test_fetch_arxiv_meta_failure_is_graceful(self, tmp_path):
+        # 网络/解析失败 → 不抛、不 stash;_extract_metadata 正常返回(回退 PDF 解析)。
+        job_dir = tmp_path / "job"; job_dir.mkdir(); (job_dir / "input").mkdir()
+        step = self._make(job_dir, tmp_path, url="https://arxiv.org/abs/1810.04805", content_type="paper")
+        with patch.object(step, "run_subprocess", side_effect=Exception("network down")):
+            step._fetch_arxiv_meta("1810.04805")
+        assert getattr(step, "_arxiv_meta", {}) == {}
+        (job_dir / "input" / "source.pdf").write_bytes(b"%PDF-1.4")
+        meta = step._extract_metadata("arxiv", "paper")
+        assert "title" not in meta
+
     def test_idempotent(self, tmp_path):
         job_dir = tmp_path / "job"
         job_dir.mkdir()

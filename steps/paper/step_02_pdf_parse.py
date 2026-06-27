@@ -41,6 +41,16 @@ class PdfParseStep(StepBase):
             formulas = self._extract_formulas(doc)
             num_pages = len(doc)
 
+        # arxiv 等:01_download 写的 input/metadata.json 含权威元数据(来自 arxiv API)→ 优先于 PDF 启发
+        # (PDF 标题常抓成左边距 arXiv 戳、作者多为空)。仅在 metadata 有该字段时覆盖。
+        src_meta = self._load_source_meta()
+        if src_meta.get("title"):
+            title = src_meta["title"].strip()
+        if src_meta.get("authors"):
+            authors = src_meta["authors"]
+        if src_meta.get("abstract"):
+            abstract = src_meta["abstract"].strip()
+
         # 语言检测(翻译触发,与文章共用判据):标题+摘要+章节文本判中/非中。
         from steps.utils.lang import detect_lang
         sample = " ".join([title or "", abstract or ""] + [s.get("text", "") for s in sections])
@@ -66,9 +76,18 @@ class PdfParseStep(StepBase):
         return {"pages": num_pages, "sections": len(sections),
                 "figures": len(figures), "lang": lang}
 
+    def _load_source_meta(self) -> dict:
+        """读 01_download 写的 input/metadata.json(arxiv API 等权威元数据);缺/坏 → {}。"""
+        p = self.job_dir / "input" / "metadata.json"
+        try:
+            return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        except (OSError, ValueError):
+            return {}
+
     def _extract_title(self, doc) -> str:
         meta = doc.metadata
-        if meta.get("title"):
+        # PDF 内置 title 若是 arXiv 戳(arXiv:xxxx …)则不可信,跳过走字号启发(arxiv 真标题通常靠 API,见 _load_source_meta)。
+        if meta.get("title") and not meta["title"].strip().lower().startswith("arxiv:"):
             return meta["title"]
         if len(doc) > 0:
             page = doc[0]
@@ -87,6 +106,7 @@ class PdfParseStep(StepBase):
                 parts = [
                     s["text"].strip() for s in spans
                     if abs(s["size"] - max_size) < 0.1
+                    and not s["text"].strip().lower().startswith("arxiv:")  # 跳过左边距 arXiv 戳
                 ]
                 title = " ".join(parts).strip()
                 # 兜底:异常长多半误并了页眉/作者块,退回首个最大字号 span。

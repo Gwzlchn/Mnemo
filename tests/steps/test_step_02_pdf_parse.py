@@ -110,6 +110,24 @@ class TestExtractTitle:
         step = _mk_step(tmp_path)
         assert step._extract_title(_FakeDoc({"title": "Meta Title"})) == "Meta Title"
 
+    def test_skips_arxiv_stamp_pdf_title(self, tmp_path):
+        # PDF 内置 title 是 arXiv 戳时不可信 → 跳过,走字号启发拿真标题。
+        step = _mk_step(tmp_path)
+        doc = _FakeDoc(
+            {"title": "arXiv:1810.04805v2  [cs.CL]  24 May 2019"},
+            _blocks([{"size": 18.0, "text": "Real Paper Title"}]),
+        )
+        assert step._extract_title(doc) == "Real Paper Title"
+
+    def test_load_source_meta(self, tmp_path):
+        # 读 01_download 写的 input/metadata.json(arxiv API 权威);缺/坏 → {}。
+        step = _mk_step(tmp_path)
+        (step.job_dir / "input" / "metadata.json").write_text(
+            json.dumps({"title": "BERT", "authors": ["Jacob Devlin"]}))
+        assert step._load_source_meta()["authors"] == ["Jacob Devlin"]
+        (step.job_dir / "input" / "metadata.json").write_text("{bad json")
+        assert step._load_source_meta() == {}
+
     def test_joins_spans_at_max_size(self, tmp_path):
         # 标题跨多个 span(同最大字号)应拼接,而非只取第一个(I-L15)。
         step = _mk_step(tmp_path)
