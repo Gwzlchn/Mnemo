@@ -208,6 +208,10 @@ paper:
     AI_REVIEW_PRIMARY_MODEL: claude-haiku-4-5
     AI_REVIEW_FALLBACK_PROVIDER: deepseek
     AI_REVIEW_FALLBACK_MODEL: deepseek-v4-flash
+    AI_TRANSLATE_PRIMARY_PROVIDER: anthropic
+    AI_TRANSLATE_PRIMARY_MODEL: claude-sonnet-4-6
+    AI_TRANSLATE_FALLBACK_PROVIDER: deepseek
+    AI_TRANSLATE_FALLBACK_MODEL: deepseek-v4-pro
   jobs:
     "01_download":
       label: "下载"
@@ -223,7 +227,8 @@ paper:
       run: steps.paper.step_02_pdf_parse
       image: flori/step-heavy
       needs: ["01_download"]
-      outputs: ["intermediate/parsed.json"]
+      # 非中文论文写 needs_translation.json 标记(供 04_translate_paper 的 rules:exists 门控)。
+      outputs: ["intermediate/parsed.json", "intermediate/needs_translation.json"]
 
     "03_sections":
       label: "章节切分"
@@ -241,11 +246,28 @@ paper:
       needs: ["02_pdf_parse"]
       outputs: ["intermediate/figures.json", "assets/*"]
 
+    "04_translate_paper":
+      label: "翻译"
+      extends: .ai-step
+      run: steps.paper.step_04_translate_paper
+      needs: ["03_sections"]
+      tags: []
+      # 仅非中文论文触发:02_pdf_parse 写了 needs_translation.json 才跑,中文论文跳过。
+      rules:
+        - exists: "intermediate/needs_translation.json"
+          when: on
+        - when: skip
+      ai:
+        primary: {provider: $AI_TRANSLATE_PRIMARY_PROVIDER, model: $AI_TRANSLATE_PRIMARY_MODEL}
+        fallback: {provider: $AI_TRANSLATE_FALLBACK_PROVIDER, model: $AI_TRANSLATE_FALLBACK_MODEL}
+      outputs: ["output/translated.md"]
+
     "05_smart_paper":
       label: "智能版笔记"
       extends: .ai-step
       run: steps.paper.step_05_smart_paper
-      needs: ["03_sections", "04_figures"]
+      # needs 04_translate_paper:非中文论文先翻译,笔记基于译文+图表做(译文跳过=中文论文时依赖视为满足)。
+      needs: ["03_sections", "04_figures", "04_translate_paper"]
       tags: []
       ai:
         primary: {provider: $AI_SMART_PRIMARY_PROVIDER, model: $AI_SMART_PRIMARY_MODEL}

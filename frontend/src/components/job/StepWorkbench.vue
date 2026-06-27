@@ -149,8 +149,9 @@ watch(sel, (name) => {
 
 async function viewFile(f: AFile) {
   selFile.value = f; fileErr.value = ''
-  // 二进制(图片/视频/音频)直接用 <img>/<video>/<audio> 播放,不当文本拉取。
-  if (f.kind === 'image' || f.kind === 'video' || f.kind === 'audio') { fileContent.value = ''; return }
+  // 只对文本/JSON 拉取预览;其余(图片/视频/音频/PDF 等 'other' 二进制)不当文本拉
+  // (PDF 当文本拉+渲染会卡死浏览器),由模板用 <img>/<video>/<audio> 或下载链接呈现。
+  if (f.kind !== 'text' && f.kind !== 'json') { fileContent.value = ''; return }
   fileLoading.value = true
   try {
     const t = await api.getText(artUrl(f.path))
@@ -310,7 +311,12 @@ onMounted(async () => {
                 <audio v-else-if="selFile.kind === 'audio'" :src="mediaUrl(selFile.path)" controls class="w-full" />
                 <div v-else-if="fileErr" class="text-xs text-red-600">{{ fileErr }}</div>
                 <MarkdownViewer v-else-if="selFile.path.endsWith('.md')" :content="fileContent" :job-id="jobId" />
-                <pre v-else class="text-xs whitespace-pre-wrap break-all">{{ fileContent }}</pre>
+                <pre v-else-if="selFile.kind === 'text' || selFile.kind === 'json'" class="text-xs whitespace-pre-wrap break-all">{{ fileContent }}</pre>
+                <!-- 二进制/不可文本预览(PDF 等):给下载/新标签打开链接,不当文本渲染(防卡死)。 -->
+                <a v-else :href="artUrl(selFile.path)" target="_blank" rel="noopener"
+                   class="text-xs text-blue-600 hover:text-blue-700 inline-flex items-center gap-1">
+                  <Package :size="13" />在新标签打开 / 下载（{{ selFile.path.split('/').pop() }}）
+                </a>
                 <!-- 文本加载:浮层覆盖,旧内容保持原高度不塌缩 -->
                 <div v-if="fileLoading" class="absolute inset-0 flex items-center justify-center bg-gray-50/70 text-xs text-gray-400 rounded-lg">加载中…</div>
               </div>

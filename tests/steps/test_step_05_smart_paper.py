@@ -50,6 +50,20 @@ class TestSmartPaperStep:
         assert result["chars"] > 0
         assert list((job_dir / "output" / "versions").glob("notes_smart_*.md"))
 
+    def test_uses_translation_when_present(self, tmp_path, monkeypatch):
+        # 非中文论文有译文 → 笔记基于译文做(source=translation),prompt 用译文正文。
+        job_dir = self._setup_job(tmp_path)
+        (job_dir / "output" / "translated.md").write_text(
+            "# 测试论文\n\n## 引言\n中文译文正文内容。", encoding="utf-8")
+        config = make_step_config(tmp_path, step_name="05_smart_paper", pool="ai")
+        step = SmartPaperStep("05_smart_paper", job_dir, config)
+        cap: dict = {}
+        note = "# 笔记\n\n" + "## 正文\n足够长的真实正文内容以通过净化长度判废。\n" * 30
+        monkeypatch.setattr(step, "call_ai", lambda prompt, **k: cap.update(p=prompt) or note)
+        result = step.execute()
+        assert result["source"] == "translation"
+        assert "中文译文正文内容" in cap["p"]
+
     def test_execute_real_path_backfills_and_sanitizes(self, tmp_path, monkeypatch):
         # 非 DRY_RUN 真实路径:驱动 write_smart_note 的 ![](img:N) 占位符回填 + _sanitize_smart_note
         # 净化(去 agentic 壳 / 补 assets/ 前缀)。这些核心后处理在 DRY_RUN smoke 里全被绕过——

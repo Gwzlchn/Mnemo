@@ -40,11 +40,17 @@ class PdfParseStep(StepBase):
             formulas = self._extract_formulas(doc)
             num_pages = len(doc)
 
+        # 语言检测(翻译触发,与文章共用判据):标题+摘要+章节文本判中/非中。
+        from steps.utils.lang import detect_lang
+        sample = " ".join([title or "", abstract or ""] + [s.get("text", "") for s in sections])
+        lang = detect_lang(sample)
+
         parsed = {
             "title": title,
             "authors": authors,
             "abstract": abstract,
             "pages": num_pages,
+            "lang": lang,
             "sections": sections,
             "figures": figures,
             "formulas": formulas,
@@ -52,7 +58,11 @@ class PdfParseStep(StepBase):
 
         self.report_progress(num_pages, num_pages, "done")
         self.write_output("intermediate/parsed.json", parsed)
-        return {"pages": num_pages, "sections": len(sections), "figures": len(figures)}
+        # 非中文论文 → 写翻译标记,04_translate_paper 经 rules:exists 门控触发(中文论文不译)。
+        if lang != "zh" and len(sample.strip()) > 200:
+            self.write_output("intermediate/needs_translation.json", {"lang": lang})
+        return {"pages": num_pages, "sections": len(sections),
+                "figures": len(figures), "lang": lang}
 
     def _extract_title(self, doc) -> str:
         meta = doc.metadata

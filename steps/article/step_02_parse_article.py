@@ -104,13 +104,9 @@ class ParseArticleStep(StepBase):
 
     @staticmethod
     def _detect_lang(text: str) -> str:
-        """正文主语言粗判:CJK 汉字占(汉字+拉丁字母)比 ≥15% 判 'zh',否则 'non-zh'(英文等→需翻译)。
-        中文文章夹少量英文术语仍 zh;纯英文文章 CJK≈0 → non-zh。无文字 → 'unknown'。"""
-        cjk = len(re.findall(r"[一-鿿]", text))
-        latin = len(re.findall(r'[A-Za-z]', text))
-        if cjk + latin == 0:
-            return "unknown"
-        return "zh" if cjk / (cjk + latin) >= 0.15 else "non-zh"
+        """正文主语言粗判(委托 steps.utils.lang,与论文共用同一判据)。"""
+        from steps.utils.lang import detect_lang
+        return detect_lang(text)
 
     # ── helpers ──
 

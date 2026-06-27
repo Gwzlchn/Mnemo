@@ -320,23 +320,28 @@ async def get_job(
             }
     except Exception:
         pass
-    # 文章:字数(视频是分辨率)——取自 02_parse 写入 parsed.json 的 word_count。
-    if job.content_type == "article":
+    # 文章/论文:从 02 解析(parsed.json)透元信息进「元信息」tab。article 字数/标签/封面;paper 页数。
+    if job.content_type in ("article", "paper"):
         try:
             raw = await storage.read_file(job_id, "intermediate/parsed.json")
             if raw:
                 p = json.loads(raw.decode("utf-8"))
-                if p.get("word_count") is not None:
-                    media["word_count"] = p["word_count"]
-                # v2:文章元信息进元信息 tab(作者/摘要/标签/封面图)
+                # 通用(article + paper):作者 / 摘要 / 正文语言。
                 if p.get("authors"):
                     media["authors"] = p["authors"]
                 if p.get("abstract"):
                     media["abstract"] = p["abstract"]
-                if p.get("tags"):
-                    media["tags"] = p["tags"]
-                if p.get("image"):
-                    media["image"] = p["image"]
+                if p.get("lang"):
+                    media["lang"] = p["lang"]
+                if job.content_type == "article":
+                    if p.get("word_count") is not None:
+                        media["word_count"] = p["word_count"]
+                    if p.get("tags"):
+                        media["tags"] = p["tags"]
+                    if p.get("image"):
+                        media["image"] = p["image"]
+                elif p.get("pages") is not None:   # paper:页数
+                    media["pages"] = p["pages"]
         except Exception:
             pass
     # 产物路径(元信息"产物路径"):NAS 宿主绝对路径。job 产物实际落在对象存储/本地盘,
