@@ -40,11 +40,12 @@ describe('TaskRow', () => {
     expect(w.find('.title').attributes('title')).toBe('j_abc')
   })
 
-  it('排队中:优先级徽章 + 投递点 + 已等', () => {
+  it('排队中:语义徽章「排队中」+ 投递点 + 已等(优先级数字弱化进 tooltip)', () => {
     const enq = NOW / 1000 - 300   // 5 分钟前入队
     const w = mountRow({ state: 'queued', jobId: 'j', step: 's', priority: 100, enqueuedAt: enq })
     const t = w.text()
-    expect(t).toContain('优先级 100')
+    expect(t).toContain('排队中')          // P2b:不再显裸数字「优先级 100」
+    expect(t).not.toContain('优先级 100')   // 原始数字弱化到 title tooltip
     expect(t).toContain('投递')
     expect(t).toContain('已等 5m00s')
   })

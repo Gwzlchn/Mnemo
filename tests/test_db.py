@@ -1307,3 +1307,42 @@ class TestDeleteCascadeCompleteness:
         db.delete_collection("col_p", purge=True)
         assert db.get_job("jp_1") is None
         assert db.list_usage_by_job("jp_1") == []     # purge 也清 ai_usage(G2)
+
+
+class TestLineageP2b:
+    """P2b: lineage_key / is_current 归组、版本列表、删 current 后回退。"""
+
+    def _mk(self, db, jid, lineage, created, ct="article", cid=None):
+        from datetime import datetime, timezone
+        from shared.models import Job
+        db.create_job(Job(
+            id=jid, content_type=ct, pipeline=ct, lineage_key=lineage, collection_id=cid,
+            created_at=datetime(2026, 6, 27, 10, 0, created, tzinfo=timezone.utc),
+        ))
+
+    def test_same_lineage_groups_to_current(self, db):
+        # 同一 lineage 三个快照:仅最后建的为 current(后建 demote 先建)。
+        self._mk(db, "jobs_a_x_001", "jobs_a_x", 1)
+        self._mk(db, "jobs_a_x_002", "jobs_a_x", 2)
+        self._mk(db, "jobs_a_x_003", "jobs_a_x", 3)
+        total, jobs = db.list_jobs(current_only=True, limit=50)
+        ids = {j.id for j in jobs}
+        assert ids == {"jobs_a_x_003"}              # 只剩 current
+        total_all, all_jobs = db.list_jobs(current_only=False, limit=50)
+        assert len({j.id for j in all_jobs}) == 3   # 全部仍在库
+
+    def test_lineage_versions_and_counts(self, db):
+        self._mk(db, "jobs_a_y_001", "jobs_a_y", 1)
+        self._mk(db, "jobs_a_y_002", "jobs_a_y", 2)
+        vers = db.lineage_versions("jobs_a_y_001")
+        assert [v.id for v in vers] == ["jobs_a_y_002", "jobs_a_y_001"]  # 时间倒序
+        assert db.lineage_counts(["jobs_a_y"]) == {"jobs_a_y": 2}
+
+    def test_promote_after_delete_current(self, db):
+        self._mk(db, "jobs_a_z_001", "jobs_a_z", 1)
+        self._mk(db, "jobs_a_z_002", "jobs_a_z", 2)   # current
+        # 模拟删 current:删库行后回退
+        db.delete_job_cascade("jobs_a_z_002")
+        db.promote_lineage_current("jobs_a_z")
+        _, jobs = db.list_jobs(current_only=True, limit=50)
+        assert {j.id for j in jobs} == {"jobs_a_z_001"}   # 回退到剩余最新

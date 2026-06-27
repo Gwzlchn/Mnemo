@@ -50,6 +50,16 @@ class Job:
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
     error: str | None = None
+    # ── 快照 / lineage(P2b)──
+    # lineage_key=同源基础 id(去时间戳),同一内容的所有快照(重投/来源更新/pipeline 重建)共用;
+    # is_current=该 lineage 当前展示版(列表/KB 默认只显 current,历史版可跳转对比);
+    # source_digest=抓回源内容 hash、pipeline_digest=各步定义指纹聚合(供"重建过期"判断,P2c);
+    # parent_job_id=fork 自哪个快照(P2c)。
+    lineage_key: str | None = None
+    is_current: bool = True
+    source_digest: str | None = None
+    pipeline_digest: str | None = None
+    parent_job_id: str | None = None
 
 
 @dataclass
@@ -180,24 +190,15 @@ class LLMResponse:
     raw: dict | None = None              # provider 原始返回(尽量保真),供审计 raw
 
 
+# id 生成单一来源在 shared.ids;以下保留同名再导出/薄包装,既有 `from shared.models import ...` 调用点不破。
+from shared.ids import (  # noqa: E402
+    content_job_id as _content_job_id,
+    generate_worker_id,  # noqa: F401
+    generate_collection_id,  # noqa: F401
+    subscription_collection_id as collection_id_for_subscription,  # noqa: F401
+)
+
+
 def derive_job_id(url: str | None, content_type: str | None = None, source: str | None = None) -> str:
-    """Job ID(统一规则,见 shared.sources):jobs_{前缀}_{原生id}。撞已存在由调用方加随机后缀消歧。"""
-    from shared.sources import content_job_id
-    return content_job_id(url, content_type, source)
-
-
-def generate_worker_id(worker_type: str) -> str:
-    """生成 Worker ID: {type}-{8 hex chars}"""
-    r = secrets.token_hex(4)
-    return f"{worker_type}-{r}"
-
-
-def collection_id_for_subscription(source_type: str, source_id: str) -> str:
-    """Collection ID(统一规则,见 shared.sources):col_{标签}_{slug}。"""
-    from shared.sources import subscription_collection_id
-    return subscription_collection_id(source_type, source_id)
-
-
-def generate_collection_id() -> str:
-    """手动集合 ID: col_{8 hex}(无日期,简洁;创建时间已单独存 created_at)。"""
-    return f"col_{secrets.token_hex(4)}"
+    """Job ID(统一规则,见 shared.ids):jobs_{前缀}_{原生id}_{时间戳}。同一内容重投/重建=同 lineage 新快照。"""
+    return _content_job_id(url, content_type, source)

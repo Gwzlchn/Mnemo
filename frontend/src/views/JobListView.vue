@@ -378,6 +378,10 @@ const isInitialLoading = computed(() => jobStore.loading && jobStore.list.length
               </template>
               <span class="sep">·</span>
               <span class="dim">{{ fmtDateTime(j.created_at) }}</span>
+              <template v-if="(j.versions ?? 1) > 1">
+                <span class="sep">·</span>
+                <span class="badge b-mut" :title="`同源内容共 ${j.versions} 个快照,可在详情页跳转历史版本`">{{ j.versions }} 版本</span>
+              </template>
             </div>
           </div>
           <template v-if="!selecting">

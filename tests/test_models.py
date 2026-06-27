@@ -15,6 +15,7 @@ from shared.models import (
     derive_job_id,
     generate_worker_id,
 )
+from shared.ids import lineage_key, lineage_key_of
 
 
 class TestEnums:
@@ -48,13 +49,20 @@ class TestEnums:
 
 class TestDeriveJobId:
     def test_bilibili_bv(self):
-        # B 站用 BV 号(稳定/唯一/路径安全)
-        assert derive_job_id("https://b23.tv/BV1xx411c7mD", "video", "bilibili") == "jobs_bili_BV1xx411c7mD"
+        # B 站用 BV 号(稳定/唯一/路径安全);job_id 现带时间戳后缀,lineage_key 是去时间戳的基础 id。
+        jid = derive_job_id("https://b23.tv/BV1xx411c7mD", "video", "bilibili")
+        assert jid.startswith("jobs_bili_BV1xx411c7mD_")
+        assert lineage_key("https://b23.tv/BV1xx411c7mD", "video", "bilibili") == "jobs_bili_BV1xx411c7mD"
+        assert lineage_key_of(jid) == "jobs_bili_BV1xx411c7mD"
 
-    def test_url_hash_stable(self):
+    def test_timestamped_unique_same_lineage(self):
+        # 同 url 重投 = 不同 job_id(时间戳)但同 lineage_key(同源归组)。
         a = derive_job_id("https://example.com/x", "article")
         b = derive_job_id("https://example.com/x", "article")
-        assert a == b and a.startswith("jobs_article_")          # 同 url 稳定
+        assert a != b                                            # 时间戳/随机 → 各自新快照
+        assert a.startswith("jobs_article_")
+        assert lineage_key_of(a) == lineage_key_of(b)            # 同 lineage
+        assert lineage_key("https://example.com/x", "article") == lineage_key_of(a)
 
     def test_no_url_random(self):
         assert derive_job_id(None, "paper").startswith("jobs_paper_")

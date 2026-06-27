@@ -13,6 +13,7 @@ from pathlib import Path
 import structlog
 
 from .models import AIUsage, Collection, Job, JobStatus, Step, StepStatus, Worker
+from .ids import lineage_key_of as _lineage_key_of
 from .status import (
     DEFAULT_ONLINE_WINDOW_SEC,
     DEFAULT_STALE_WINDOW_SEC,
@@ -42,8 +43,14 @@ CREATE TABLE IF NOT EXISTS jobs (
     published_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    error TEXT
+    error TEXT,
+    lineage_key TEXT,
+    is_current INTEGER NOT NULL DEFAULT 1,
+    source_digest TEXT,
+    pipeline_digest TEXT,
+    parent_job_id TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_jobs_lineage ON jobs(lineage_key);
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_collection ON jobs(collection_id);
@@ -192,6 +199,7 @@ _JOB_UPDATABLE = {
     "status", "title", "progress_pct", "error", "updated_at",
     "meta", "style_tags", "domain", "source", "collection_id",
     "published_at",
+    "lineage_key", "is_current", "source_digest", "pipeline_digest", "parent_job_id",
 }
 _STEP_UPDATABLE = {
     "status", "input_hash", "worker_id", "started_at", "finished_at",
@@ -289,6 +297,38 @@ class Database:
             # (改列/删列/回填)按 user_version 分支处理 + 做备份兼容校验。不在此放迁移逻辑。
             if self._conn.execute("PRAGMA user_version").fetchone()[0] == 0:
                 self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        # 回填存量 job 的 lineage_key + is_current(P2b);幂等(无 NULL lineage_key 即跳过)。
+        self._backfill_lineage()
+
+    def _backfill_lineage(self) -> None:
+        """一次性回填 P2b 引入前的旧 job:lineage_key(有 url 按 url 重算,否则=自身 id)+ is_current
+        (每个 lineage 取 created_at 最新者为 current)。幂等:无 lineage_key 为 NULL 的行即直接返回。"""
+        from .ids import lineage_key as _lk
+        with self._lock:
+            cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(jobs)").fetchall()}
+            if "lineage_key" not in cols:
+                return  # 列还没建(极简/异常表),无可回填
+            has_url, has_ct, has_src = "url" in cols, "content_type" in cols, "source" in cols
+            sel = "id" + (", url" if has_url else "") + (", content_type" if has_ct else "") + (", source" if has_src else "")
+            rows = self._conn.execute(
+                f"SELECT {sel} FROM jobs WHERE lineage_key IS NULL"
+            ).fetchall()
+            if not rows:
+                return
+            for r in rows:
+                url = r["url"] if has_url else None
+                lk = _lk(url, r["content_type"] if has_ct else None, r["source"] if has_src else None) if url else r["id"]
+                self._conn.execute("UPDATE jobs SET lineage_key=? WHERE id=?", (lk, r["id"]))
+            # 每个 lineage 仅最新 created_at 的快照为 current,其余历史。
+            self._conn.execute("UPDATE jobs SET is_current=0 WHERE lineage_key IS NOT NULL")
+            self._conn.execute(
+                """UPDATE jobs SET is_current=1 WHERE id IN (
+                     SELECT id FROM jobs j WHERE j.created_at = (
+                       SELECT MAX(created_at) FROM jobs j2 WHERE j2.lineage_key = j.lineage_key
+                     ) GROUP BY j.lineage_key
+                   )"""
+            )
+            self._conn.commit()
 
     def schema_version(self) -> int:
         """当前库的 schema 版本(PRAGMA user_version)。供备份兼容/未来迁移判断。"""
@@ -301,6 +341,11 @@ class Database:
             "collection_id": "collection_id TEXT",
             "source": "source TEXT",
             "published_at": "published_at TEXT",
+            "lineage_key": "lineage_key TEXT",
+            "is_current": "is_current INTEGER NOT NULL DEFAULT 1",
+            "source_digest": "source_digest TEXT",
+            "pipeline_digest": "pipeline_digest TEXT",
+            "parent_job_id": "parent_job_id TEXT",
         },
         "job_steps": {"retries": "retries INTEGER DEFAULT 0"},
         "ai_usage": {
@@ -358,13 +403,16 @@ class Database:
     # ── Job ──
 
     def create_job(self, job: Job) -> None:
+        # lineage_key 缺省由 id 反推(去时间戳),保证同源快照归一组。
+        lineage = job.lineage_key or _lineage_key_of(job.id)
         with self._lock:
             self._conn.execute(
                 """INSERT INTO jobs
                    (id, content_type, pipeline, collection_id, url, title,
                     domain, source, style_tags, status, progress_pct, meta,
-                    published_at, created_at, updated_at, error)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    published_at, created_at, updated_at, error,
+                    lineage_key, is_current, source_digest, pipeline_digest, parent_job_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     job.id,
                     job.content_type,
@@ -382,8 +430,19 @@ class Database:
                     job.created_at.isoformat(),
                     job.updated_at.isoformat(),
                     job.error,
+                    lineage,
+                    1 if job.is_current else 0,
+                    job.source_digest,
+                    job.pipeline_digest,
+                    job.parent_job_id,
                 ),
             )
+            # 新快照设为 current → 同 lineage 其余降为历史(列表/KB 默认只显 current)。
+            if job.is_current and lineage:
+                self._conn.execute(
+                    "UPDATE jobs SET is_current=0 WHERE lineage_key=? AND id!=?",
+                    (lineage, job.id),
+                )
             self._conn.commit()
 
     def get_job(self, job_id: str) -> Job | None:
@@ -428,9 +487,13 @@ class Database:
         domain: str | None = None,
         source: str | None = None,
         uncategorized: bool = False,
+        current_only: bool = True,
     ) -> tuple[int, list[Job]]:
         where_parts: list[str] = []
         params: list = []
+        # 默认按 lineage 归组只返 current 快照(同一内容的历史版不平铺;经版本跳转看历史)。
+        if current_only:
+            where_parts.append("is_current=1")
         if status:
             where_parts.append("status=?")
             params.append(status)
@@ -459,6 +522,61 @@ class Database:
             ).fetchall()
 
         return total, [self._row_to_job(r) for r in rows]
+
+    def lineage_versions(self, job_id: str) -> list[Job]:
+        """同一 lineage(同源内容)的所有快照,按 created_at 倒序(供详情页历史版本跳转)。
+        若该 job 无 lineage_key(旧库未回填)则只返它自己。"""
+        with self._lock:
+            row = self._conn.execute("SELECT lineage_key FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None:
+                return []
+            lk = row["lineage_key"]
+            if not lk:
+                one = self._conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+                return [self._row_to_job(one)] if one else []
+            rows = self._conn.execute(
+                "SELECT * FROM jobs WHERE lineage_key=? ORDER BY created_at DESC", (lk,)
+            ).fetchall()
+        return [self._row_to_job(r) for r in rows]
+
+    def promote_lineage_current(self, lineage_key: str) -> None:
+        """若某 lineage 当前无 current(如 current 被删),把剩余最新 created_at 的一版提为 current。
+        幂等:已有 current 则不动。"""
+        if not lineage_key:
+            return
+        with self._lock:
+            has = self._conn.execute(
+                "SELECT 1 FROM jobs WHERE lineage_key=? AND is_current=1 LIMIT 1", (lineage_key,)
+            ).fetchone()
+            if has:
+                return
+            latest = self._conn.execute(
+                "SELECT id FROM jobs WHERE lineage_key=? ORDER BY created_at DESC LIMIT 1",
+                (lineage_key,),
+            ).fetchone()
+            if latest:
+                self._conn.execute(
+                    "UPDATE jobs SET is_current=1 WHERE id=?", (latest["id"],)
+                )
+                self._conn.commit()
+
+    def lineage_counts(self, lineage_keys: list[str]) -> dict[str, int]:
+        """批量取各 lineage 的快照总数(供列表「N 个历史版本」提示)。一次 IN 查询。"""
+        keys = [k for k in dict.fromkeys(lineage_keys) if k]
+        if not keys:
+            return {}
+        out: dict[str, int] = {}
+        with self._lock:
+            for i in range(0, len(keys), 500):
+                chunk = keys[i:i + 500]
+                ph = ",".join("?" * len(chunk))
+                rows = self._conn.execute(
+                    f"SELECT lineage_key, COUNT(*) AS n FROM jobs WHERE lineage_key IN ({ph}) GROUP BY lineage_key",
+                    chunk,
+                ).fetchall()
+                for r in rows:
+                    out[r["lineage_key"]] = r["n"]
+        return out
 
     def count_jobs_by_status(self, collection_id: str | None = None) -> dict[str, int]:
         """一次 GROUP BY 取各状态计数(替代多次 list_jobs(limit=0) 的 COUNT+空 SELECT)。
@@ -1820,6 +1938,11 @@ class Database:
             created_at=_parse_dt(row["created_at"]),
             updated_at=_parse_dt(row["updated_at"]),
             error=row["error"],
+            lineage_key=row["lineage_key"],
+            is_current=bool(row["is_current"]),
+            source_digest=row["source_digest"],
+            pipeline_digest=row["pipeline_digest"],
+            parent_job_id=row["parent_job_id"],
         )
 
     def _row_to_step(self, row: sqlite3.Row) -> Step:

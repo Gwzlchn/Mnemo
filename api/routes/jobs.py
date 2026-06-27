@@ -245,6 +245,10 @@ async def list_jobs(
         limit=limit, offset=offset, domain=domain, source=source,
         uncategorized=uncategorized,
     )
+    # 默认按 lineage 归组只返 current;附每条同源快照总数(>1 表示有历史版本可跳转)。
+    counts = await asyncio.to_thread(
+        db.lineage_counts, [j.lineage_key for j in jobs if j.lineage_key]
+    )
     return JobListResponse(
         total=total,
         items=[
@@ -253,6 +257,7 @@ async def list_jobs(
                 created_at=j.created_at.isoformat(), title=j.title,
                 progress_pct=j.progress_pct, source=j.source, domain=j.domain,
                 collection_id=j.collection_id,
+                versions=counts.get(j.lineage_key, 1) if j.lineage_key else 1,
             )
             for j in jobs
         ],
@@ -380,6 +385,29 @@ async def get_job(
     )
 
 
+@router.get("/{job_id}/versions")
+async def job_versions(
+    job_id: str,
+    db: Database = Depends(get_db),
+):
+    """同一 lineage(同源内容)的所有快照,按时间倒序(详情页历史版本跳转)。
+    每条:{job_id, created_at, is_current, status, title, pipeline_digest}。"""
+    validate_path_segment(job_id, "job_id")
+    jobs = await asyncio.to_thread(db.lineage_versions, job_id)
+    if not jobs:
+        raise HTTPException(404, "job not found")
+    return {
+        "versions": [
+            {
+                "job_id": j.id, "created_at": j.created_at.isoformat(),
+                "is_current": j.is_current, "status": j.status.value, "title": j.title,
+                "pipeline_digest": j.pipeline_digest,
+            }
+            for j in jobs
+        ]
+    }
+
+
 @router.get("/{job_id}/concepts")
 async def job_concepts(
     job_id: str,
@@ -494,6 +522,9 @@ async def _delete_job_full(
     await redis.publish("job_command", {"action": "delete", "job_id": job_id})  # ② 取消在途重试
     await storage.delete(job_id)                            # ③ 产物
     await asyncio.to_thread(db.delete_job_cascade, job_id, job.collection_id, item_id)  # ④ DB 最后
+    # 删的是 current → 把同 lineage 剩余最新一版提为 current(否则该内容在列表消失)。
+    if job.is_current and job.lineage_key:
+        await asyncio.to_thread(db.promote_lineage_current, job.lineage_key)
     audit("job", job_id, "delete", actor=actor, detail={                               # ⑤
         "queue_tasks_removed": removed, "collection_id": job.collection_id,
         "purged_ingested": bool(item_id),

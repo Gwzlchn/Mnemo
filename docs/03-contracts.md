@@ -62,13 +62,17 @@ Response `201`:
 }
 ```
 
+> **Job ID 格式(P2b 起)**:`jobs_{前缀}_{原生id}_{时间戳}`（所有 job 带时间戳;生成单一来源 `shared/ids.py`）。
+> 同一来源内容(同 url)的多个快照(重投/来源更新/pipeline 重建)共享 **`lineage_key`**=`jobs_{前缀}_{原生id}`(去时间戳),
+> 其中一个 `is_current=true`(列表/KB 默认只显该版,历史版经下方 `/versions` 跳转)。
+
 #### GET /api/jobs — 作业列表
 
 ```
 GET /api/jobs?status=processing&domain=deep-learning&source=bilibili&limit=20&offset=0
 ```
 
-查询参数：`status`、`collection_id`、`domain`、`source`（均可选，AND 组合）、`limit`（默认 20，1–200）、`offset`（默认 0，0–2147483647；int32 max,远低于 SQLite int64 溢出点,越界 422）。Response `200`（每项含 `domain` / `collection_id`）：
+查询参数：`status`、`collection_id`、`domain`、`source`（均可选，AND 组合）、`limit`（默认 20，1–200）、`offset`（默认 0，0–2147483647；int32 max,越界 422）。**按 lineage 归组,默认只返各 lineage 的 current 快照**;每项含 `versions`(同源快照总数,>1 表示有历史版本)。Response `200`：
 ```json
 {
   "total": 44,
@@ -82,11 +86,25 @@ GET /api/jobs?status=processing&domain=deep-learning&source=bilibili&limit=20&of
       "source": "bilibili",
       "domain": "deep-learning",
       "collection_id": "c_xxx",
-      "created_at": "2026-05-16T20:00:00+08:00"
+      "created_at": "2026-05-16T20:00:00+08:00",
+      "versions": 1
     }
   ]
 }
 ```
+
+#### GET /api/jobs/{id}/versions — 同源快照(lineage)列表
+
+同一 `lineage_key` 的所有快照,按 `created_at` 倒序(详情页历史版本跳转)。Response `200`：
+```json
+{
+  "versions": [
+    {"job_id": "jobs_article_ab12cd34ef_260627181500a1b2", "created_at": "2026-06-27T18:15:00+08:00",
+     "is_current": true, "status": "done", "title": "示例", "pipeline_digest": "sha256:…"}
+  ]
+}
+```
+job 不存在 → `404`。
 
 #### GET /api/jobs/facets — 任务分面计数
 

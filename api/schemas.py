@@ -29,6 +29,7 @@ class JobResponse(BaseModel):
     source: str | None = None
     domain: str = "general"
     collection_id: str | None = None
+    versions: int = 1   # 同 lineage(同源内容)快照总数;>1 表示有历史版本可跳转(P2b)
 
 
 class JobDetailResponse(JobResponse):

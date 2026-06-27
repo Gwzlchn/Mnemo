@@ -70,6 +70,13 @@ const totalAi = computed(() => {
 const fmtCost = (v: number) => `$${(v ?? 0).toFixed(4)}`
 
 const job = ref<JobDetail | null>(null)
+// 同源 lineage 的所有快照(P2b):时间倒序;>1 则头部出历史版本跳转下拉。
+interface LineageVersion { job_id: string; created_at: string; is_current: boolean; title: string | null; status: string }
+const lineageVersions = ref<LineageVersion[]>([])
+function jumpVersion(e: Event) {
+  const id = (e.target as HTMLSelectElement).value
+  if (id && id !== jobId.value) router.push(`/content/${encodeURIComponent(id)}`)
+}
 const loading = ref(true)
 const loadError = ref('')
 
@@ -139,6 +146,8 @@ async function fetchDetail() {
       { t: d.title || jobId.value },
     ])
     setInitialSteps(d.steps)
+    // 同源 lineage 快照(重投/来源更新/pipeline 重建产生的多个 job);>1 则头部出历史版本跳转。
+    api.get<{ versions: LineageVersion[] }>(`/api/jobs/${fid}/versions`).then(r => { if (jobId.value === fid) lineageVersions.value = r?.versions || [] }).catch(() => {})
     loadEvidence()  // 权威来源(取证产物);有则显示「权威来源」tab
     loadOriginal()  // 原文 MD(article v2 output/original.md);有则显示「原文」tab
     loadTranslated()  // 译文 MD(非中文文章 output/translated.md);有则显示「译文」tab
@@ -515,6 +524,15 @@ watch(job, (j) => {
               <template v-if="job.url">
                 <span class="sep">·</span>
                 <a class="ghost" :href="job.url" target="_blank" rel="noopener" style="color:var(--info)">原始链接<ExternalLink :size="13" /></a>
+              </template>
+              <template v-if="lineageVersions.length > 1">
+                <span class="sep">·</span>
+                <select class="ver-jump" :value="job.job_id" @change="jumpVersion"
+                  title="同源内容的历史快照(重投/来源更新/pipeline 重建)——跳转查看/对比">
+                  <option v-for="(v, i) in lineageVersions" :key="v.job_id" :value="v.job_id">
+                    版本 {{ lineageVersions.length - i }}{{ v.is_current ? '(当前)' : '' }} · {{ fmtDateTime(v.created_at) }}
+                  </option>
+                </select>
               </template>
             </div>
             <div class="dim" style="font-size:12px;margin-top:4px">

@@ -257,9 +257,10 @@ class TestListCollectionJobs:
     @pytest.mark.asyncio
     async def test_list_jobs_pagination(self, client):
         cid = (await _create(client))["id"]
-        for _ in range(3):
+        # 3 个不同 url = 3 个不同 lineage(同 url 会归一组只显 current,见 P2b lineage)。
+        for bv in ("BV1xx411c7mD", "BV2yy422d8nE", "BV3zz533e9oF"):
             await client.post(
-                "/api/jobs", json={"url": "BV1xx411c7mD", "collection_id": cid},
+                "/api/jobs", json={"url": bv, "collection_id": cid},
             )
         resp = await client.get(
             f"/api/collections/{cid}/jobs", params={"limit": 2, "offset": 0},

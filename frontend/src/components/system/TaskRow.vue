@@ -123,7 +123,7 @@ function onClick() {
       <div class="task-badge">
         <StatusBadge v-if="state === 'completed' && status" :status="status" />
         <span v-else-if="state === 'running'" class="badge b-run">运行中</span>
-        <span v-else class="badge b-mut">优先级 {{ priority ?? '—' }}</span>
+        <span v-else class="badge b-mut" :title="priority != null ? `派发优先级 ${priority}(越小越先;进行中的作业优先)` : '排队中'">排队中</span>
       </div>
       <div class="task-time dim">{{ timeText }}</div>
     </div>

@@ -25,6 +25,7 @@ export interface JobSummary {
   source: string | null
   domain: string
   collection_id: string | null
+  versions?: number   // 同源(lineage)快照总数;>1 表示有历史版本(P2b)
 }
 
 export interface StepInfo {
