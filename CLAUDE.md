@@ -177,9 +177,17 @@ flori/
 ### 运行时数据
 - 容器内统一 `/data`；NAS 生产用 bind：`FLORI_DATA_DIR=/volume2/DATA/flori`、`MINIO_DATA_DIR=…/minio`、MinIO bucket `flori`；临时产物 `/tmp/flori-work`。**数据永不放进仓库目录树**。（2026-06-24 从 HDD `/volume1` 冷迁到 **NVMe `/volume2`**；Docker 本体[镜像/命名卷如 redis]早在 /volume2。）
 
-### 开发 / 测试（全容器内,宿主不装依赖）
+### 开发 / 测试 / 交付节奏（全容器内,宿主不装依赖）
 - 开发热更新：`docker compose -f docker-compose.dev.yml up -d`
-- 容器内测试：`docker compose -f docker-compose.test.yml run --rm test`
+- 容器内测试（全量）：`docker compose -f docker-compose.test.yml run --rm test`（本地少用,全量回归交给 CI）
+- **本地快测 + CI 异步回归 + 即时部署**（提速节奏,务必遵守）：
+  1. 本地只跑【新增 / 直接相关】用例（不跑全量）：
+     `docker compose -f docker-compose.test.yml run --rm test pytest tests/test_<新模块>.py -p no:cacheprovider -q`（前端同理指定 vitest 文件）。
+     全量回归由 **CI 承担**：push/PR 自动跑后端全套 + 覆盖率门(75%) + schemathesis + 前端 vitest（`.github/workflows/ci.yml`）。
+  2. **「本地完成」判定** = 新增用例绿 + 本地 build 对应镜像 +（API 调用 或 Playwright MCP）手验通过。三者绿即算完成。
+  3. 完成即：① 按 §提交规范 commit+bump → push main（触发 CI 全量回归,异步）；② **即时部署**不等 CI：NAS recreate 对应容器（本地镜像）+ ECS `scripts/push-to-edge.sh` 直传。
+  4. **ECS 即时部署 vs Watchtower**：直传前暂停 edge Watchtower（`docker pause` watchtower 容器,或给本容器加 `com.centurylinklabs.watchtower.enable=false` 标签），防被旧 ghcr 回退覆盖（[[edge-frontend-deploy-watchtower-cache]] 已踩过）。CI 绿 → ghcr=同代码 → 恢复 Watchtower 跟随（无回退）；CI 红 → 保持直传、Watchtower 维持暂停,按下条处置。
+  5. **CI 后台红灯 = fix-forward（默认）**：看失败用例 → 补 `fix(scope): …;<版本>` 提交修正 → push 复跑；**不回退**已部署版本。仅当线上功能明显坏才 `scripts/rollback.sh` 回滚。
 
 ### 本地活栈（NAS,override 叠加）
 ```
@@ -201,11 +209,18 @@ docker compose -f docker-compose.yml -f .local/docker-compose.uptest.yml --env-f
 - 依赖只在 `pyproject.toml`（optional extras）；Dockerfile/CI 按 extras 名装,勿重抄版本。
 - 改任何对外接口 → 同提交更新 `docs/03-contracts.md`（commit 用 `contract:` 前缀）。
 ### 迭代工作记录（每次开发/运维都要保持的习惯）
-每次迭代（修复 / 新实现 / 重构 / 调研 / 运维）在 `.local/processing/<YYYY-MM-DD>/` 建一个工作项文件,**边做边更新**（不要只动手不记录,尤其大改动）：
+**粒度铁律：一个 commit 一个 txt**（不论大小开发，每个提交都建一个工作项 txt，记录产出该提交的 worktree 开发行为；一个 commit 含 N 个开发步骤进 §7，一个任务的多个 commit 则各自一个 txt）。文件在 `.local/processing/<YYYY-MM-DD>/`，**边做边更新**（不只动手不记录）：
 - 命名 `NN-类型-简述.txt`（类型对齐 git：feat/fix/refactor/chore/ops/research/plan/docs/test）。
 - 头部：类型 / 状态（计划→进行中→已完成/阻塞）/ 创建·开始·结束·耗时（绝对时间 `YYYY-MM-DD HH:MM`）/ 分支·提交。
-- 正文：背景 → 计划（动手前写）→ 实际实现（与计划差异、踩坑）→ 涉及改动 → 验证 → 遗留。
+- 正文（**详写、分节，不是一行**）：背景 → 计划（动手前写）→ 实际实现（与计划差异、踩坑）→ 涉及改动 → 验证 → 遗留 → **步骤时间线**（§7 必写：每个开发步骤都详记 `开始(date) → 结束(date) + 做了什么(详)`；一个 commit 常含 N 步，仅出提交的那步标 commit sha）。
 - 当天建 `00-当日索引.txt`；跨天未完的滚动进 `.local/processing/待办池.txt`。
 - 标准/模板/待办池放 `.local/processing/` 根目录（长存,不随日期清理）；完整规范见 `.local/processing/迭代记录规范.txt`。
+
+### 调研结论即写盘（防 context 重复调研，省 token）
+调研/排查出的**非显然结论**别只留在对话里——一压缩就丢，下个会话又重查一遍（拖慢节奏 + 烧 token）。**研完即落盘，写在对的层**：
+- 非显然代码事实/坑（"X 靠 Y 实现"、"配置在 Z"、某 gotcha）→ **auto-memory**（`/remember`；每会话作为 system-reminder 重载，扛压缩）。
+- 稳定架构事实 → **CLAUDE.md / docs/ADR**；本次开发过程/发现 → **`.local/processing` worklog §3/§4/§7**。
+- 广搜（"X 在哪 / 找所有调用方 / Y 怎么流转"）→ 派 **Explore / general-purpose 子 agent 或 fork**，只把**结论**带回主 context（文件 dump 不进主 context，不触发压缩），结论再写盘。
+- 原则：花了 >2 分钟、之后还要用的结论，**移到下一步前先写盘**；代码引用一律 `file:line` 便于精准重读，不整文件重扫。
 - 全程在 `.local/`（gitignored,永不入 git）；值得长存的决策升格 `docs/adr/`,接口变更进 `docs/03-contracts.md`。
 
