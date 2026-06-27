@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from shared.audit import audit
 from shared.db import Database
 from shared.models import Collection, collection_id_for_subscription, generate_collection_id
 from shared.redis_client import RedisClient
@@ -102,6 +103,7 @@ async def _sync_collection_body(
                 db, redis, storage,
                 url=it.url, content_type=it.content_type, domain=coll.domain,
                 collection_id=coll.id, title=it.title or None,
+                item_id=it.item_id, actor="subscription",
             )
             await asyncio.to_thread(db.mark_ingested, coll.id, it.item_id)
         except Exception as e:
@@ -166,6 +168,8 @@ async def create_collection(
         except Exception as e:  # 首次同步失败不阻塞集合创建
             logger.warning("initial_sync_failed", coll=cid, error=str(e)[:200])
         collection = await asyncio.to_thread(db.get_collection, cid)
+    audit("collection", cid, "create", actor="api",
+          detail={"name": name, "domain": req.domain, "subscription": is_sub})
     return _to_response(collection)
 
 
@@ -212,6 +216,7 @@ async def update_collection(
         db.update_collection, collection_id,
         req.name, req.description, req.tags, req.sync_enabled,
     )
+    audit("collection", collection_id, "update", actor="api")
     return _to_response(await asyncio.to_thread(db.get_collection, collection_id))
 
 
@@ -240,14 +245,33 @@ async def delete_collection(
     collection_id: str,
     purge: bool = Query(False),   # false=仅解绑(保留 job/笔记);true=连名下 job 一起删(前端需二次确认)
     db: Database = Depends(get_db),
+    redis: RedisClient = Depends(get_redis),
+    storage: StorageBackend = Depends(get_storage),
 ):
     """删集合两模式:默认解绑(名下 job 的 collection_id 置 NULL、保留内容);
-    purge=true 连名下 job 一起删。两种都清该集合的 ingested_items(便于重订阅重新入库)。"""
+    purge=true 连名下 job 一起删(走与单 job 删同款的精准清理:队列/编排/产物,再 DB 批量级联)。
+    两种都清该集合的 ingested_items(便于重订阅重新入库)。"""
     validate_path_segment(collection_id, "collection_id")
     c = await asyncio.to_thread(db.get_collection, collection_id)
     if not c:
         raise HTTPException(404, "collection not found")
+    purged = 0
+    if purge:
+        # 名下每个 job 先做非 DB 清理(队列残留 + 编排 hash + active + 在途重试 + 产物),
+        # 再由 db.delete_collection(purge=True) 单事务批量删 DB(jobs+FTS+ai_usage+occurrences+ingested+集合)。
+        _, jobs = await asyncio.to_thread(db.list_jobs, collection_id=collection_id, limit=100000)
+        for j in jobs:
+            await redis.remove_job_tasks(j.id)
+            await redis.cleanup_job(j.id)
+            await redis.remove_active_job(j.id)
+            await redis.publish("job_command", {"action": "delete", "job_id": j.id})
+            await storage.delete(j.id)
+            audit("job", j.id, "delete", actor="collection_purge",
+                  detail={"collection_id": collection_id})
+        purged = len(jobs)
     await asyncio.to_thread(db.delete_collection, collection_id, purge)
+    audit("collection", collection_id, "delete", actor="api",
+          detail={"purge": purge, "jobs_purged": purged})
 
 
 @router.get("/{collection_id}/jobs", response_model=JobListResponse)

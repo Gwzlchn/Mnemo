@@ -8,7 +8,7 @@ import { fmtDateTime } from '../utils/datetime'
 import { contentTypeIcon, contentTypePill } from '../utils/contentType'
 import { jobSourceLabel } from '../constants/sources'
 import type { JobSummary, JobFacets } from '../types'
-import { Inbox, ChevronRight, X, RotateCcw } from 'lucide-vue-next'
+import { Inbox, ChevronRight, X, RotateCcw, Trash2 } from 'lucide-vue-next'
 
 const showToast = inject<(m: string, t?: 'success' | 'error' | 'info') => void>('showToast', () => {})
 
@@ -24,6 +24,42 @@ const domainStore = useDomainStore()
 const PAGE = 20
 const offset = ref(0)
 const loadError = ref('')
+
+// 选择 / 删除(单条 + 批量)。删除走后端精准级联(队列/产物/用量/去重/DB)。
+const selecting = ref(false)
+const selected = ref<Set<string>>(new Set())
+const deleting = ref(false)
+function toggleSelecting() {
+  selecting.value = !selecting.value
+  if (!selecting.value) selected.value = new Set()
+}
+function toggleSel(id: string) {
+  const n = new Set(selected.value)
+  n.has(id) ? n.delete(id) : n.add(id)
+  selected.value = n
+}
+async function deleteOne(id: string) {
+  if (!confirm('删除这条内容?将级联清除其队列任务、产物、用量、订阅去重记录,不可恢复。')) return
+  deleting.value = true
+  try {
+    await jobStore.deleteJob(id)
+    showToast('已删除', 'success')
+    await load()
+  } catch { showToast('删除失败', 'error') } finally { deleting.value = false }
+}
+async function deleteSelected() {
+  const ids = [...selected.value]
+  if (!ids.length) return
+  if (!confirm(`删除选中的 ${ids.length} 条内容?将级联清除各自的队列任务/产物/用量/去重记录,不可恢复。`)) return
+  deleting.value = true
+  try {
+    const n = await jobStore.deleteJobs(ids)
+    showToast(`已删除 ${n} 条`, 'success')
+    selected.value = new Set()
+    selecting.value = false
+    await load()
+  } catch { showToast('批量删除失败', 'error') } finally { deleting.value = false }
+}
 
 // 后端聚合分面(全量 jobs):chip 计数与知识库可选项的唯一来源。
 const facets = ref<JobFacets>({ source: {}, domain: {}, status: {} })
@@ -232,6 +268,18 @@ const isInitialLoading = computed(() => jobStore.loading && jobStore.list.length
       <button class="btn" style="margin-left:auto" :disabled="retryingAll" @click="onRetryAllFailed">
         <RotateCcw :size="14" />{{ retryingAll ? '重试中…' : '重试全部失败' }}
       </button>
+      <button class="btn" data-testid="select-toggle" :class="{ on: selecting }" @click="toggleSelecting">
+        <component :is="selecting ? X : Trash2" :size="14" />{{ selecting ? '退出选择' : '选择删除' }}
+      </button>
+    </div>
+
+    <!-- 批量删除条(仅选择模式) -->
+    <div v-if="selecting" class="batchbar">
+      <span>已选 <b>{{ selected.size }}</b> 条</span>
+      <button
+        class="btn sm danger" data-testid="batch-delete"
+        :disabled="!selected.size || deleting" @click="deleteSelected"
+      ><Trash2 :size="13" />{{ deleting ? '删除中…' : `删除选中 (${selected.size})` }}</button>
     </div>
 
     <!-- 三组筛选 -->
@@ -309,9 +357,14 @@ const isInitialLoading = computed(() => jobStore.loading && jobStore.list.length
       <div class="list">
         <div
           v-for="j in filtered" :key="j.job_id"
-          class="row" :style="j.status === 'failed' ? 'cursor:default' : ''"
-          @click="j.status !== 'failed' ? goDetail(j.job_id) : null"
+          class="row" :class="{ sel: selecting && selected.has(j.job_id) }"
+          :style="(selecting || j.status !== 'failed') ? '' : 'cursor:default'"
+          @click="selecting ? toggleSel(j.job_id) : (j.status !== 'failed' ? goDetail(j.job_id) : null)"
         >
+          <input
+            v-if="selecting" type="checkbox" class="rowcheck"
+            :checked="selected.has(j.job_id)" @click.stop="toggleSel(j.job_id)"
+          />
           <span class="type-pill" :class="contentTypePill(j.content_type)">
             <component :is="contentTypeIcon(j.content_type)" />
           </span>
@@ -327,11 +380,17 @@ const isInitialLoading = computed(() => jobStore.loading && jobStore.list.length
               <span class="dim">{{ fmtDateTime(j.created_at) }}</span>
             </div>
           </div>
-          <button
-            v-if="j.status === 'failed'"
-            class="btn sm" @click.stop="retry(j.job_id)"
-          ><RotateCcw :size="13" />重试</button>
-          <ChevronRight v-else :size="16" class="dim" />
+          <template v-if="!selecting">
+            <button
+              v-if="j.status === 'failed'"
+              class="btn sm" @click.stop="retry(j.job_id)"
+            ><RotateCcw :size="13" />重试</button>
+            <button
+              class="btn sm danger" data-testid="row-delete" title="删除"
+              :disabled="deleting" @click.stop="deleteOne(j.job_id)"
+            ><Trash2 :size="13" /></button>
+            <ChevronRight v-if="j.status !== 'failed'" :size="16" class="dim" />
+          </template>
         </div>
       </div>
 
@@ -344,3 +403,16 @@ const isInitialLoading = computed(() => jobStore.loading && jobStore.list.length
     </template>
   </div>
 </template>
+
+<style scoped>
+.batchbar {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 12px; padding: 8px 12px;
+  background: var(--bad-bg, #fdecec); border: 1px solid var(--bad, #d33); border-radius: 8px;
+  font-size: 13px;
+}
+.btn.danger { color: var(--bad, #d33); border-color: var(--bad, #d33); }
+.btn.danger:hover:not(:disabled) { background: var(--bad-bg, #fdecec); }
+.row.sel { background: var(--brand-50, #eef3ff); }
+.rowcheck { width: 16px; height: 16px; cursor: pointer; flex: 0 0 auto; }
+</style>

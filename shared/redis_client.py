@@ -371,6 +371,38 @@ class RedisClient:
         ]
         await self.r.delete(*keys)
 
+    async def remove_job_tasks(self, job_id: str) -> int:
+        """精准删该 job 在各 queue:{pool} 队列里【尚未被认领】的排队 task,并清 queue:enqueued 残留时间戳。
+        返回删除的成员数。供删除 job 时清队列残留(否则成指向已删 job 的孤儿 task,审计缺口 G1)。
+        ★成员是 enqueue_step 写入的 sort_keys JSON,只能逐成员 json.loads 比对 job_id 后 ZREM 整段成员
+        (无法按 job_id 模式匹配删)。失败安全:任何异常吞掉、返回已删数,不反噬删除主流程。"""
+        removed = 0
+        try:
+            pool_keys: list[str] = []
+            cursor = 0
+            while True:
+                cursor, keys = await self.r.scan(cursor, match="queue:*", count=200)
+                for k in keys:
+                    if k != "queue:enqueued":   # 同前缀的入队时间戳 hash,跳过
+                        pool_keys.append(k)
+                if cursor == 0:
+                    break
+            for qk in pool_keys:
+                pool = qk.split("queue:", 1)[1]
+                for member in await self.r.zrange(qk, 0, -1):
+                    try:
+                        t = json.loads(member)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    if t.get("job_id") != job_id:
+                        continue
+                    await self.r.zrem(qk, member)
+                    await self.r.hdel("queue:enqueued", f"{pool}|{job_id}|{t.get('step')}")
+                    removed += 1
+        except Exception:
+            pass
+        return removed
+
     # ── Worker ──
 
     # TTL 缺省取 online_window 兜底常量(单一事实源):worker liveness key 的过期窗口

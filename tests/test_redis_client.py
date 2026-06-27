@@ -576,3 +576,31 @@ class TestLinkTraffic:
         monkeypatch.setattr(rc.r, "lrange", boom)
         assert await rc.get_link_traffic() is None  # 失败回 None,不抛
         assert await rc.get_traffic_timeline() == []
+
+
+class TestRemoveJobTasks:
+    """删 job 时精准清队列里其未认领的排队 task(queue:{pool} + queue:enqueued,补 G1)。"""
+
+    @pytest.mark.asyncio
+    async def test_removes_only_target_job_across_pools(self, rc):
+        # job_a 在 cpu+ai 两池各有 task;job_b 在 cpu 有 task。
+        await rc.enqueue_step("cpu", "job_a", "04_smart", ["cpu"], priority=-3)
+        await rc.enqueue_step("ai", "job_a", "05_concepts", ["ai"], priority=-3)
+        await rc.enqueue_step("cpu", "job_b", "04_smart", ["cpu"], priority=-3)
+
+        removed = await rc.remove_job_tasks("job_a")
+        assert removed == 2
+        # job_a 两条都没了,job_b 还在。
+        cpu = await rc.list_queue("cpu")
+        ai = await rc.list_queue("ai")
+        assert [t["job_id"] for t in cpu] == ["job_b"]
+        assert ai == []
+        # queue:enqueued:job_a 的时间戳清掉,job_b 的保留。
+        ats = await rc.r.hgetall("queue:enqueued")
+        keys = set(ats.keys())
+        assert "cpu|job_b|04_smart" in keys
+        assert not any(k.startswith("cpu|job_a|") or k.startswith("ai|job_a|") for k in keys)
+
+    @pytest.mark.asyncio
+    async def test_empty_safe(self, rc):
+        assert await rc.remove_job_tasks("nope") == 0

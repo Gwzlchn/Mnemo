@@ -70,6 +70,16 @@ export const useJobStore = defineStore('jobs', () => {
     await api.del(`/api/jobs/${jobId}`)
   }
 
+  // 批量删除:逐条走单删端点(各自后端精准级联);串行避免瞬时打爆。返回成功删除数。
+  async function deleteJobs(ids: string[]): Promise<number> {
+    let ok = 0
+    for (const id of ids) {
+      await deleteJob(id)
+      ok++
+    }
+    return ok
+  }
+
   // 分面计数(后端聚合,供过滤 chip)
   async function fetchFacets() {
     return api.get<JobFacets>('/api/jobs/facets')
@@ -80,5 +90,5 @@ export const useJobStore = defineStore('jobs', () => {
     return api.get<JobConcept[]>(`/api/jobs/${encodeURIComponent(jobId)}/concepts`)
   }
 
-  return { list, total, loading, fetchList, fetchDetail, createJob, uploadJob, retryJob, retryAllFailed, retryFailedInCollection, rerunJob, deleteJob, fetchFacets, fetchConcepts }
+  return { list, total, loading, fetchList, fetchDetail, createJob, uploadJob, retryJob, retryAllFailed, retryFailedInCollection, rerunJob, deleteJob, deleteJobs, fetchFacets, fetchConcepts }
 })

@@ -17,6 +17,7 @@ import json
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from shared.audit import audit
 from shared.config import AppConfig
 from shared.db import Database
 from api.deps import get_config, get_db, validate_path_segment, verify_token
@@ -103,6 +104,7 @@ async def create_domain(
     path.write_text(
         yaml.dump(data, allow_unicode=True, default_flow_style=False), encoding="utf-8"
     )
+    audit("knowledge_base", domain, "create", actor="api")
     by = await _overview_map(db, config)
     return by[domain]
 
@@ -161,6 +163,7 @@ async def rename_domain_key(
                 )
                 new_path.unlink(missing_ok=True)
             raise
+    audit("knowledge_base", new, "update", actor="api", detail={"renamed_from": domain, "rows_moved": moved})
     by = await _overview_map(db, config)
     return {"old": domain, "new": new, "moved": moved, "domain": by.get(new)}
 

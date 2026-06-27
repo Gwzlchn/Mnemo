@@ -1270,3 +1270,40 @@ class TestJobsBrief:
         db.create_job(Job(id="j_a", content_type="video", pipeline="video", title="x"))
         out = db.jobs_brief(["j_a", "j_a", "j_a"])   # 去重不报错
         assert list(out.keys()) == ["j_a"]
+
+
+class TestDeleteCascadeCompleteness:
+    """删 job/集合时彻底清:ai_usage(G2) + 订阅 ingested_items(G5,彻底删除)。"""
+
+    def test_delete_job_cascade_clears_ai_usage_and_ingested(self, db):
+        db.create_job(Job(id="jc_1", content_type="article", pipeline="article",
+                          collection_id="col_x"))
+        db.record_ai_usage(AIUsage(exec_id="e1", provider="claude-cli", model="sonnet",
+                                   job_id="jc_1", step="04_smart", cost_usd=0.1))
+        db.mark_ingested("col_x", "item_42")
+        assert db.list_usage_by_job("jc_1")          # 有用量行
+        assert "item_42" in db.ingested_item_ids("col_x")
+
+        db.delete_job_cascade("jc_1", collection_id="col_x", item_id="item_42")
+
+        assert db.get_job("jc_1") is None
+        assert db.list_usage_by_job("jc_1") == []     # ai_usage 已删(G2)
+        assert "item_42" not in db.ingested_item_ids("col_x")  # ingested_items 已删(G5)
+
+    def test_delete_job_cascade_keeps_ingested_when_no_item_id(self, db):
+        # 不传 item_id(手动 job)→ 不动 ingested_items。
+        db.create_job(Job(id="jc_2", content_type="article", pipeline="article",
+                          collection_id="col_y"))
+        db.mark_ingested("col_y", "keepme")
+        db.delete_job_cascade("jc_2", collection_id="col_y")
+        assert "keepme" in db.ingested_item_ids("col_y")
+
+    def test_delete_collection_purge_clears_ai_usage(self, db):
+        db.create_collection(Collection(id="col_p", name="p", domain="deep-learning"))
+        db.create_job(Job(id="jp_1", content_type="article", pipeline="article",
+                          collection_id="col_p"))
+        db.record_ai_usage(AIUsage(exec_id="e2", provider="claude-cli", model="sonnet",
+                                   job_id="jp_1", cost_usd=0.2))
+        db.delete_collection("col_p", purge=True)
+        assert db.get_job("jp_1") is None
+        assert db.list_usage_by_job("jp_1") == []     # purge 也清 ai_usage(G2)

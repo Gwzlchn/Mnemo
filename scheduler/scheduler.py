@@ -233,6 +233,9 @@ class Scheduler:
             self._cancel_delayed_tasks(job_id)
             await self.redis.remove_active_job(job_id)
             await self.redis.cleanup_job(job_id)
+            # 清队列里该 job 尚未认领的排队 task(queue:{pool}+queue:enqueued,补 G1)。
+            # API 删除路径已同步清过;此处兜底 CLI/其它经 pubsub 发起的删除。幂等。
+            await self.redis.remove_job_tasks(job_id)
             logger.info("job_deleted_cleanup", job_id=job_id)
 
     _PERIODIC_INTERVAL_SEC = 30

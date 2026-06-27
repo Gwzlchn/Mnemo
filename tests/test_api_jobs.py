@@ -192,6 +192,19 @@ class TestDeleteJob:
         assert resp.status_code == 204
         assert await storage.read_file(job_id, "output/notes.md") is None  # 产物已清
 
+    @pytest.mark.asyncio
+    async def test_delete_clears_ai_usage_and_calls_queue_cleanup(self, client, app, db, mock_redis):
+        from shared.models import AIUsage
+        create_resp = await client.post("/api/jobs", json={"url": "BV1xx411c7mD"})
+        job_id = create_resp.json()["job_id"]
+        db.record_ai_usage(AIUsage(exec_id="e9", provider="claude-cli", model="sonnet",
+                                   job_id=job_id, cost_usd=0.3))
+        assert db.list_usage_by_job(job_id)
+        resp = await client.delete(f"/api/jobs/{job_id}")
+        assert resp.status_code == 204
+        assert db.list_usage_by_job(job_id) == []            # ai_usage 级联清(G2)
+        mock_redis.remove_job_tasks.assert_awaited_with(job_id)  # 队列清理被调用(G1)
+
 
 class TestPathTraversal:
     @pytest.mark.asyncio

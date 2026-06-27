@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import PlainTextResponse
 
+from shared.audit import audit
 from shared.config import AppConfig
 from shared.db import Database
 from shared.models import Job, JobStatus, Step, StepStatus, derive_job_id
@@ -106,6 +107,7 @@ async def create_job_core(
     collection_id: str | None = None, title: str | None = None,
     upload: tuple[str, bytes] | None = None,
     smart_note: bool | None = None,
+    item_id: str | None = None, actor: str = "api",
 ) -> Job:
     """建 job 的核心流程(create_job 路由 + upload + 订阅同步共用)。返回 Job。
     upload=(ext, data):上传路径,把源文件经 storage 写入 input/source{ext}(兼容本地/MinIO)。"""
@@ -145,10 +147,14 @@ async def create_job_core(
                 job_id, CREDENTIAL_REL,
                 json.dumps({"sessdata": sessdata}, ensure_ascii=False).encode("utf-8"),
             )
+    # item_id:订阅来源去重键,落 meta 供删除时按 (collection_id, item_id) 精准清 ingested_items(彻底删除)。
+    job_meta: dict = {"flags": flags}
+    if item_id:
+        job_meta["source_item_id"] = item_id
     job = Job(
         id=job_id, content_type=ctype, pipeline=pipeline, url=url, title=title,
         domain=domain, source=source, style_tags=style_tags, collection_id=collection_id,
-        meta={"flags": flags},
+        meta=job_meta,
     )
     await asyncio.to_thread(db.create_job, job)
     if collection_id:
@@ -156,6 +162,8 @@ async def create_job_core(
     await redis.publish("job_command", {
         "action": "new_job", "job_id": job_id, "pipeline": pipeline,
     })
+    audit("job", job_id, "create", actor=actor,
+          detail={"content_type": ctype, "source": source, "collection_id": collection_id})
     return job
 
 
@@ -460,12 +468,31 @@ async def delete_job(
     job = await asyncio.to_thread(db.get_job, job_id)
     if not job:
         raise HTTPException(404, "job not found")
-    # 单事务删 job：jobs 行 + FTS 索引 + 集合计数 + glossary 悬空 source,避免中途崩溃留孤儿。
-    await asyncio.to_thread(db.delete_job_cascade, job_id, job.collection_id)
-    # 删产物经 storage 抽象:LocalStorage 删本地目录、RemoteStorage 删 {job_id}/ 前缀对象,
-    # 否则 MinIO/分布式部署下本地路径不存在、产物在对象存储留孤儿(审计 I-H1)。
-    await storage.delete(job_id)
-    await redis.publish("job_command", {"action": "delete", "job_id": job_id})
+    await _delete_job_full(db, redis, storage, job, actor="api")
+
+
+async def _delete_job_full(
+    db: Database, redis: RedisClient, storage: StorageBackend, job: Job, actor: str = "api",
+) -> None:
+    """精准级联删一个 job —— 单 job 删除 与 集合 purge 共用,顺序保证【DB 行最后删 + 每步幂等】:
+    任一步崩溃则 job 仍在 DB → 可原样重删补齐(不依赖周期 GC)。
+    ① 清 redis 队列残留(queue:{pool} + queue:enqueued,补 G1)+ 7 个编排 hash + active 集合;
+    ② publish 让 scheduler 取消在途延迟重试(进程内 asyncio,只能 scheduler 端做);
+    ③ 删产物(LocalStorage 删目录 / RemoteStorage 删 {job_id}/ 前缀,审计 I-H1);
+    ④ 最后删 DB(jobs 行 + FTS + ai_usage + 集合计数 + glossary 出现 + 订阅 ingested_items);
+    ⑤ 审计。running job:不主动回收槽,worker 推回结果经 cas_step_status 见 steps hash 已删而 CAS 失败被丢弃。"""
+    job_id = job.id
+    item_id = (job.meta or {}).get("source_item_id")
+    removed = await redis.remove_job_tasks(job_id)          # ① 队列 ZSET + queue:enqueued
+    await redis.cleanup_job(job_id)                         #    7 个 job:{id}* 编排 hash
+    await redis.remove_active_job(job_id)                   #    SREM active_jobs
+    await redis.publish("job_command", {"action": "delete", "job_id": job_id})  # ② 取消在途重试
+    await storage.delete(job_id)                            # ③ 产物
+    await asyncio.to_thread(db.delete_job_cascade, job_id, job.collection_id, item_id)  # ④ DB 最后
+    audit("job", job_id, "delete", actor=actor, detail={                               # ⑤
+        "queue_tasks_removed": removed, "collection_id": job.collection_id,
+        "purged_ingested": bool(item_id),
+    })
 
 
 @router.post("/retry-failed")

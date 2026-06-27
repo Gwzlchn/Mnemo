@@ -229,7 +229,15 @@ Response `200`:
 
 #### DELETE /api/jobs/{id} — 删除任务
 
-删除任务记录和所有产物文件。Response `204`。
+精准级联删除(顺序保证 **DB 行最后删 + 每步幂等**,崩溃可原样重删,不依赖周期 GC):
+① 清 redis 队列里该 job 未认领的排队 task(`queue:{pool}` + `queue:enqueued`)+ 编排 hash + `active_jobs` + 在途延迟重试;
+② 删产物(本地目录 / 对象存储 `{job_id}/` 前缀);
+③ 删 DB:jobs 行 + `job_steps`(FK CASCADE)+ `notes_fts5` + **`ai_usage`** + 集合计数 -1 + 摘除 glossary 出现 + **订阅 `ingested_items`**(该条下轮订阅可重新入库)。
+running job:不 kill worker,其推回结果经 `cas_step_status`(steps hash 已删→CAS 失败)被丢弃。Response `204`。
+批量删除:前端逐条调本端点(无独立批量端点)。`DELETE /api/collections/{id}?purge=true` 走同款逐 job 精准级联。
+
+> 审计:job / collection / knowledge_base 的增删改经 `shared.audit.audit(entity_type, entity_id, action, actor, detail)`
+> 结构化输出(`evt=audit`)到容器日志,在 **Dozzle** 查看(不建表/不建前端页;可扩展:加新实体只传新 `entity_type`)。
 
 #### POST /api/jobs/{id}/rerun-smart — 换 provider 重跑智能笔记 + 评审
 

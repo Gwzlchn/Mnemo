@@ -146,6 +146,36 @@ describe('JobListView 交互', () => {
     expect(push).not.toHaveBeenCalled()
   })
 
+  it('行内删除按钮调用 deleteJob（DELETE /api/jobs/:id）', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    setupApi({ jobs: { items: [job({ job_id: 'del-me', status: 'done' })], total: 1 } })
+    del.mockResolvedValue({})
+    const w = await mountView()
+    await w.find('[data-testid="row-delete"]').trigger('click')
+    await flushPromises()
+    expect(del).toHaveBeenCalledWith('/api/jobs/del-me')
+  })
+
+  it('选择模式多选并批量删除（逐条 DELETE）', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    setupApi({ jobs: { items: [job({ job_id: 'a' }), job({ job_id: 'b' })], total: 2 } })
+    del.mockResolvedValue({})
+    const w = await mountView()
+    await w.find('[data-testid="select-toggle"]').trigger('click')   // 进选择模式
+    await flushPromises()
+    const checks = w.findAll('input.rowcheck')
+    expect(checks.length).toBe(2)
+    await checks[0].trigger('click')
+    await checks[1].trigger('click')
+    await flushPromises()
+    const batchBtn = w.find('[data-testid="batch-delete"]')
+    expect(batchBtn.text()).toContain('2')
+    await batchBtn.trigger('click')
+    await flushPromises()
+    expect(del).toHaveBeenCalledWith('/api/jobs/a')
+    expect(del).toHaveBeenCalledWith('/api/jobs/b')
+  })
+
   it('点击状态 chip 触发带 status 参数的重新加载', async () => {
     setupApi({ jobs: { items: [], total: 0 }, facets: { status: { done: 1 }, source: {}, domain: {} } })
     const w = await mountView()

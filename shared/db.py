@@ -555,18 +555,29 @@ class Database:
                         (json.dumps(kept, ensure_ascii=False), r["domain"], r["term"]),
                     )
 
-    def delete_job_cascade(self, job_id: str, collection_id: str | None = None) -> None:
-        """原子删 job：jobs 行 + FTS 索引 + 集合计数 -1 + 摘除 glossary.occurrences 里的 job_id。
-        全部在单事务内,避免两次 commit 之间崩溃留孤儿 FTS 行 / 计数错位。
-        job_steps 经 FK ON DELETE CASCADE 连带删除。"""
+    def delete_job_cascade(
+        self, job_id: str, collection_id: str | None = None, item_id: str | None = None
+    ) -> None:
+        """原子删 job:jobs 行 + FTS 索引 + ai_usage 行 + 集合计数 -1 + 摘除 glossary.occurrences 里的 job_id
+        +(订阅 job)清 ingested_items 该条。全部单事务,避免两次 commit 间崩溃留孤儿。
+        job_steps 经 FK ON DELETE CASCADE 连带删除。
+        item_id:订阅来源 job 的去重键(从 job.meta['source_item_id'] 取);传了才清 ingested_items
+        → 该条下轮订阅枚举可重新入库(彻底删除,设计 §7-c)。"""
         with self._lock:
             self._conn.execute("DELETE FROM notes_fts5 WHERE job_id=?", (job_id,))
+            # ai_usage 无外键,不会随 jobs 行 CASCADE,须显式删,否则 token/费用行成永久悬挂孤儿(G2)。
+            self._conn.execute("DELETE FROM ai_usage WHERE job_id=?", (job_id,))
             self._conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
             if collection_id:
                 self._conn.execute(
                     "UPDATE collections SET job_count = MAX(0, job_count - 1) WHERE id=?",
                     (collection_id,),
                 )
+                if item_id:
+                    self._conn.execute(
+                        "DELETE FROM ingested_items WHERE collection_id=? AND item_id=?",
+                        (collection_id, item_id),
+                    )
             self._strip_occurrences_for_jobs([job_id])
             self._conn.commit()
 
@@ -1216,6 +1227,12 @@ class Database:
                 self._strip_occurrences_for_jobs([r["id"] for r in job_rows])
                 self._conn.execute(
                     "DELETE FROM notes_fts5 WHERE collection_id=?", (collection_id,)
+                )
+                # ai_usage 无外键,须显式删名下各 job 的用量行(与 delete_job_cascade 一致,补 G2)。
+                self._conn.execute(
+                    "DELETE FROM ai_usage WHERE job_id IN "
+                    "(SELECT id FROM jobs WHERE collection_id=?)",
+                    (collection_id,),
                 )
                 self._conn.execute(
                     "DELETE FROM jobs WHERE collection_id=?", (collection_id,)
