@@ -22,6 +22,9 @@ class ArticleConceptsStep(StepBase):
         note = self.latest_smart_note()
         if note:
             hashes["smart"] = file_hash(note)   # 有笔记则随笔记变化重跑
+        translated = self.job_dir / "output" / "translated.md"
+        if translated.exists():
+            hashes["translated"] = file_hash(translated)   # 非中文文章随译文变化重跑
         hashes.update(self.prompt_profile_style_hashes())
         return hashes
 
@@ -44,10 +47,14 @@ class ArticleConceptsStep(StepBase):
                 "provider": self.last_ai_provider, "model": self.last_ai_model}
 
     def _source_text(self) -> tuple[str, str]:
-        """决策C:有智能笔记读笔记,否则拼原文章节文本。"""
+        """概念抽取的源文本优先级:智能笔记 > 译文(非中文文章)> 原文章节。
+        非中文文章基于【中文译文】抽概念/摘要,与译文术语一致(对齐 04_translate 依赖)。"""
         note = self.latest_smart_note()
         if note:
             return note.read_text(encoding="utf-8"), "smart_note"
+        translated = self.job_dir / "output" / "translated.md"
+        if translated.exists():
+            return translated.read_text(encoding="utf-8"), "translation"
         sections = self.load_json("intermediate/sections.json")
         parts: list[str] = []
         if sections.get("title"):

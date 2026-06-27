@@ -210,6 +210,29 @@ class TestSmartArticleStep:
         assert "示例文章" in prompt
         assert "引言" in prompt
 
+    def test_build_prompt_uses_translation_body(self, tmp_path):
+        # 传入译文 body → 正文用译文(中文);元信息(标题)仍取自 sections。
+        job_dir = self._setup(tmp_path)
+        config = make_step_config(tmp_path, step_name="04_smart_article", pool="ai")
+        step = SmartArticleStep("04_smart_article", job_dir, config)
+        sections = step.load_json("intermediate/sections.json")
+        prompt = step._build_prompt(sections, "## 中文译文章节\n这是基于译文的正文内容。")
+        assert "基于译文的正文内容" in prompt
+        assert "示例文章" in prompt
+
+    def test_execute_uses_translation_when_present(self, tmp_path, monkeypatch):
+        job_dir = self._setup(tmp_path)
+        (job_dir / "output" / "translated.md").write_text(
+            "## 章节\n中文译文正文内容,用于做笔记。", encoding="utf-8")
+        config = make_step_config(tmp_path, step_name="04_smart_article", pool="ai")
+        step = SmartArticleStep("04_smart_article", job_dir, config)
+        cap: dict = {}
+        note = "# 笔记\n\n" + "## 正文\n足够长的真实正文内容以通过净化长度判废。\n" * 30
+        monkeypatch.setattr(step, "call_ai", lambda prompt, **k: cap.update(p=prompt) or note)
+        result = step.execute()
+        assert result["source"] == "translation"
+        assert "中文译文正文内容" in cap["p"]
+
     def test_execute_dry_run(self, tmp_path, monkeypatch):
         monkeypatch.setenv("DRY_RUN", "1")
         job_dir = self._setup(tmp_path)
@@ -337,6 +360,18 @@ class TestConceptsStep:
         step._gateway = _FakeGW(json.dumps({"summary": "s", "key_terms": []}))
         result = step.execute()
         assert result["source"] == "smart_note"
+
+    def test_source_prefers_translation_over_original(self, tmp_path):
+        # 无智能笔记但有译文(非中文文章) → 概念抽自译文(source=translation,术语与译文一致)。
+        job_dir = _mk_job(tmp_path)
+        _write_sections(job_dir)
+        (job_dir / "output" / "translated.md").write_text(
+            "# 标题\n这是中文译文,用于抽取概念与一句话摘要。", encoding="utf-8")
+        config = make_step_config(tmp_path, step_name="05_concepts", pool="ai")
+        step = ArticleConceptsStep("05_concepts", job_dir, config)
+        step._gateway = _FakeGW(json.dumps({"summary": "s", "key_terms": []}))
+        result = step.execute()
+        assert result["source"] == "translation"
 
     def test_dry_run_smoke_still_writes(self, tmp_path, monkeypatch):
         # DRY_RUN 返回非 JSON → 回退空概念,但必跑步仍产出 concepts.json(不报错)。

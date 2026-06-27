@@ -15,21 +15,28 @@ class SmartArticleStep(StepBase):
         hashes: dict[str, str] = {
             "sections": file_hash(self.job_dir / "intermediate" / "sections.json"),
         }
+        translated = self.job_dir / "output" / "translated.md"
+        if translated.exists():
+            hashes["translated"] = file_hash(translated)   # 非中文文章随译文变化重跑
         hashes.update(self.prompt_profile_style_hashes())  # prompt(可选覆盖)+ profile + styles
         return hashes
 
     def execute(self) -> dict | None:
         sections = self.load_json("intermediate/sections.json")
+        # 非中文文章:基于【中文译文】做笔记(对齐 04_translate 依赖),术语与译文一致、避免重复英→中。
+        translated = self.job_dir / "output" / "translated.md"
+        body = translated.read_text(encoding="utf-8") if translated.exists() else None
 
-        prompt = self._build_prompt(sections)
+        prompt = self._build_prompt(sections, body)
         # 结构化中文笔记常超默认 4096 output tokens,显式抬高上限防被静默截断(claude-cli 无视无害)。
         result = self.call_ai(prompt, max_tokens=8192)
 
         rel = self.write_smart_note(result)   # 版本化落盘(含生成时间/方式/模型),不再写 notes_smart.md
         return {"chars": len(result), "provider": self.last_ai_provider,
-                "model": self.last_ai_model, "note_file": rel}
+                "model": self.last_ai_model, "note_file": rel,
+                "source": "translation" if body else "original"}
 
-    def _build_prompt(self, sections: dict) -> str:
+    def _build_prompt(self, sections: dict, body: str | None = None) -> str:
         profile = self.load_domain_prompt_profile()
 
         parts = [
@@ -52,8 +59,11 @@ class SmartArticleStep(StepBase):
             parts.append(f"\n摘要：{sections['abstract']}\n")
 
         parts.append("\n--- 正文内容 ---\n")
-        for sec in sections.get("sections", []):
-            self._render_section(sec, parts, level=2)
+        if body is not None:                              # 非中文文章:用中文译文(已含结构标题)
+            parts.append(body)
+        else:                                             # 中文文章:用原文章节树
+            for sec in sections.get("sections", []):
+                self._render_section(sec, parts, level=2)
 
         return "".join(parts)
 

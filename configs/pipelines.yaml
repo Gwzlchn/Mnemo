@@ -312,7 +312,8 @@ article:
       label: "智能版笔记"
       extends: .ai-step
       run: steps.article.step_04_smart_article
-      needs: ["03_article_sections"]
+      # needs 04_translate:非中文文章先翻译,笔记基于中文译文做(译文跳过=中文文章时依赖视为满足,读原文)。
+      needs: ["03_article_sections", "04_translate_article"]
       tags: []
       # v2:投递开关 smart_note=on 才生成笔记;否则跳过(短文走轻链路)。
       rules:
@@ -344,9 +345,9 @@ article:
       label: "概念 + 摘要"
       extends: .ai-step
       run: steps.article.step_05_concepts
-      # 必跑(无 rules):有智能笔记则从笔记抽概念,否则从原文/章节抽;一句话摘要同出。
-      # needs 04:保证笔记(若开)先就绪;04 被跳过时依赖视为满足,本步照常跑(读原文)。
-      needs: ["04_smart_article"]
+      # 必跑(无 rules):源优先级 智能笔记 > 译文(非中文)> 原文章节;一句话摘要同出。
+      # needs 04_smart/04_translate:保证笔记/译文(若有)先就绪;被跳过时依赖视为满足,本步照常跑。
+      needs: ["04_smart_article", "04_translate_article"]
       timeout: 120
       tags: []
       ai:

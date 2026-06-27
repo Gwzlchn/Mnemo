@@ -1642,7 +1642,8 @@ video:
 - **paper**：`01_download` → `02_pdf_parse` → (`03_sections`, `04_figures`) → `05_smart_paper` → `06_review`。
 - **article**：`01_download` → `02_parse_article` → `03_article_sections` → `04_smart_article`(可选,`smart_note`)/`04_translate_article`(条件) → `05_concepts`(必跑) → `06_review`(可选)。
   - `02_parse_article` 检测正文主语言写入 `parsed.json` 的 `lang`(`zh`/`non-zh`/`unknown`);**非中文**正文额外写标记 `intermediate/needs_translation.json`。
-  - `04_translate_article`(AI):`rules.exists: intermediate/needs_translation.json` 门控——**仅非中文文章触发**,把 `output/original.md` 忠实全文翻译为简体中文 → `output/translated.md`(保留 Markdown 结构与 `![](assets/…)` 图位),供前端「译文」tab。与 `04_smart_article`(意译重组为笔记)正交。
+  - `04_translate_article`(AI):`rules.exists: intermediate/needs_translation.json` 门控——**仅非中文文章触发**,把 `output/original.md` 忠实全文翻译为简体中文 → `output/translated.md`(保留 Markdown 结构与 `![](assets/…)` 图位),供前端「译文」tab。
+  - `04_smart_article` / `05_concepts` **`needs` 含 `04_translate_article`**:非中文文章的中文产出**基于译文**(术语一致,不重复英→中)——`04_smart` 有 `translated.md` 则笔记基于译文;`05_concepts` 源优先级 **智能笔记 > 译文 > 原文章节**。译文被跳过(中文文章)时依赖视为满足,两步照常读原文。
 - **audio**：`01_download` → `02_whisper` → `03_transcript_parse` → `04_smart_podcast` → `05_review`。
 
 新增内容类型只需在此文件添加一段 `variables`/`jobs`，无需改调度器/Worker 代码。
