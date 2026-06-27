@@ -1,12 +1,16 @@
 """Step 02: 文章解析。trafilatura 抽正文 + 元数据;v2 补全元信息(abstract/image/tags/author)
-+ 产出可读原文 Markdown(output/original.md,正文图片下载到 assets/ 本地引用)。"""
++ 产出可读原文 Markdown(output/original.md,正文图片下载到 assets/ 本地引用)。
+
+站点差异(正文图片标记、作者位置)外置到 extractors/ 注册表:本 step 只做通用编排
+(trafilatura 出正文/元数据 + 下载图片 + 拼 markdown),站点定制由 pick_extractor 选中的 extractor 提供。
+"""
 
 from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 
+from steps.article.extractors import pick_extractor
 from shared.step_base import StepBase, file_hash
 
 
@@ -52,16 +56,17 @@ class ParseArticleStep(StepBase):
             text = (trafilatura.extract(html, include_comments=False) or "").strip()
 
         meta = self._load_meta()
+        url = meta.get("url", "")
+        # 站点提取器(按 URL + 页面特征选;否则通用兜底)。差异:作者兜底 + 正文图片提取。
+        extractor = pick_extractor(url, html)
+
         title = title or (meta.get("title") or "").strip()
         date = date or (meta.get("date") or "").strip()
         if not authors and meta.get("author"):
             authors = [a.strip() for a in str(meta["author"]).split(";") if a.strip()]
-        # v2:author 仍空 → ① ld+json 兜底 ② 页面内嵌 JSON 的 author 对象兜底
-        # (华尔街见闻等 SPA:"author":{...,"display_name":"李丹",...})。
+        # author 仍空 → 交给 extractor 兜底(JSON-LD / 页面内嵌 JSON 的 author 对象)。
         if not authors:
-            authors = self._authors_from_jsonld(html)
-        if not authors:
-            authors = self._authors_from_page_json(html)
+            authors = extractor.authors(html)
 
         sections = []
         if text:
@@ -73,7 +78,7 @@ class ParseArticleStep(StepBase):
             "abstract": abstract,                      # v2:补全
             "image": image,                            # v2:封面/配图
             "tags": tags,                              # v2:标签/分类
-            "url": meta.get("url", ""),
+            "url": url,
             "sitename": meta.get("sitename", ""),
             "date": date,
             "word_count": len(text),
@@ -83,11 +88,12 @@ class ParseArticleStep(StepBase):
         self.write_output("intermediate/parsed.json", parsed)
 
         # v2:可读原文 Markdown(图片下载到 assets/ 改本地引用),供前端「原文」tab。
-        md, img_count = self._original_markdown(html, parsed)
+        md, img_count = self._original_markdown(html, parsed, extractor)
         self.write_output("output/original.md", md)
 
         return {"chars": len(text), "title": title, "images": img_count,
-                "abstract": bool(abstract), "tags": len(tags)}
+                "abstract": bool(abstract), "tags": len(tags),
+                "extractor": extractor.name}
 
     # ── helpers ──
 
@@ -99,46 +105,10 @@ class ParseArticleStep(StepBase):
             return [str(t).strip() for t in raw if str(t).strip()]
         return [t.strip() for t in re.split(r"[;,，、]", str(raw)) if t.strip()]
 
-    def _authors_from_jsonld(self, html: str) -> list[str]:
-        """从 <script type="application/ld+json"> 兜底抽 author.name(best-effort)。"""
-        out: list[str] = []
-        for m in re.finditer(
-            r'<script[^>]+application/ld\+json[^>]*>(.*?)</script>', html, re.S | re.I
-        ):
-            try:
-                obj = json.loads(m.group(1).strip())
-            except (json.JSONDecodeError, ValueError):
-                continue
-            for node in (obj if isinstance(obj, list) else [obj]):
-                a = node.get("author") if isinstance(node, dict) else None
-                for one in (a if isinstance(a, list) else [a]):
-                    if isinstance(one, dict) and one.get("name"):
-                        out.append(str(one["name"]).strip())
-                    elif isinstance(one, str) and one.strip():
-                        out.append(one.strip())
-            if out:
-                break
-        # 去重保序
-        seen, dedup = set(), []
-        for a in out:
-            if a not in seen:
-                seen.add(a); dedup.append(a)
-        return dedup
+    # ── 原文 Markdown + 正文图片(trafilatura 会丢图,故图片由 extractor 从原始 HTML 抽)──
 
-    def _authors_from_page_json(self, html: str) -> list[str]:
-        """SPA 页面内嵌 JSON 的 author 兜底:"author":{...,"display_name":"..."} 或 "name":"..."。
-        取首个非空、排除站点/编辑占位。best-effort。"""
-        for m in re.finditer(r'"author"\s*:\s*\{(.*?)\}', html, re.S):
-            blob = m.group(1)
-            nm = re.search(r'"(?:display_name|name)"\s*:\s*"([^"]+)"', blob)
-            if nm and nm.group(1).strip():
-                return [nm.group(1).strip()]
-        return []
-
-    # ── 原文 Markdown + 正文图片(trafilatura 会丢图,故图片从原始 HTML 抽)──
-
-    def _original_markdown(self, html: str, parsed: dict) -> tuple[str, int]:
-        """trafilatura 出正文 markdown(纯文本,它会丢图);正文图改从原始 HTML 抽(按尺寸滤),
+    def _original_markdown(self, html: str, parsed: dict, extractor) -> tuple[str, int]:
+        """trafilatura 出正文 markdown(纯文本,它会丢图);正文图由 extractor 从原始 HTML 抽,
         下载到 assets/ 后作为「导语图」插在标题后(trafilatura 无图位,无法精确内联)。"""
         import trafilatura
         md = ""
@@ -155,7 +125,7 @@ class ParseArticleStep(StepBase):
         if title and not md.lstrip().startswith("# "):
             md = f"# {title}\n\n{md}"
 
-        img_md, n = self._download_content_images(html)
+        img_md, n = self._download_content_images(extractor.content_image_urls(html))
         if img_md:
             # 插在第一行标题之后(导语图);无标题则置顶
             lines = md.split("\n", 1)
@@ -165,65 +135,12 @@ class ParseArticleStep(StepBase):
                 md = img_md + "\n\n" + md
         return md, n
 
-    @staticmethod
-    def _content_image_urls(html: str) -> list[str]:
-        """从原始 HTML 抽【正文级】图片 URL:滤掉头像/图标/logo/svg、小图(缩略图/相关文章)、
-        以及【促销 banner】(<a> 链到站外【页面】的可点图)。
-        关键:有的站(substack/SemiAnalysis)正文图恰恰是 <a class=image-link href=大图.png><img>——
-        这类 <a> 的 href 指向【图片本身】(点开看大图),应保留;只排除 href 指向【页面】的促销图。
-        尺寸:URL 的 w_1456 / w/680 / width= 识别宽,h_72 等识别高;宽<400 或(无宽且)高<200 视为非正文。"""
-        # 促销链接图:<a href=PAGE><img>,且 PAGE 不是图片(指向站外页面)→ 排除该 <img>。
-        promo_linked: set[str] = set()
-        for a_attrs, img_src in re.findall(
-            r'<a\b([^>]*)>\s*(?:<[^/a][^>]*>\s*)*<img\b[^>]*\bsrc=["\']([^"\']+)', html, re.I):
-            href_m = re.search(r'\bhref=["\']([^"\']+)', a_attrs, re.I)
-            href = (href_m.group(1) if href_m else "").lower()
-            is_img_href = bool(href) and (
-                "/image/" in href or "substackcdn" in href
-                or re.search(r'\.(png|jpe?g|gif|webp)(\?|$)', href))
-            if href and not is_img_href:
-                promo_linked.add(img_src.strip())
-
-        def _dim(url_pat: str, tag_pat: str, low: str, tag: str) -> int | None:
-            m = re.search(url_pat, low)
-            if m:
-                return int(m.group(1))
-            m = re.search(tag_pat, tag, re.I)
-            return int(m.group(1)) if m else None
-
-        urls: list[str] = []
-        seen: set[str] = set()
-        for tag in re.findall(r'<img\b[^>]*>', html, re.I):
-            src_m = re.search(r'\bsrc=["\']([^"\']+)["\']', tag, re.I)
-            if not src_m:
-                continue
-            src = src_m.group(1).strip()
-            if src in promo_linked:
-                continue   # <a> 链到页面的促销 banner
-            low = src.lower()
-            if src.startswith("data:") or any(
-                k in low for k in ("avatar", "/logo", "icon", "sprite", "emoji", ".svg", "/badge")
-            ):
-                continue
-            # 宽:w_1456(substack/cloudinary)/ w/680(七牛)/ width=;高:h_72 等。
-            w = _dim(r'[,/_-]w[,/=_](\d+)', r'\bwidth=["\']?(\d+)', low, tag)
-            h = _dim(r'[,/_-]h[,/=_](\d+)', r'\bheight=["\']?(\d+)', low, tag)
-            if w is not None and w < 400:
-                continue   # 缩略图/头像/相关文章
-            if w is None and h is not None and h < 200:
-                continue   # 无宽信息但矮(站点 logo / 装饰条)
-            key = src.split("?")[0]   # 同图不同尺寸参数去重
-            if key not in seen:
-                seen.add(key)
-                urls.append(src)
-        return urls
-
-    def _download_content_images(self, html: str) -> tuple[str, int]:
+    def _download_content_images(self, urls: list[str]) -> tuple[str, int]:
         """下载正文图到 assets/img_N.ext,返回 markdown 图片段 + 张数(失败的图跳过)。"""
         import urllib.request
         assets = self.job_dir / "assets"
         refs: list[str] = []
-        for i, url in enumerate(self._content_image_urls(html)):
+        for i, url in enumerate(urls):
             ext = (re.search(r'\.(png|jpe?g|gif|webp)', url.lower()) or [None, "jpg"])[1]
             ext = "jpg" if ext == "jpeg" else ext
             fname = f"img_{i:02d}.{ext}"

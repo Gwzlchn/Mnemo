@@ -8,6 +8,11 @@ import json
 import pytest
 
 from steps.article.step_02_parse_article import ParseArticleStep
+from steps.article.extractors import (
+    pick_extractor, GenericExtractor, SubstackExtractor,
+    generic_content_image_urls, authors_from_page_json,
+)
+from steps.article.extractors.substack import substack_figure_images
 from steps.article.step_03_article_sections import ArticleSectionsStep
 from steps.article.step_04_smart_article import SmartArticleStep
 from steps.article.step_05_concepts import ArticleConceptsStep
@@ -338,14 +343,14 @@ class TestArticleImageAndAuthor:
             '<img src="data:image/png;base64,xxx">'
             '<img src="https://wpimg/a.jpeg?imageView2/2/w/680">'  # 同图再现
         )
-        urls = ParseArticleStep._content_image_urls(html)
+        urls = generic_content_image_urls(html)
         assert len(urls) == 1
         assert "w/680" in urls[0]
 
     def test_content_image_keeps_unsized(self):
         # 无尺寸提示的非头像图保留(无法判定大小,默认当正文)。
         html = '<img src="https://site/photo.jpg"><img src="https://site/icon.svg">'
-        urls = ParseArticleStep._content_image_urls(html)
+        urls = generic_content_image_urls(html)
         assert urls == ["https://site/photo.jpg"]
 
     def test_content_image_drops_anchor_wrapped(self):
@@ -354,7 +359,7 @@ class TestArticleImageAndAuthor:
             '<a href="/promo"><img src="https://wpimg/ad.png?imageView2/2/w/680"></a>'
             '<img src="https://wpimg/chart.jpeg?imageView2/2/w/680" class="mx-auto">'
         )
-        urls = ParseArticleStep._content_image_urls(html)
+        urls = generic_content_image_urls(html)
         assert urls == ["https://wpimg/chart.jpeg?imageView2/2/w/680"]
 
     def test_content_image_substack_link_wrapped_kept(self):
@@ -370,7 +375,7 @@ class TestArticleImageAndAuthor:
             f'<img src="{chart}" class="sizing-normal"/>'
             '</picture></div></a>'
         )
-        urls = ParseArticleStep._content_image_urls(html)
+        urls = generic_content_image_urls(html)
         assert urls == [chart]
 
     def test_author_from_page_json(self, tmp_path):
@@ -379,10 +384,49 @@ class TestArticleImageAndAuthor:
         config = make_step_config(tmp_path, step_name="02_parse_article", pool="cpu")
         step = ParseArticleStep("02_parse_article", job_dir, config)
         html = 'x "author":{"article_count":5513,"display_name":"李丹","id":75} y'
-        assert step._authors_from_page_json(html) == ["李丹"]
+        assert authors_from_page_json(html) == ["李丹"]
 
     def test_author_page_json_absent(self, tmp_path):
         job_dir = _mk_job(tmp_path)
         config = make_step_config(tmp_path, step_name="02_parse_article", pool="cpu")
         step = ParseArticleStep("02_parse_article", job_dir, config)
-        assert step._authors_from_page_json("<html>no author</html>") == []
+        assert authors_from_page_json("<html>no author</html>") == []
+
+
+class TestArticleExtractors:
+    """extractor 注册表:按页面特征选站点 extractor,否则通用兜底。"""
+
+    def test_pick_substack_by_signature_not_domain(self):
+        # substack 是平台:semianalysis.com 自定义域名靠 substackcdn 特征命中(不靠域名)。
+        ex = pick_extractor("https://semianalysis.com/2025/x", '<img src="https://substackcdn.com/image/fetch/a.png">')
+        assert isinstance(ex, SubstackExtractor)
+
+    def test_pick_substack_by_image2todom(self):
+        ex = pick_extractor("https://whatever.example/p", '<div data-component-name="Image2ToDOM"></div>')
+        assert isinstance(ex, SubstackExtractor)
+
+    def test_pick_generic_fallback(self):
+        ex = pick_extractor("https://some-blog.cn/post", "<article><p>正文</p></article>")
+        assert isinstance(ex, GenericExtractor)
+
+    def test_substack_figure_images_dedup(self):
+        # substack 正文图在 <figure> 内;SSR+水合重复同图 → 去重;非 figure 的头像/logo 不收。
+        html = (
+            '<img src="https://substackcdn.com/image/fetch/$s_!a!,w_40/avatar.png">'   # 头像,不在 figure
+            '<figure><a href="https://substackcdn.com/image/fetch/$s_!c!/chart_975x615.png">'
+            '<picture><source srcset="x 1456w">'
+            '<img src="https://substackcdn.com/image/fetch/$s_!c!,w_1456/chart.png"></picture></a></figure>'
+            '<figure><img src="https://substackcdn.com/image/fetch/$s_!c!,w_1456/chart.png"></figure>'  # 水合重复
+            '<figure><img src="https://substackcdn.com/image/fetch/$s_!d!,w_1456/two.png"></figure>'
+        )
+        urls = substack_figure_images(html)
+        assert urls == [
+            "https://substackcdn.com/image/fetch/$s_!c!,w_1456/chart.png",
+            "https://substackcdn.com/image/fetch/$s_!d!,w_1456/two.png",
+        ]
+
+    def test_substack_extractor_uses_figure_path(self):
+        html = '<figure><img src="https://substackcdn.com/image/fetch/$s_!c!,w_1456/c.png"></figure>'
+        assert SubstackExtractor().content_image_urls(html) == [
+            "https://substackcdn.com/image/fetch/$s_!c!,w_1456/c.png"
+        ]
