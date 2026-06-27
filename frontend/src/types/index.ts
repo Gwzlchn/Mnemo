@@ -103,6 +103,8 @@ export interface JobMedia {
   word_count?: number           // 文章:字数
   pages?: number                // 论文:页数
   lang?: string                 // 文章/论文:正文主语言(zh / non-zh)
+  sitename?: string             // 文章来源:网站名(SemiAnalysis / 华尔街见闻 / 域名)
+  venue?: string                // 论文来源:会议/期刊 + 年份(OSDI 2023 / arXiv)
   authors?: string[]            // 文章/论文:作者
   abstract?: string             // 文章/论文:摘要
   tags?: string[]               // 文章:标签(v2)

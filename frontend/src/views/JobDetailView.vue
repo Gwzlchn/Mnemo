@@ -94,6 +94,8 @@ const TABS: { key: Tab; label: string; icon: any }[] = [
 const typeIcon = computed(() => contentTypeIcon(job.value?.content_type))
 const typeClass = computed(() => contentTypePill(job.value?.content_type))
 const sourceLabel = computed(() => jobSourceLabel(job.value?.source))
+// 来源展示:优先具体来源(论文→会议+年份 venue;文章→网站名 sitename),无则回退类型标签。
+const sourceDisplay = computed(() => job.value?.media?.venue || job.value?.media?.sitename || sourceLabel.value)
 // BV 号(B 站)
 const bv = computed(() => jobId.value.match(/_(BV[0-9A-Za-z]+)/)?.[1] ?? null)
 
@@ -514,7 +516,7 @@ watch(job, (j) => {
             <div class="meta" style="margin-top:5px">
               <StatusBadge :status="jobStatus" />
               <span class="badge b-mut">{{ contentTypeLabel(job.content_type) }}</span>
-              <span>{{ sourceLabel }}</span>
+              <span>{{ sourceDisplay }}</span>
               <template v-if="job.domain">
                 <span class="sep">·</span><span>{{ job.domain }}</span>
               </template>
@@ -784,7 +786,7 @@ watch(job, (j) => {
           <table class="kv">
             <tr><td>标题</td><td>{{ job.title || '—' }}</td></tr>
             <tr><td>类型</td><td>{{ contentTypeLabel(job.content_type) }}</td></tr>
-            <tr><td>来源</td><td>{{ sourceLabel }}</td></tr>
+            <tr><td>来源</td><td>{{ sourceDisplay }}</td></tr>
             <tr v-if="job.media?.authors?.length"><td>作者</td><td>{{ job.media.authors.join('、') }}</td></tr>
             <tr><td>发布时间</td><td>{{ fmtDateTime(job.published_at) }}</td></tr>
             <!-- 视频→时长+分辨率、文章→字数、通用→原始大小/字幕(metadata.json/parsed.json) -->

@@ -168,3 +168,33 @@ class TestExtractAbstract:
                 return self._pages[i]
 
         assert step._extract_abstract(_MultiDoc()) == "The real abstract on page two."
+
+
+def _doc1(text):
+    class _Doc:
+        metadata = {}
+        _pages = [_FakePage({"blocks": []}, text)]
+        def __len__(self): return 1
+        def __getitem__(self, i): return self._pages[i]
+    return _Doc()
+
+
+class TestExtractVenue:
+    def test_osdi_cover_to_acronym(self, tmp_path):
+        # USENIX 封面 "Proceedings of the …OSDI 全名…" + 年份 → configs/venues.yaml 映射缩写 "OSDI 2023"。
+        step = _mk_step(tmp_path)
+        doc = _doc1("This paper is included in the Proceedings of the 17th USENIX Symposium on "
+                    "Operating Systems Design and Implementation. July 10-12, 2023 - Boston, MA")
+        assert step._extract_venue(doc) == "OSDI 2023"
+
+    def test_arxiv(self, tmp_path):
+        step = _mk_step(tmp_path)
+        assert step._extract_venue(_doc1("arXiv:2310.12345v1 [cs.LG] 5 Oct 2023")) == "arXiv"
+
+    def test_unknown_venue_keeps_full_name(self, tmp_path):
+        step = _mk_step(tmp_path)
+        assert step._extract_venue(_doc1("Proceedings of the Foo Bar Workshop. 2021")) == "Foo Bar Workshop 2021"
+
+    def test_no_venue_returns_empty(self, tmp_path):
+        step = _mk_step(tmp_path)
+        assert step._extract_venue(_doc1("Just some body text with no venue line.")) == ""

@@ -345,8 +345,13 @@ async def get_job(
                         media["tags"] = p["tags"]
                     if p.get("image"):
                         media["image"] = p["image"]
-                elif p.get("pages") is not None:   # paper:页数
-                    media["pages"] = p["pages"]
+                    if p.get("sitename"):           # 来源:网站名(SemiAnalysis / 华尔街见闻 / 域名)
+                        media["sitename"] = p["sitename"]
+                else:                                # paper
+                    if p.get("pages") is not None:
+                        media["pages"] = p["pages"]
+                    if p.get("venue"):              # 来源:会议/期刊 + 年份(OSDI 2023 / arXiv)
+                        media["venue"] = p["venue"]
         except Exception:
             pass
     # 产物路径(元信息"产物路径"):NAS 宿主绝对路径。job 产物实际落在对象存储/本地盘,

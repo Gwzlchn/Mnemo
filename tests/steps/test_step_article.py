@@ -525,6 +525,12 @@ class TestArticleLangDetect:
         # 中文夹少量英文术语仍判 zh
         assert ParseArticleStep._detect_lang("人工智能 AI 与机器学习 ML 在中文语境下的长篇内容很多很多") == "zh"
 
+    def test_domain_fallback_for_sitename(self):
+        # 来源网站名兜底:无 sitename 时用 URL 域名(去 www)。
+        assert ParseArticleStep._domain("https://www.semianalysis.com/2025/x") == "semianalysis.com"
+        assert ParseArticleStep._domain("https://wallstreetcn.com/articles/1") == "wallstreetcn.com"
+        assert ParseArticleStep._domain("") == ""
+
     def test_english_article_writes_translate_marker(self, tmp_path):
         job_dir = _mk_job(tmp_path)
         (job_dir / "input" / "source.html").write_text(ENGLISH_HTML, encoding="utf-8")

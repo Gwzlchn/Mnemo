@@ -34,7 +34,7 @@ class ParseArticleStep(StepBase):
         )
 
         title = authors_src = date = text = ""
-        abstract = image = ""
+        abstract = image = sitename_src = ""
         tags: list[str] = []
         authors: list[str] = []
         if extracted:
@@ -44,6 +44,7 @@ class ParseArticleStep(StepBase):
             date = (data.get("date") or "").strip()
             abstract = (data.get("description") or data.get("excerpt") or "").strip()  # v2
             image = (data.get("image") or "").strip()                                  # v2
+            sitename_src = (data.get("sitename") or data.get("hostname") or "").strip()  # 来源:网站名
             # 站点通用占位图(如 wscn 的 _static/share.png、logo、default)不是文章实际配图,丢弃。
             if image and re.search(r'(share|/_static/|/static/|logo|default|placeholder)', image.lower()):
                 image = ""
@@ -81,7 +82,8 @@ class ParseArticleStep(StepBase):
             "image": image,                            # v2:封面/配图
             "tags": tags,                              # v2:标签/分类
             "url": url,
-            "sitename": meta.get("sitename", ""),
+            # 来源网站名:trafilatura sitename > 下载元数据 > URL 域名(去 www)。供「来源」展示。
+            "sitename": sitename_src or meta.get("sitename", "") or self._domain(url),
             "date": date,
             "lang": lang,                              # v2:正文主语言(zh / non-zh)
             "word_count": len(text),
@@ -107,6 +109,16 @@ class ParseArticleStep(StepBase):
         """正文主语言粗判(委托 steps.utils.lang,与论文共用同一判据)。"""
         from steps.utils.lang import detect_lang
         return detect_lang(text)
+
+    @staticmethod
+    def _domain(url: str) -> str:
+        """URL 域名(去 www),作「来源」兜底(无 sitename 时)。"""
+        from urllib.parse import urlparse
+        try:
+            host = (urlparse(url or "").hostname or "").lower()
+        except Exception:
+            host = ""
+        return host[4:] if host.startswith("www.") else host
 
     # ── helpers ──
 

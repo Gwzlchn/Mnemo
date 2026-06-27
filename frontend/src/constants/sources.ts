@@ -55,7 +55,7 @@ const GROUP_BADGE: Record<string, { text: string; icon: Icon; cls: string }> = {
 // job.source(后端 detect_source 返回值)→ 人类标签。JobList / JobDetail 共用,
 // 注意这是「内容检测来源」枚举,与上面订阅的 source_type 是两套取值。
 export const JOB_SOURCE_LABELS: Record<string, string> = {
-  bilibili: 'Bilibili', youtube: 'YouTube', arxiv: 'arXiv',
+  bilibili: 'Bilibili', youtube: 'YouTube', arxiv: 'arXiv', pdf: 'PDF',
   http_article: '网页文章', podcast: '播客', upload: '本地', other: '其它',
 }
 export function jobSourceLabel(s: string | null | undefined): string {

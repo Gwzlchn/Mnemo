@@ -28,6 +28,7 @@ class PdfParseStep(StepBase):
             title = self._extract_title(doc)
             authors = self._extract_authors(doc)
             abstract = self._extract_abstract(doc)
+            venue = self._extract_venue(doc)        # 来源:会议/期刊 + 年份(arXiv 等)
 
             sections = []
             for page_num in range(len(doc)):
@@ -49,6 +50,7 @@ class PdfParseStep(StepBase):
             "title": title,
             "authors": authors,
             "abstract": abstract,
+            "venue": venue,                         # 来源:会议/期刊 + 年份(如 "OSDI 2023" / "arXiv")
             "pages": num_pages,
             "lang": lang,
             "sections": sections,
@@ -98,6 +100,38 @@ class PdfParseStep(StepBase):
         if meta.get("author"):
             return [a.strip() for a in meta["author"].split(",") if a.strip()]
         return []
+
+    @staticmethod
+    def _venue_acronyms() -> dict:
+        """会议/期刊全名→缩写映射,从 configs/venues.yaml 读(配置与代码分离,可扩展不改码)。
+        缺文件/解析失败 → 空 dict(此时 venue 用全名,不映射)。"""
+        import os
+        import yaml
+        path = os.path.join(os.environ.get("CONFIG_DIR", "configs"), "venues.yaml")
+        try:
+            with open(path, encoding="utf-8") as f:
+                return (yaml.safe_load(f) or {}).get("venue_acronyms", {}) or {}
+        except (OSError, yaml.YAMLError):
+            return {}
+
+    def _extract_venue(self, doc) -> str:
+        """来源:会议/期刊 + 年份(best-effort,扫前 2 页)。arXiv 单独识别;USENIX 等封面页抽
+        'Proceedings of the X' 的 X;命中 configs/venues.yaml 的全名 → 用缩写。取不到返空(前端回退类型标签)。"""
+        if len(doc) == 0:
+            return ""
+        text = "\n".join(doc[i].get_text() for i in range(min(2, len(doc))))
+        if re.search(r"arXiv:\d", text):
+            return "arXiv"
+        m = re.search(r"Proceedings of (?:the\s+)?(.{4,90}?)\s*[.\n]", text, re.I)
+        venue = re.sub(r"\s+", " ", m.group(1).strip()) if m else ""
+        low = venue.lower()
+        for full, ac in self._venue_acronyms().items():
+            if full.lower() in low:
+                venue = ac
+                break
+        ym = re.search(r"\b(?:19|20)\d{2}\b", text)
+        year = ym.group(0) if ym else ""
+        return f"{venue} {year}".strip() if venue else ""
 
     def _extract_abstract(self, doc) -> str:
         # 扫前几页找 Abstract:会议 PDF(USENIX/OSDI 等)首页常是封面/版权页,真正摘要在第 2-3 页;
