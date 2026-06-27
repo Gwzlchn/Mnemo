@@ -186,7 +186,7 @@ flori/
      全量回归由 **CI 承担**：push/PR 自动跑后端全套 + 覆盖率门(75%) + schemathesis + 前端 vitest（`.github/workflows/ci.yml`）。
   2. **「本地完成」判定** = 新增用例绿 + 本地 build 对应镜像 +（API 调用 或 Playwright MCP）手验通过。三者绿即算完成。
   3. 完成即：① 按 §提交规范 commit+bump → push main（触发 CI 全量回归,异步）；② **即时部署**不等 CI：NAS recreate 对应容器（本地镜像）+ ECS `scripts/push-to-edge.sh` 直传。
-  4. **ECS 即时部署 vs Watchtower**：直传前暂停 edge Watchtower（`docker pause` watchtower 容器,或给本容器加 `com.centurylinklabs.watchtower.enable=false` 标签），防被旧 ghcr 回退覆盖（[[edge-frontend-deploy-watchtower-cache]] 已踩过）。CI 绿 → ghcr=同代码 → 恢复 Watchtower 跟随（无回退）；CI 红 → 保持直传、Watchtower 维持暂停,按下条处置。
+  4. **ECS 即时部署 vs Watchtower**：`scripts/push-to-edge.sh worker|all` 已**自动先暂停 edge Watchtower**（worker 容器带 `watchtower.enable=true`，否则下次 120s 轮询被旧 ghcr `:latest` 回退覆盖；frontend 已 `enable=false` 不受影响）。CI 绿 → ghcr=同代码 → `scripts/push-to-edge.sh resume-watchtower` 恢复跟随；CI 红 → 保持直传、维持暂停，按下条处置。（[[edge-frontend-deploy-watchtower-cache]] 已踩过）
   5. **CI 后台红灯 = fix-forward（默认）**：看失败用例 → 补 `fix(scope): …;<版本>` 提交修正 → push 复跑；**不回退**已部署版本。仅当线上功能明显坏才 `scripts/rollback.sh` 回滚。
 
 ### 本地活栈（NAS,override 叠加）
