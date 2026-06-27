@@ -5,7 +5,7 @@ from __future__ import annotations
 import enum
 import re
 import secrets
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -29,6 +29,13 @@ class StepStatus(str, enum.Enum):
     DONE = "done"
     FAILED = "failed"
     SKIPPED = "skipped"
+
+
+class TaskKind(str, enum.Enum):
+    """队列里 task 的两类:pipeline 步骤(载荷/结果走 storage)vs 独立 AI 任务(内联载荷/结果)。
+    step task 的 JSON 不带 kind 字段(向后兼容,缺省即 STEP);ai task 带 kind='ai'。"""
+    STEP = "step"   # pipeline 步骤 task:{job_id, step},载荷/结果走 storage,job:{id}:steps 状态机驱动
+    AI = "ai"       # 独立 AI task:{task_id, request},无 job、不走 storage,结果内联回 airesult:{task_id}
 
 
 @dataclass
@@ -166,6 +173,34 @@ class LLMRequest:
     allowed_tools: list[str] | None = None
     max_turns: int | None = None
 
+    def to_jsonable(self) -> dict:
+        """JSON 安全序列化(images: Path → str);供 AI task 内联投递(见 AITask)。"""
+        return {
+            "messages": self.messages,
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "images": [str(p) for p in self.images],
+            "system": self.system,
+            "response_format": self.response_format,
+            "allowed_tools": self.allowed_tools,
+            "max_turns": self.max_turns,
+        }
+
+    @classmethod
+    def from_jsonable(cls, d: dict) -> "LLMRequest":
+        return cls(
+            messages=list(d.get("messages", [])),
+            model=d.get("model"),
+            max_tokens=int(d.get("max_tokens", 4096)),
+            temperature=float(d.get("temperature", 0.7)),
+            images=[Path(s) for s in d.get("images", [])],
+            system=d.get("system"),
+            response_format=d.get("response_format"),
+            allowed_tools=d.get("allowed_tools"),
+            max_turns=d.get("max_turns"),
+        )
+
 
 @dataclass
 class LLMResponse:
@@ -188,6 +223,51 @@ class LLMResponse:
     tier_used: str | None = None         # 实际命中的 tier(primary/fallback/text_fallback),由 gateway 写
     attempts: list[dict] = field(default_factory=list)   # 逐 tier 尝试链,由 gateway 写
     raw: dict | None = None              # provider 原始返回(尽量保真),供审计 raw
+
+    def to_jsonable(self) -> dict:
+        """JSON 安全序列化(全字段本就 json-safe);供 AI task 结果回写 airesult:{task_id}。"""
+        return asdict(self)
+
+    @classmethod
+    def from_jsonable(cls, d: dict) -> "LLMResponse":
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class AITask:
+    """独立 AI 任务:不挂 job、不走 storage —— 内联 LLMRequest 载荷,结果内联回 airesult:{task_id}。
+    供 /api/ask、/digest 把单次 claude 调用交给 ai-worker(claude-cli tag)异步执行(P1 AI-worker-split)。
+    入队 queue:ai(kind='ai',require_tags=['claude-cli']);无 job_id,故与 pipeline-step task 区分。"""
+    task_id: str
+    request: LLMRequest
+    step_name: str = "ai"          # gateway 路由步名(如 synthesis/digest),也作 ai_usage.step
+    domain: str | None = None      # 观测/归因(可空)
+    tags: list[str] = field(default_factory=list)                            # 软标签(reject 过滤用)
+    require_tags: list[str] = field(default_factory=lambda: ["claude-cli"])  # 硬门控:仅有凭证 ai-worker 认领
+
+    def to_task_payload(self) -> dict:
+        """序列化为 queue:ai 的 task JSON dict(kind='ai',无 job_id)。"""
+        return {
+            "kind": TaskKind.AI.value,
+            "task_id": self.task_id,
+            "step": self.step_name,
+            "domain": self.domain,
+            "request": self.request.to_jsonable(),
+            "tags": sorted(self.tags),
+            "require_tags": sorted(self.require_tags),
+            "pool": "ai",
+        }
+
+    @classmethod
+    def from_task_payload(cls, d: dict) -> "AITask":
+        return cls(
+            task_id=d["task_id"],
+            request=LLMRequest.from_jsonable(d.get("request", {})),
+            step_name=d.get("step", "ai"),
+            domain=d.get("domain"),
+            tags=list(d.get("tags", [])),
+            require_tags=list(d.get("require_tags", ["claude-cli"])),
+        )
 
 
 # id 生成单一来源在 shared.ids;以下保留同名再导出/薄包装,既有 `from shared.models import ...` 调用点不破。

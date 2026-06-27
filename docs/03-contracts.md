@@ -1422,6 +1422,20 @@ Score:  priority (负数，越小越优先)
 
 优先级计算：`score = -(已完成步骤数)`
 
+**独立 AI task（P1 AI-worker-split）**：`/api/ask`、`/digest` 把单次 claude 调用作为独立 task 投进 `queue:ai`，由 ai-worker（`claude-cli` tag）执行——**不挂 job、不走 storage**，载荷与结果都内联。member 形态带 `kind:"ai"`（与 pipeline-step task 区分）：
+
+```
+Key:    queue:ai
+Member: {"kind":"ai","task_id":"at_xxx","step":"synthesis|digest","domain":"<domain>|null",
+         "request":<LLMRequest jsonable>,"tags":[...],"require_tags":["claude-cli"],"pool":"ai"}  (JSON string)
+```
+
+- `request` = `shared.models.LLMRequest.to_jsonable()`（messages/system/max_tokens/temperature/allowed_tools…；images 序列化为 str 路径，AI-RPC 路径一般不带图）。
+- `require_tags:["claude-cli"]` → 只有持订阅/凭证的 ai-worker 认领（无凭证 worker 不会领了再运行时失败）。
+- pipeline-step task 的 member **不带 `kind`**（向后兼容，缺省即 `step`）。
+- `queue:enqueued` field（§3.x 等待时长用）：step task=`{pool}|{job_id}|{step}`；**ai task=`{pool}|ai|{task_id}`**。
+- 结果回执：`airesult:{task_id}`（STRING，JSON = `LLMResponse.to_jsonable()` 或 `{"error":"..."}`，带 TTL≈600s），供 API 端 `GET …/result/{task_id}` / 同步等待取回（P1-3）。AI 用量经 `ai_usage`（`job_id=null, step=<step_name>`）记账（worker 侧，P1-2）。
+
 ### 3.2 资源池计数
 
 ```

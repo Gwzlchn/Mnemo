@@ -1,8 +1,11 @@
 """tests for shared/models.py"""
 
+import json
 import re
+from pathlib import Path
 
 from shared.models import (
+    AITask,
     AIUsage,
     Collection,
     Job,
@@ -11,6 +14,7 @@ from shared.models import (
     LLMResponse,
     Step,
     StepStatus,
+    TaskKind,
     Worker,
     derive_job_id,
     generate_worker_id,
@@ -171,3 +175,65 @@ class TestLLMResponse:
         )
         assert resp.cost_usd == 0.0
         assert resp.cached is False
+
+
+class TestLLMRequestJsonable:
+    """to_jsonable/from_jsonable 往返(AI task 内联投递依赖它,images Path 须 json 安全)。"""
+
+    def test_round_trip(self):
+        req = LLMRequest(
+            messages=[{"role": "user", "content": "hi"}], system="sys",
+            max_tokens=2048, temperature=0.3, allowed_tools=["WebSearch"], max_turns=3,
+        )
+        d = req.to_jsonable()
+        json.dumps(d)  # 必须 json 安全(可入队)
+        assert d["images"] == []
+        back = LLMRequest.from_jsonable(d)
+        assert back.messages == req.messages and back.system == "sys"
+        assert back.max_tokens == 2048 and back.temperature == 0.3
+        assert back.allowed_tools == ["WebSearch"] and back.max_turns == 3
+
+    def test_images_path_to_str(self):
+        req = LLMRequest(messages=[], images=[Path("/tmp/a.png"), Path("/tmp/b.png")])
+        d = req.to_jsonable()
+        assert d["images"] == ["/tmp/a.png", "/tmp/b.png"]
+        assert [str(p) for p in LLMRequest.from_jsonable(d).images] == ["/tmp/a.png", "/tmp/b.png"]
+
+
+class TestLLMResponseJsonable:
+    def test_round_trip(self):
+        resp = LLMResponse(
+            content="ans", model="claude-opus-4-8", provider="claude-cli",
+            cost_usd=0.18, num_turns=1, attempts=[{"tier": "primary"}], raw={"x": 1},
+        )
+        d = resp.to_jsonable()
+        json.dumps(d)  # airesult 回写须 json 安全
+        back = LLMResponse.from_jsonable(d)
+        assert back.content == "ans" and back.provider == "claude-cli"
+        assert back.cost_usd == 0.18 and back.attempts == [{"tier": "primary"}]
+
+    def test_from_jsonable_ignores_extra_keys(self):
+        resp = LLMResponse.from_jsonable(
+            {"content": "a", "model": "m", "provider": "p", "_extra": 1}
+        )
+        assert resp.content == "a" and resp.provider == "p"
+
+
+class TestAITask:
+    """独立 AI task:无 job、kind='ai'、内联 LLMRequest;payload 往返 + 默认。"""
+
+    def test_payload_round_trip(self):
+        req = LLMRequest(messages=[{"role": "user", "content": "Q"}], system="S", temperature=0.3)
+        payload = AITask(task_id="at_1", request=req, step_name="synthesis", domain="dl").to_task_payload()
+        assert payload["kind"] == TaskKind.AI.value == "ai"
+        assert payload["task_id"] == "at_1" and payload["step"] == "synthesis"
+        assert payload["require_tags"] == ["claude-cli"] and payload["pool"] == "ai"
+        assert "job_id" not in payload  # AI task 不挂 job
+        json.dumps(payload)  # 可入队
+        back = AITask.from_task_payload(payload)
+        assert back.task_id == "at_1" and back.step_name == "synthesis" and back.domain == "dl"
+        assert back.request.messages == req.messages and back.request.system == "S"
+
+    def test_defaults(self):
+        task = AITask(task_id="at_2", request=LLMRequest(messages=[]))
+        assert task.require_tags == ["claude-cli"] and task.step_name == "ai" and task.domain is None

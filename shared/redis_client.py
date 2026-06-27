@@ -79,6 +79,15 @@ class RedisClient:
 
     # ── 队列操作 ──
 
+    @staticmethod
+    def _enqueued_field(pool: str, parsed: dict) -> str:
+        """queue:enqueued 的 field key(kind 感知):
+        pipeline-step task → {pool}|{job_id}|{step}(与旧形态逐字一致);
+        AI task(kind='ai')→ {pool}|ai|{task_id}(无 job_id,改用 task_id)。"""
+        if parsed.get("kind") == "ai":
+            return f"{pool}|ai|{parsed.get('task_id')}"
+        return f"{pool}|{parsed.get('job_id')}|{parsed.get('step')}"
+
     async def enqueue_step(
         self,
         pool: str,
@@ -100,9 +109,29 @@ class RedisClient:
         await self.r.zadd(f"queue:{pool}", {task: priority})
         # 入队时间戳存独立 hash(不进 ZSET 成员,避免改成员破坏 ZADD 去重);供「已等待多久」展示。
         try:
-            await self.r.hset("queue:enqueued", f"{pool}|{job_id}|{step}", str(time.time()))
+            await self.r.hset("queue:enqueued", self._enqueued_field(pool, payload), str(time.time()))
         except Exception:
             pass
+
+    async def enqueue_ai_task(self, payload: dict, priority: int = 0) -> None:
+        """投递独立 AI task(kind='ai')到 queue:ai。payload 由 AITask.to_task_payload() 生成
+        (内联 LLMRequest + require_tags=['claude-cli']);供 /api/ask、/digest 把 claude 调用交给 ai-worker(P1)。
+        入 queue:ai → 与普通 task 同框、能进 /system 队列窥视;由 ai-worker 认领执行(P1-2),结果回 airesult:{task_id}。"""
+        task = json.dumps(payload, sort_keys=True)
+        await self.r.zadd("queue:ai", {task: priority})
+        try:
+            await self.r.hset("queue:enqueued", self._enqueued_field("ai", payload), str(time.time()))
+        except Exception:
+            pass
+
+    async def set_ai_result(self, task_id: str, result: dict, ttl: int = 600) -> None:
+        """回写 AI task 结果(LLMResponse.to_jsonable() 或 {'error': ...}),airesult:{task_id} 带 TTL,供 API 取回(P1-3)。"""
+        await self.r.set(f"airesult:{task_id}", json.dumps(result, ensure_ascii=False), ex=ttl)
+
+    async def get_ai_result(self, task_id: str) -> dict | None:
+        """取 AI task 结果;未就绪/已过期 → None。"""
+        raw = await self.r.get(f"airesult:{task_id}")
+        return json.loads(raw) if raw else None
 
     async def dequeue_step(self, pool: str) -> tuple[dict, float] | None:
         # 仅测试用:生产认领走 dequeue_step_raw(runner_ops/worker transport)。保留薄实现供单测。
@@ -117,7 +146,7 @@ class RedisClient:
         # 退回队列 = 重新等待,重置入队时间戳。
         try:
             t = json.loads(task_json)
-            await self.r.hset("queue:enqueued", f"{pool}|{t.get('job_id')}|{t.get('step')}", str(time.time()))
+            await self.r.hset("queue:enqueued", self._enqueued_field(pool, t), str(time.time()))
         except Exception:
             pass
 
@@ -130,7 +159,7 @@ class RedisClient:
         parsed = json.loads(task_json)
         # 出队即离开队列 → 清入队时间戳(避免 hash 堆积孤儿)。
         try:
-            await self.r.hdel("queue:enqueued", f"{pool}|{parsed.get('job_id')}|{parsed.get('step')}")
+            await self.r.hdel("queue:enqueued", self._enqueued_field(pool, parsed))
         except Exception:
             pass
         return task_json, parsed, score
@@ -153,10 +182,11 @@ class RedisClient:
                     t = json.loads(member)
                 except Exception:
                     continue
-                jid, step = t.get("job_id"), t.get("step")
-                at_raw = ats.get(f"{pool}|{jid}|{step}")
+                at_raw = ats.get(self._enqueued_field(pool, t))
                 out.append({
-                    "job_id": jid, "step": step, "priority": int(score),
+                    "kind": t.get("kind", "step"),          # 'step'(缺省)或 'ai'(独立 AI task)
+                    "task_id": t.get("task_id"),            # ai task 有;step task 为 None
+                    "job_id": t.get("job_id"), "step": t.get("step"), "priority": int(score),
                     "enqueued_at": float(at_raw) if at_raw else None,
                     "tags": t.get("tags", []), "require_tags": t.get("require_tags", []),
                     "resources": t.get("resources", []),

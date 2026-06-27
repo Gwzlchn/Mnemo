@@ -604,3 +604,51 @@ class TestRemoveJobTasks:
     @pytest.mark.asyncio
     async def test_empty_safe(self, rc):
         assert await rc.remove_job_tasks("nope") == 0
+
+
+class TestAITaskQueue:
+    """独立 AI task(kind='ai')投递/队列窥视/结果回执 + 与 step task 向后兼容。"""
+
+    @pytest.mark.asyncio
+    async def test_enqueue_ai_task_and_list(self, rc):
+        from shared.models import AITask, LLMRequest
+        payload = AITask(
+            task_id="at_x",
+            request=LLMRequest(messages=[{"role": "user", "content": "q"}]),
+            step_name="synthesis", domain="dl",
+        ).to_task_payload()
+        await rc.enqueue_ai_task(payload, priority=-1)
+        listed = await rc.list_queue("ai")
+        assert len(listed) == 1
+        item = listed[0]
+        assert item["kind"] == "ai" and item["task_id"] == "at_x"
+        assert item["job_id"] is None and item["step"] == "synthesis"
+        assert item["require_tags"] == ["claude-cli"]
+        assert item["enqueued_at"] is not None  # ai|at_x 入队时间戳能 join 上
+
+    @pytest.mark.asyncio
+    async def test_step_task_backward_compatible(self, rc):
+        # 普通 step task 列出:kind 缺省 'step'、task_id None;旧行为不破
+        await rc.enqueue_step("cpu", "j1", "06_ocr", ["cpu"], priority=-1)
+        item = (await rc.list_queue("cpu"))[0]
+        assert item["kind"] == "step" and item["task_id"] is None
+        assert item["job_id"] == "j1" and item["step"] == "06_ocr"
+
+    @pytest.mark.asyncio
+    async def test_dequeue_ai_task_cleans_enqueued(self, rc):
+        from shared.models import AITask, LLMRequest
+        await rc.enqueue_ai_task(
+            AITask(task_id="at_d", request=LLMRequest(messages=[])).to_task_payload()
+        )
+        raw, parsed, score = await rc.dequeue_step_raw("ai")
+        assert parsed["kind"] == "ai" and parsed["task_id"] == "at_d"
+        assert await rc.list_queue("ai") == []
+        ats = await rc.r.hgetall("queue:enqueued")
+        assert not any("at_d" in k for k in ats.keys())  # 出队即清,无孤儿时间戳
+
+    @pytest.mark.asyncio
+    async def test_set_get_ai_result(self, rc):
+        await rc.set_ai_result("at_r", {"content": "answer", "provider": "claude-cli"}, ttl=60)
+        got = await rc.get_ai_result("at_r")
+        assert got["content"] == "answer" and got["provider"] == "claude-cli"
+        assert await rc.get_ai_result("missing") is None
