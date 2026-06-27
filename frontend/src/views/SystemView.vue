@@ -294,82 +294,8 @@ function loadText(w: Worker): string {
   return parts.join(' ')
 }
 
-// ── ①健康条聚合（纯函数派生，§3）──
-// 近 1h 失败/掉线 → 进健康条「需关注」。用【事件流口径】(与用户在事件区所见一致):
-// job_failed=步骤/任务失败事件(throughput_1h.failed 数的是 job 终态转换,与步骤失败事件不一致、会漏);
-// worker_cleaned/orphan_reclaimed=worker 掉线被清理 / 其任务被孤儿回收。随 1h 窗口自动消退,不被旧事件刷屏。
-const recentJobFails = computed(() => {
-  const cut = Date.now() - 3600_000
-  return events.value.filter(e => e.kind === 'job_failed' && e.ts * 1000 >= cut).length
-})
-const recentWorkerLost = computed(() => {
-  const cut = Date.now() - 3600_000
-  return events.value.filter(e => (e.kind === 'worker_cleaned' || e.kind === 'orphan_reclaimed') && e.ts * 1000 >= cut).length
-})
-type Overall = 'ok' | 'warn' | 'down' | 'unreachable'
-const overall = computed<Overall>(() => {
-  // 不可达：连续失败 ≥1 且当前无可用快照（或失败累计已多次）。保留陈旧快照仍展示其余。
-  if (failStreak.value >= 1 && status.value === null) return 'unreachable'
-  if (failStreak.value >= 3) return 'unreachable'
-  const comps = components.value
-  // 红：任一组件 down；所有 worker 离线（曾有 worker）；暂停池却有积压。
-  const anyDown = comps.some(c => c.status === 'down')
-  const allOffline = workerStore.workers.length > 0 && onlineCount.value === 0
-  const pausedBacklog = pools.value.some(([, p]) => p.capacity === 0 && p.queue > 0)
-  if (anyDown || allOffline || pausedBacklog) return 'down'
-  // 黄：组件 degraded/unknown（minio local 不算）；stale worker；版本漂移；排队无 worker；近1h有任务失败/worker掉线。
-  const anyDegraded = comps.some(c => c.status === 'degraded'
-    || (c.status === 'unknown' && c.extra?.mode !== 'local'))
-  const anyStale = workerStore.workers.some(w => w.status === 'stale')
-  const queueNoWorker = pools.value.some(([name, p]) =>
-    p.queue > 0 && (status.value?.workers?.[name]?.online ?? 0) === 0 && p.capacity !== 0)
-  if (anyDegraded || anyStale || driftCount.value > 0 || queueNoWorker
-    || recentJobFails.value > 0 || recentWorkerLost.value > 0) return 'warn'
-  return 'ok'
-})
-const overallDot = computed(() =>
-  overall.value === 'ok' ? 'd-ok' : overall.value === 'warn' ? 'd-warn' : 'd-bad')
-const overallClass = computed(() =>
-  overall.value === 'ok' ? 'hb-ok' : overall.value === 'warn' ? 'hb-warn' : 'hb-down')
-const healthTitle = computed(() => {
-  if (overall.value === 'unreachable') return `无法连接后端 · 正在重试（第 ${failStreak.value} 次）`
-  if (overall.value === 'down') return `${issues.value.length} 项异常，需处理`
-  if (overall.value === 'warn') return `${issues.value.length} 项需关注`
-  return '系统运行正常'
-})
-// 异常摘要（最多列 2 条，超出「等 N 项」）。
-const issues = computed<string[]>(() => {
-  const out: string[] = []
-  for (const c of components.value) {
-    if (c.status === 'down') out.push(`${COMPONENT_KIND_LABELS[c.kind]} 离线`)
-    else if (c.status === 'degraded') out.push(`${COMPONENT_KIND_LABELS[c.kind]} 降级`)
-    else if (c.status === 'unknown' && c.extra?.mode !== 'local') out.push(`${COMPONENT_KIND_LABELS[c.kind]} 采集失败`)
-  }
-  for (const [name, p] of pools.value) {
-    if (p.capacity === 0 && p.queue > 0) out.push(`${name} 池暂停但有 ${p.queue} 排队`)
-    else if (p.queue > 0 && (status.value?.workers?.[name]?.online ?? 0) === 0) out.push(`${name} 池 ${p.queue} 排队无 worker`)
-  }
-  if (workerStore.workers.length > 0 && onlineCount.value === 0) out.push('所有 worker 均已离线')
-  if (driftCount.value > 0) out.push(`${driftCount.value} 个 worker 运行旧版本`)
-  if (workerStore.workers.some(w => w.status === 'stale')) out.push('有 worker 失联')
-  if (recentJobFails.value > 0) out.push(`${recentJobFails.value} 个作业近 1h 失败`)
-  if (recentWorkerLost.value > 0) out.push(`近 1h ${recentWorkerLost.value} 次 worker 掉线`)
-  return out
-})
-const healthSummary = computed(() => {
-  if (overall.value === 'unreachable') {
-    const ago = lastOkAt.value ? `上次更新 ${Math.round((Date.now() - lastOkAt.value) / 1000)}s 前` : '从未成功'
-    return ago
-  }
-  if (overall.value === 'ok') {
-    const ago = lastOkAt.value ? `刷新 ${Math.round((Date.now() - lastOkAt.value) / 1000)}s 前` : ''
-    const upN = components.value.filter(c => c.status === 'up').length
-    return `组件 ${upN}/${components.value.length} · Worker ${onlineCount.value}/${workerStore.workers.length} 在线 · 0 队列阻塞${ago ? ' · ' + ago : ''}`
-  }
-  const head = issues.value.slice(0, 2).join(' · ')
-  const more = issues.value.length > 2 ? ` 等 ${issues.value.length} 项` : ''
-  return head + more
-})
+// 健康条已移除(用户:概览顶部「需关注」横幅冗余)——当前状态/告警就地呈现:失败/孤儿/worker清理 → 系统事件圆点;
+// 排队无 worker → 资源池卡告警;版本漂移 → Worker 区;组件 down/降级 → 核心组件卡。失败累计仍记 failStreak(供轮询)。
 
 // 事件 kind→标签/点色/摘要 已抽到 utils/events(EventsView 共用)。
 
@@ -547,14 +473,6 @@ const usageByProvider = computed(() => {
     </div>
 
     <!-- ════════ 带1 · 概览 ════════ -->
-    <div class="card pad health-bar" :class="overallClass" style="margin-bottom:18px">
-      <span class="dot dot-lg" :class="[overallDot, { pulse: overall === 'down' || overall === 'unreachable' }]"></span>
-      <div class="hb-text">
-        <b class="hb-title">{{ healthTitle }}</b>
-        <span class="hb-sub">{{ healthSummary }}</span>
-      </div>
-    </div>
-
     <!-- 概览拆两组(同一种「标签+值」cell):① 系统 ② Worker·作业。系统在前。 -->
     <div class="seclabel" style="margin-bottom:8px"><Server :size="14" />系统</div>
     <div class="card pad statgrid" style="margin-bottom:16px">
@@ -566,7 +484,7 @@ const usageByProvider = computed(() => {
         <div class="st-lbl">部署</div>
         <div class="st-val">{{ deployMode }}</div>
       </div>
-      <div class="st-cell st-wide">
+      <div class="st-cell">
         <div class="st-lbl"><HardDrive :size="11" />磁盘</div>
         <template v-if="liveDisk && liveDisk.total_gb >= 0">
           <div class="st-val">{{ liveDisk.used_gb }}/{{ liveDisk.total_gb }}GB <b :style="{ color: liveDisk.used_pct > 90 ? 'var(--bad)' : 'var(--ink-900)' }">{{ liveDisk.used_pct }}%</b><span class="dim" style="margin-left:6px">剩 {{ liveDisk.available_gb }}GB</span></div>
@@ -896,10 +814,11 @@ summary::-webkit-details-marker { display: none; }
 .tp-tn b { color: var(--ink-700); font-weight: 600; }
 
 /* 系统状态标签化网格(替代挤成一行) */
-.statgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px 22px; align-items: start; }
-.st-wide { grid-column: span 2; }
+/* 固定列网格(两组共用同一列结构 → 系统/Worker 列对齐);长值在 cell 内换行,不挤不截断。 */
+.statgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 24px; align-items: start; }
+@media (max-width: 900px) { .statgrid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .statgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .st-cell { min-width: 0; }
 .st-lbl { display: flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--ink-400); letter-spacing: .03em; margin-bottom: 3px; }
-.st-val { font-size: 13px; color: var(--ink-800); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-@media (max-width: 560px) { .st-wide { grid-column: span 1; } }
+.st-val { font-size: 13px; color: var(--ink-800); font-variant-numeric: tabular-nums; line-height: 1.35; word-break: break-word; }
 </style>

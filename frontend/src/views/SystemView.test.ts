@@ -231,17 +231,7 @@ describe('SystemView', () => {
     expect(t).toContain('（等价）')   // claude-cli 成本标等价
   })
 
-  it('健康条：组件 down 时进异常档', async () => {
-    const store = useWorkerStore()
-    const fs = fullStatus()
-    fs.components[2].status = 'down'  // redis down
-    fs.components[2].detail = 'redis 不可达'
-    stubStoreData(store, { full: fs })
-    const w = mountView({ workers: [] })
-    await flushPromises()
-    expect(w.text()).toContain('需处理')
-    expect(w.find('.health-bar').classes()).toContain('hb-down')
-  })
+  // (原「健康条:组件 down 进异常档」用例已删——健康条移除,组件状态由核心组件卡就地呈现,归 ComponentCard 测试。)
 
   it('点刷新触发 store.fetchAll 与 fetchFullStatus', async () => {
     const store = useWorkerStore()
