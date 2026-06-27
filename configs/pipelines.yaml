@@ -276,6 +276,10 @@ article:
     AI_CONCEPTS_PRIMARY_MODEL: subscription
     AI_CONCEPTS_FALLBACK_PROVIDER: claude-cli
     AI_CONCEPTS_FALLBACK_MODEL: subscription
+    AI_TRANSLATE_PRIMARY_PROVIDER: claude-cli
+    AI_TRANSLATE_PRIMARY_MODEL: subscription
+    AI_TRANSLATE_FALLBACK_PROVIDER: claude-cli
+    AI_TRANSLATE_FALLBACK_MODEL: subscription
   jobs:
     "01_download":
       label: "下载"
@@ -292,8 +296,9 @@ article:
       run: steps.article.step_02_parse_article
       needs: ["01_download"]
       timeout: 60
-      # v2:补全元信息(abstract/image/tags/author)+ 产出可读原文 Markdown(图片本地引用)。
-      outputs: ["intermediate/parsed.json", "output/original.md"]
+      # v2:补全元信息(abstract/image/tags/author)+ 产出可读原文 Markdown(图片本地引用);
+      # 非中文正文写 needs_translation.json 标记(供 04_translate_article 的 rules:exists 门控)。
+      outputs: ["intermediate/parsed.json", "output/original.md", "intermediate/needs_translation.json"]
 
     "03_article_sections":
       label: "章节切分"
@@ -318,6 +323,22 @@ article:
         primary: {provider: $AI_SMART_PRIMARY_PROVIDER, model: $AI_SMART_PRIMARY_MODEL}
         fallback: {provider: $AI_SMART_FALLBACK_PROVIDER, model: $AI_SMART_FALLBACK_MODEL}
       outputs: ["output/versions/notes_smart_*"]
+
+    "04_translate_article":
+      label: "翻译"
+      extends: .ai-step
+      run: steps.article.step_04_translate_article
+      needs: ["02_parse_article"]
+      tags: []
+      # 仅非中文文章触发:02_parse 写了 needs_translation.json 才跑,中文文章跳过。
+      rules:
+        - exists: "intermediate/needs_translation.json"
+          when: on
+        - when: skip
+      ai:
+        primary: {provider: $AI_TRANSLATE_PRIMARY_PROVIDER, model: $AI_TRANSLATE_PRIMARY_MODEL}
+        fallback: {provider: $AI_TRANSLATE_FALLBACK_PROVIDER, model: $AI_TRANSLATE_FALLBACK_MODEL}
+      outputs: ["output/translated.md"]
 
     "05_concepts":
       label: "概念 + 摘要"

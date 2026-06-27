@@ -15,6 +15,7 @@ from steps.article.extractors import (
 from steps.article.extractors.substack import substack_figure_images
 from steps.article.step_03_article_sections import ArticleSectionsStep
 from steps.article.step_04_smart_article import SmartArticleStep
+from steps.article.step_04_translate_article import TranslateArticleStep
 from steps.article.step_05_concepts import ArticleConceptsStep
 from steps.article.step_05_review import ArticleReviewStep
 from shared.models import LLMResponse
@@ -56,6 +57,21 @@ SAMPLE_HTML = """<!DOCTYPE html>
   <p>最后总结全文，给出可操作的结论与展望，呼应开头提出的研究动机，形成完整闭环。</p>
 </article>
 </body>
+</html>
+"""
+
+
+ENGLISH_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head><title>The Future of Compute</title><meta name="author" content="John Doe"></head>
+<body><article>
+<h1>The Future of Compute</h1>
+<p>Compute is the lifeblood of artificial intelligence and the modern technology stack. This article explores why scaling compute matters and how it shapes the competitive landscape across nations and companies worldwide.</p>
+<h2>Why It Matters</h2>
+<p>Without sufficient compute capacity you do not have a seat at the table. Leading technology firms are investing heavily in data centers and accelerators at a staggering pace, reshaping global supply chains and policy.</p>
+<h2>Conclusion</h2>
+<p>In conclusion, compute will remain the decisive factor in the race for advanced artificial intelligence for the foreseeable future, with profound implications across industry and government.</p>
+</article></body>
 </html>
 """
 
@@ -462,3 +478,54 @@ class TestInlineImagePositioning:
             ("锚段落文字内容足够长。", "![](assets/img_01.png)"),
         ])
         assert out.index("img_00") < out.index("img_01")
+
+
+class TestArticleLangDetect:
+    """语言检测 + 翻译标记:非中文文章写 needs_translation.json,中文不写。"""
+
+    def test_detect_lang(self):
+        assert ParseArticleStep._detect_lang("The quick brown fox jumps over the lazy dog. " * 4) == "non-zh"
+        assert ParseArticleStep._detect_lang("这是一篇讲人工智能发展与应用的中文文章。" * 3) == "zh"
+        assert ParseArticleStep._detect_lang("") == "unknown"
+        # 中文夹少量英文术语仍判 zh
+        assert ParseArticleStep._detect_lang("人工智能 AI 与机器学习 ML 在中文语境下的长篇内容很多很多") == "zh"
+
+    def test_english_article_writes_translate_marker(self, tmp_path):
+        job_dir = _mk_job(tmp_path)
+        (job_dir / "input" / "source.html").write_text(ENGLISH_HTML, encoding="utf-8")
+        config = make_step_config(tmp_path, step_name="02_parse_article", pool="cpu")
+        step = ParseArticleStep("02_parse_article", job_dir, config)
+        result = step.execute()
+        assert result["lang"] == "non-zh"
+        assert (job_dir / "intermediate" / "needs_translation.json").exists()
+
+    def test_chinese_article_no_marker(self, tmp_path):
+        job_dir = _mk_job(tmp_path)
+        (job_dir / "input" / "source.html").write_text(SAMPLE_HTML, encoding="utf-8")
+        config = make_step_config(tmp_path, step_name="02_parse_article", pool="cpu")
+        step = ParseArticleStep("02_parse_article", job_dir, config)
+        result = step.execute()
+        assert result["lang"] == "zh"
+        assert not (job_dir / "intermediate" / "needs_translation.json").exists()
+
+
+class TestTranslateArticleStep:
+    def test_validate_inputs_missing(self, tmp_path):
+        job_dir = _mk_job(tmp_path)
+        config = make_step_config(tmp_path, step_name="04_translate_article", pool="ai")
+        step = TranslateArticleStep("04_translate_article", job_dir, config)
+        assert step.validate_inputs() == ["output/original.md"]
+
+    def test_execute_translates_preserving_images(self, tmp_path, monkeypatch):
+        job_dir = _mk_job(tmp_path)
+        (job_dir / "output" / "original.md").write_text(
+            "# Title\n\nHello world, this is a test.\n\n![](assets/img_00.png)", encoding="utf-8")
+        config = make_step_config(tmp_path, step_name="04_translate_article", pool="ai")
+        step = TranslateArticleStep("04_translate_article", job_dir, config)
+        monkeypatch.setattr(step, "call_ai",
+                            lambda *a, **k: "# 标题\n\n你好世界,这是一个测试。\n\n![](assets/img_00.png)")
+        result = step.execute()
+        assert result["chars"] > 0
+        out = (job_dir / "output" / "translated.md").read_text(encoding="utf-8")
+        assert "你好世界" in out
+        assert "![](assets/img_00.png)" in out          # 图片引用原样保留

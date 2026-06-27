@@ -72,6 +72,8 @@ class ParseArticleStep(StepBase):
         if text:
             sections.append({"level": 1, "title": title or "正文", "page": 1, "text": text})
 
+        lang = self._detect_lang(text)                 # 翻译触发用:非中文(en 等)才译
+
         parsed = {
             "title": title,
             "authors": authors,
@@ -81,11 +83,16 @@ class ParseArticleStep(StepBase):
             "url": url,
             "sitename": meta.get("sitename", ""),
             "date": date,
+            "lang": lang,                              # v2:正文主语言(zh / non-zh)
             "word_count": len(text),
             "sections": sections,
             "text": text,
         }
         self.write_output("intermediate/parsed.json", parsed)
+
+        # 非中文正文 → 写翻译标记,04_translate_article 经 rules:exists 门控触发(中文文章不译)。
+        if lang != "zh" and len(text) > 200:
+            self.write_output("intermediate/needs_translation.json", {"lang": lang})
 
         # v2:可读原文 Markdown(图片下载到 assets/ 改本地引用),供前端「原文」tab。
         md, img_count = self._original_markdown(html, parsed, extractor)
@@ -93,7 +100,17 @@ class ParseArticleStep(StepBase):
 
         return {"chars": len(text), "title": title, "images": img_count,
                 "abstract": bool(abstract), "tags": len(tags),
-                "extractor": extractor.name}
+                "lang": lang, "extractor": extractor.name}
+
+    @staticmethod
+    def _detect_lang(text: str) -> str:
+        """正文主语言粗判:CJK 汉字占(汉字+拉丁字母)比 ≥15% 判 'zh',否则 'non-zh'(英文等→需翻译)。
+        中文文章夹少量英文术语仍 zh;纯英文文章 CJK≈0 → non-zh。无文字 → 'unknown'。"""
+        cjk = len(re.findall(r"[一-鿿]", text))
+        latin = len(re.findall(r'[A-Za-z]', text))
+        if cjk + latin == 0:
+            return "unknown"
+        return "zh" if cjk / (cjk + latin) >= 0.15 else "non-zh"
 
     # ── helpers ──
 

@@ -16,7 +16,7 @@ import type { JobDetail, GlossaryTerm, JobConcept } from '../types'
 import {
   Play, FileText, ExternalLink, BookOpen, Lightbulb,
   GitBranch, Info, RefreshCw, ChevronDown, Star, List, RotateCcw, Trash2,
-  AlertTriangle, ChevronRight, Bookmark, ShieldCheck, Coins,
+  AlertTriangle, ChevronRight, Bookmark, ShieldCheck, Coins, Languages,
 } from 'lucide-vue-next'
 
 // 内容详情(原型 #detail)：头部 + 4 tab(笔记/概念/流水线/元信息)。
@@ -74,7 +74,7 @@ const loading = ref(true)
 const loadError = ref('')
 
 // ── tab ──
-type Tab = 'notes' | 'concepts' | 'proc' | 'info' | 'evidence'
+type Tab = 'notes' | 'concepts' | 'proc' | 'info' | 'evidence' | 'translated'
 const tab = ref<Tab>('proc')
 const TABS: { key: Tab; label: string; icon: any }[] = [
   { key: 'notes', label: '笔记', icon: BookOpen },
@@ -141,6 +141,7 @@ async function fetchDetail() {
     setInitialSteps(d.steps)
     loadEvidence()  // 权威来源(取证产物);有则显示「权威来源」tab
     loadOriginal()  // 原文 MD(article v2 output/original.md);有则显示「原文」tab
+    loadTranslated()  // 译文 MD(非中文文章 output/translated.md);有则显示「译文」tab
     // 本 job DAG 的依赖(needs)定义(/api/pipelines 返回 {pipelines:[...]});失败留空不影响详情。
     api.get<{ pipelines?: any[] }>('/api/pipelines').then(r => { pipelinesDef.value = Array.isArray(r) ? r : (r?.pipelines ?? []) }).catch(() => {})
     // 逐次 AI 用量 → DAG 节点 provider/开销 + 总开销。带 job 切换守卫,迟到的回填不串到新 job。
@@ -280,6 +281,17 @@ async function loadOriginal() {
     originalMd.value = await api.getText(
       `/api/jobs/${jobId.value}/artifact?path=${encodeURIComponent('output/original.md')}`)
   } catch { originalMd.value = '' }
+}
+
+// ════════════════════ 译文(article output/translated.md) tab ════════════════════
+// 非中文文章的中文全文译文;有则显示「译文」tab,404 即无。
+const translatedMd = ref('')
+const hasTranslation = computed(() => !!translatedMd.value)
+async function loadTranslated() {
+  try {
+    translatedMd.value = await api.getText(
+      `/api/jobs/${jobId.value}/artifact?path=${encodeURIComponent('output/translated.md')}`)
+  } catch { translatedMd.value = '' }
 }
 
 let notesInit = false
@@ -527,6 +539,9 @@ watch(job, (j) => {
         <button v-if="hasEvidence" :class="{ on: tab === 'evidence' }" @click="tab = 'evidence'">
           <ShieldCheck :size="15" />权威来源
         </button>
+        <button v-if="hasTranslation" :class="{ on: tab === 'translated' }" @click="tab = 'translated'">
+          <Languages :size="15" />译文
+        </button>
       </div>
 
       <!-- ════ 笔记(article:智能版可隐藏、机械版=原文)════ -->
@@ -675,6 +690,12 @@ watch(job, (j) => {
 
           <div v-if="evidence?.notes" style="font-size:11.5px;color:var(--ink-500);margin-top:4px">{{ evidence.notes }}</div>
         </div>
+      </div>
+
+      <!-- ════ 译文(非中文文章的中文全文译文)════ -->
+      <div v-show="tab === 'translated'">
+        <p class="lead" style="margin:-6px 0 12px"><Languages :size="13" /> 原文为非中文,以下是 AI 忠实全文译文(保留原结构与配图)。</p>
+        <MarkdownViewer :content="translatedMd" :job-id="jobId" :domain="domain" />
       </div>
 
       <!-- ════ 概念 ════ -->
