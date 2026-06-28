@@ -164,6 +164,78 @@ class TestSmartPodcastStep:
         assert "注意力机制" in prompt
         assert "口语" in prompt
 
+    def test_build_prompt_no_truncation(self, tmp_path):
+        # 旧版把正文截到 12000 字;现在单次路径全量喂入,正文结尾也要在 prompt 里。
+        from steps.audio.step_04_smart_podcast import SINGLE_PASS_CHAR_LIMIT
+        job_dir = _mk_job(tmp_path)
+        body = "中" * (SINGLE_PASS_CHAR_LIMIT - 100) + "末尾标记ZZ"
+        transcript = {"segments": [], "full_text": body, "duration_sec": 600.0}
+        (job_dir / "intermediate" / "transcript.json").write_text(json.dumps(transcript))
+        config = make_step_config(tmp_path, step_name="04_smart_podcast")
+        step = SmartPodcastStep("04_smart_podcast", job_dir, config)
+        prompt = step._build_prompt(transcript)
+        assert "末尾标记ZZ" in prompt          # 全量,未被截断
+
+    def test_chunk_segments_splits_long(self, tmp_path):
+        from steps.audio.step_04_smart_podcast import MAP_CHUNK_CHARS
+        transcript = {"segments": [{"start": 0.0, "end": 60.0, "text": "内" * 1000}
+                                   for _ in range(40)],
+                      "full_text": "内" * 40000, "duration_sec": 2400.0}
+        chunks = SmartPodcastStep._chunk_segments(transcript, MAP_CHUNK_CHARS)
+        assert len(chunks) >= 2
+        assert all(len(c) <= MAP_CHUNK_CHARS + 1000 for c in chunks)  # 不超 budget(容一段)
+
+    def test_chunk_segments_fallback_no_segments(self, tmp_path):
+        transcript = {"segments": [], "full_text": "X" * 5000, "duration_sec": 60.0}
+        chunks = SmartPodcastStep._chunk_segments(transcript, 2000)
+        assert len(chunks) == 3  # 5000 / 2000 → 3 段
+
+    def test_execute_single_pass_one_call(self, tmp_path, monkeypatch):
+        # 短集:单次成稿,只调一次 call_ai,mode=single。
+        monkeypatch.delenv("DRY_RUN", raising=False)
+        job_dir = self._setup(tmp_path)            # full_text 很短
+        config = make_step_config(tmp_path, step_name="04_smart_podcast", pool="ai")
+        step = SmartPodcastStep("04_smart_podcast", job_dir, config)
+        note = "# 播客笔记\n\n" + "## 章节\n足够长的真实正文以通过净化长度判废。\n" * 30
+        calls = {"n": 0}
+
+        def fake_ai(prompt, **k):
+            calls["n"] += 1
+            return note
+
+        monkeypatch.setattr(step, "call_ai", fake_ai)
+        result = step.execute()
+        assert result["mode"] == "single"
+        assert result["chunks"] == 1
+        assert calls["n"] == 1
+
+    def test_execute_map_reduce_covers_full(self, tmp_path, monkeypatch):
+        # 长集:full_text 超阈值 → map-reduce,call_ai 调用 = chunks + 1(各段 map + 一次 reduce)。
+        from steps.audio.step_04_smart_podcast import SINGLE_PASS_CHAR_LIMIT
+        monkeypatch.delenv("DRY_RUN", raising=False)
+        job_dir = _mk_job(tmp_path)
+        seg_text = "这是一段较长的中文播客转写内容用于测试分段。" * 45   # ~990 字/段
+        segments = [{"start": float(i * 60), "end": float(i * 60 + 60), "text": seg_text}
+                    for i in range(30)]
+        transcript = {"segments": segments, "full_text": seg_text * 30, "duration_sec": 1800.0}
+        assert len(transcript["full_text"]) > SINGLE_PASS_CHAR_LIMIT
+        (job_dir / "intermediate" / "transcript.json").write_text(json.dumps(transcript))
+        config = make_step_config(tmp_path, step_name="04_smart_podcast", pool="ai")
+        step = SmartPodcastStep("04_smart_podcast", job_dir, config)
+        note = "# 播客笔记\n\n" + "## 章节\n足够长的真实正文以通过净化长度判废。\n" * 30
+        calls = {"n": 0}
+
+        def fake_ai(prompt, **k):
+            calls["n"] += 1
+            return note
+
+        monkeypatch.setattr(step, "call_ai", fake_ai)
+        result = step.execute()
+        assert result["mode"] == "map_reduce"
+        assert result["chunks"] >= 2
+        assert calls["n"] == result["chunks"] + 1         # map×chunks + reduce×1
+        assert list((job_dir / "output" / "versions").glob("notes_smart_*.md"))
+
     def test_input_hashes_includes_prompt(self, tmp_path):
         job_dir = self._setup(tmp_path)
         prompts_dir = tmp_path / "prompts"

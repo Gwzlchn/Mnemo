@@ -150,6 +150,20 @@ class TestBuildStepConfig:
 
         assert step_cfg["ai"] == {}
 
+    def test_dynamic_timeout_fields_passthrough(self, configs_dir, tmp_data_dir):
+        # audio 02_whisper 配了 timeout_per_min/max → 透传进 step dict(worker 据此动态超时)。
+        cfg = load_config(config_dir=configs_dir, data_dir=tmp_data_dir)
+        step_cfg = build_step_config(cfg, "audio", "02_whisper")
+        assert step_cfg["step"]["timeout_per_min"] == 90
+        assert step_cfg["step"]["timeout_max_sec"] == 21600
+
+    def test_no_dynamic_timeout_when_unset(self, configs_dir, tmp_data_dir):
+        # 未配 timeout_per_min 的步:step dict 不含这俩键(行为不变)。
+        cfg = load_config(config_dir=configs_dir, data_dir=tmp_data_dir)
+        step_cfg = build_step_config(cfg, "video", "03_scene")
+        assert "timeout_per_min" not in step_cfg["step"]
+        assert "timeout_max_sec" not in step_cfg["step"]
+
     def test_invalid_step_raises(self, configs_dir, tmp_data_dir):
         cfg = load_config(config_dir=configs_dir, data_dir=tmp_data_dir)
         with pytest.raises(StopIteration):

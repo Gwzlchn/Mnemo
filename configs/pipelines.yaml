@@ -425,6 +425,11 @@ audio:
       pool: cpu
       needs: ["01_download"]
       timeout: 1800
+      # 超时随音频时长伸缩:无 GPU 时 CPU base int8 跑长集 ≈ 1.3x 实时,固定 1800s 会把长集硬杀(08 审计 §4)。
+      # worker 跑步前读 input/metadata.json 的 duration_sec,有效超时 = clamp(max(1800, ceil(分钟)*90), 21600)。
+      # 缺 metadata/duration 时退回 timeout(行为不变)。机制通用(见 shared.config.build_step_config / worker)。
+      timeout_per_min: 90
+      timeout_max_sec: 21600
       retry: 2
       tags: []
       outputs: ["input/subtitle.srt"]

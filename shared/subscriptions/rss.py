@@ -35,20 +35,35 @@ def _is_audio_enclosure(enc: object) -> bool:
     return href.endswith(AUDIO_SUFFIXES)
 
 
+def _enc_href(enc: object) -> str:
+    """从一个 enclosure(feedparser 的 link/enclosure dict)取音频直链 href。"""
+    get = getattr(enc, "get", None)
+    if not callable(get):
+        return ""
+    return (get("href") or get("url") or "").strip()
+
+
+def _audio_enclosure_href(entry: object) -> str | None:
+    """取 entry 第一个音频 enclosure 的真链 href(enclosures 优先,再 links rel=enclosure)。
+    无音频 enclosure → None。供 audio 条目把「页面 link」换成「音频直链」喂下载步。"""
+    get = getattr(entry, "get", None)
+    if not callable(get):
+        return None
+    for enc in get("enclosures", None) or []:
+        if _is_audio_enclosure(enc) and _enc_href(enc):
+            return _enc_href(enc)
+    for lk in get("links", None) or []:
+        lget = getattr(lk, "get", None)
+        if callable(lget) and (lget("rel") or "") == "enclosure" \
+                and _is_audio_enclosure(lk) and _enc_href(lk):
+            return _enc_href(lk)
+    return None
+
+
 def _entry_has_audio(entry: object) -> bool:
     """entry 是否带音频 enclosure。feedparser 把 enclosure 放进 entry.enclosures,
     同时 links 里 rel=='enclosure' 的项也算(不同源结构不一,两处都查)。"""
-    get = getattr(entry, "get", None)
-    if not callable(get):
-        return False
-    for enc in get("enclosures", None) or []:
-        if _is_audio_enclosure(enc):
-            return True
-    for lk in get("links", None) or []:
-        lget = getattr(lk, "get", None)
-        if callable(lget) and (lget("rel") or "") == "enclosure" and _is_audio_enclosure(lk):
-            return True
-    return False
+    return _audio_enclosure_href(entry) is not None
 
 
 def _content_type_for(link: str, entry: object) -> str:
@@ -91,10 +106,16 @@ async def enumerate_rss(
         item_id = (get("id") or "").strip() or link
         if not item_id:
             continue
+        content_type = _content_type_for(link, entry)
+        # audio 条目:url 用音频 enclosure 真链(而非页面 link),否则下载步 curl 到的是网页 HTML、
+        # whisper 无音源 → 挂(08 审计 §4)。enclosure 缺失时回退页面 link(下载步再 best-effort 解析)。
+        url = link or item_id
+        if content_type == "audio":
+            url = _audio_enclosure_href(entry) or url
         items.append(SourceItem(
             item_id=item_id,
             title=(get("title") or "").strip(),
-            url=link or item_id,
-            content_type=_content_type_for(link, entry),
+            url=url,
+            content_type=content_type,
         ))
     return source_title, items

@@ -80,6 +80,88 @@ class TestDownloadStep:
             mock_dl.assert_called_once_with(url)
             assert result["source"] == "pdf"
 
+    def _mk_dirs(self, tmp_path):
+        job_dir = tmp_path / "job"
+        job_dir.mkdir()
+        for d in ["input", "intermediate", "output", "assets", "logs"]:
+            (job_dir / d).mkdir()
+        return job_dir
+
+    def test_audio_page_url_routes_to_download_audio(self, tmp_path):
+        # content_type=audio + 播客页面 URL(无音频后缀)→ 走 _download_audio,不走 _download_article。
+        job_dir = self._mk_dirs(tmp_path)
+        url = "https://www.econtalk.org/some-episode/"
+        step = self._make(job_dir, tmp_path, url=url, content_type="audio")
+        with patch.object(step, "_download_audio") as mock_audio, \
+                patch.object(step, "_download_article") as mock_article:
+            step.execute()
+            mock_audio.assert_called_once_with(url)
+            mock_article.assert_not_called()
+
+    def test_audio_direct_link_routes_to_download_audio(self, tmp_path):
+        job_dir = self._mk_dirs(tmp_path)
+        url = "https://cdn.example.com/ep42.mp3"
+        step = self._make(job_dir, tmp_path, url=url, content_type="audio")
+        with patch.object(step, "_download_audio") as mock_audio:
+            result = step.execute()
+            mock_audio.assert_called_once_with(url)
+            assert result["source"] == "podcast"
+
+    def test_verify_audio(self, tmp_path):
+        job_dir = self._mk_dirs(tmp_path)
+        step = self._make(job_dir, tmp_path, content_type="audio")
+        p = job_dir / "input" / "source.mp3"
+        p.write_bytes(b"\x00" * 100)                       # <2KB → False
+        assert step._verify_audio(p) is False
+        p.write_bytes(b"\x00" * 4096)
+        with patch.object(step, "_get_video_duration", return_value=42.0):
+            assert step._verify_audio(p) is True            # 有时长 → True
+        with patch.object(step, "_get_video_duration", return_value=None):
+            assert step._verify_audio(p) is False           # ffprobe 读不出时长(HTML/404)→ False
+
+    def test_download_audio_recovers_from_landing_page(self, tmp_path, monkeypatch):
+        # 直链回来的是落地页 HTML(部分 CDN 行为)→ 从内容解析音频真链重下一次。
+        monkeypatch.setattr("shared.net.assert_public_url", lambda u: None)
+        job_dir = self._mk_dirs(tmp_path)
+        url = "https://cdn.example.com/ep.mp3"             # detect_source=podcast,跳过预解析
+        step = self._make(job_dir, tmp_path, url=url, content_type="audio")
+        html = '<audio src="https://cdn.example.com/real.mp3"></audio>'
+        seq = []
+
+        def fake_curl(u, dest):
+            seq.append(u)
+            dest.write_text(html) if u == url else dest.write_bytes(b"\x00" * 4096)
+
+        monkeypatch.setattr(step, "_curl_to", fake_curl)
+        monkeypatch.setattr(step, "_verify_audio", lambda p: p.read_bytes()[:1] == b"\x00")
+        step._download_audio(url)
+        assert seq == [url, "https://cdn.example.com/real.mp3"]
+
+    def test_download_audio_raises_on_unplayable(self, tmp_path, monkeypatch):
+        from shared.errors import InputInvalidError
+        monkeypatch.setattr("shared.net.assert_public_url", lambda u: None)
+        job_dir = self._mk_dirs(tmp_path)
+        url = "https://cdn.example.com/ep.mp3"
+        step = self._make(job_dir, tmp_path, url=url, content_type="audio")
+        monkeypatch.setattr(step, "_curl_to", lambda u, dest: dest.write_text("<html>404</html>"))
+        monkeypatch.setattr(step, "_verify_audio", lambda p: False)
+        with pytest.raises(InputInvalidError):
+            step._download_audio(url)
+
+    def test_download_audio_resolves_page_then_downloads(self, tmp_path, monkeypatch):
+        # 给的是播客页面(非直链)→ 先 _resolve_audio_from_page 取真链,再下载该真链。
+        monkeypatch.setattr("shared.net.assert_public_url", lambda u: None)
+        job_dir = self._mk_dirs(tmp_path)
+        page = "https://pod.example.com/ep/7"
+        step = self._make(job_dir, tmp_path, url=page, content_type="audio")
+        monkeypatch.setattr(step, "_resolve_audio_from_page",
+                            lambda u: "https://cdn.example.com/ep7.mp3")
+        got = []
+        monkeypatch.setattr(step, "_curl_to", lambda u, dest: got.append(u) or dest.write_bytes(b"\x00" * 4096))
+        monkeypatch.setattr(step, "_verify_audio", lambda p: True)
+        step._download_audio(page)
+        assert got == ["https://cdn.example.com/ep7.mp3"]
+
     def test_upload_mode_skips_download(self, tmp_path):
         job_dir = tmp_path / "job"
         job_dir.mkdir()

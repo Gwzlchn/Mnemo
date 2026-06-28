@@ -16,7 +16,10 @@ from shared.config import AppConfig
 from shared.db import Database
 from shared.models import AITask, Job, LLMRequest, LLMResponse, Step, StepStatus
 from shared.storage import LocalStorage
-from worker.worker import Worker, WORKER_POOLS, auto_discover_tags, _resolve_worker_id, _probe_net_zones
+from worker.worker import (
+    Worker, WORKER_POOLS, auto_discover_tags, _resolve_worker_id, _probe_net_zones,
+    compute_effective_timeout, _read_media_duration,
+)
 from worker.transport import RedisTransport
 
 
@@ -1085,3 +1088,45 @@ class TestAITaskExecution:
         await redis.enqueue_ai_task(
             AITask(task_id="at_c2", request=LLMRequest(messages=[]), step_name="digest").to_task_payload())
         assert await request_step(w2) is None
+
+
+class TestComputeEffectiveTimeout:
+    """长集 whisper 超时随媒体时长伸缩(纯函数)。"""
+
+    def test_no_per_min_returns_base(self):
+        assert compute_effective_timeout(1800, None, 6000) == 1800
+
+    def test_no_duration_returns_base(self):
+        assert compute_effective_timeout(1800, 90, None) == 1800
+        assert compute_effective_timeout(1800, 90, 0) == 1800
+
+    def test_short_audio_uses_base_floor(self):
+        # 10 分钟 * 90 = 900 < 1800 下限 → 1800。
+        assert compute_effective_timeout(1800, 90, 600) == 1800
+
+    def test_long_audio_scales(self):
+        # 90 分钟 * 90 = 8100 > 1800 → 8100。
+        assert compute_effective_timeout(1800, 90, 90 * 60) == 8100
+
+    def test_rounds_up_partial_minute(self):
+        # 89.5 分钟 → ceil=90 → 8100。
+        assert compute_effective_timeout(1800, 90, 89.5 * 60) == 8100
+
+    def test_cap_clamps(self):
+        # 10h * 90 = 54000,但 cap=21600 → 21600。
+        assert compute_effective_timeout(1800, 90, 10 * 3600, 21600) == 21600
+
+
+class TestReadMediaDuration:
+    def test_reads_duration(self, tmp_path):
+        (tmp_path / "input").mkdir()
+        (tmp_path / "input" / "metadata.json").write_text(json.dumps({"duration_sec": 123.4}))
+        assert _read_media_duration(tmp_path) == 123.4
+
+    def test_missing_file_none(self, tmp_path):
+        assert _read_media_duration(tmp_path) is None
+
+    def test_missing_field_none(self, tmp_path):
+        (tmp_path / "input").mkdir()
+        (tmp_path / "input" / "metadata.json").write_text(json.dumps({"source": "podcast"}))
+        assert _read_media_duration(tmp_path) is None

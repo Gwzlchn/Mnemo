@@ -326,16 +326,24 @@ def build_step_config(
     step_cfg = next(s for s in pipeline_steps if s["name"] == step_name)
     domain_cfg = load_domain_profile(app_config.config_dir, domain)
 
+    step_node: dict = {
+        "name": step_name,
+        "pool": step_cfg["pool"],
+        "timeout_sec": step_cfg.get("timeout_sec", 600),
+        "retries": step_cfg.get("retries", 0),
+        # pipeline 定义版本(在 pipelines.yaml 维护,非代码):随 step def_digest 进步骤指纹。
+        # 使用者在 YAML 给某步加/改 `version`(或改 ai 模型)即触发该步+下游重跑,无需改代码(见 step_base._def_digest)。
+        "version": str(step_cfg.get("version", "1")),
+    }
+    # 超时随媒体时长伸缩(可选):仅当 pipeline 给了 timeout_per_min 才透传,worker 跑步前据
+    # input/metadata.json 的 duration_sec 算有效超时(见 worker.compute_effective_timeout)。
+    # 缺省时不写这俩键,行为完全不变。
+    if step_cfg.get("timeout_per_min"):
+        step_node["timeout_per_min"] = int(step_cfg["timeout_per_min"])
+        step_node["timeout_max_sec"] = int(step_cfg.get("timeout_max_sec", 0)) or None
+
     return {
-        "step": {
-            "name": step_name,
-            "pool": step_cfg["pool"],
-            "timeout_sec": step_cfg.get("timeout_sec", 600),
-            "retries": step_cfg.get("retries", 0),
-            # pipeline 定义版本(在 pipelines.yaml 维护,非代码):随 step def_digest 进步骤指纹。
-            # 使用者在 YAML 给某步加/改 `version`(或改 ai 模型)即触发该步+下游重跑,无需改代码(见 step_base._def_digest)。
-            "version": str(step_cfg.get("version", "1")),
-        },
+        "step": step_node,
         "ai": step_cfg.get("ai", {}),
         "domain": {"name": domain, **domain_cfg},
         "style_tags": style_tags or [],

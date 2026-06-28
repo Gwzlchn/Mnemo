@@ -31,6 +31,36 @@ from worker.transport import WorkerTransport, default_worker_id_file
 logger = structlog.get_logger(component="worker")
 
 
+def compute_effective_timeout(
+    base: int, per_min: int | None, duration_sec: float | None, cap: int | None = None,
+) -> int:
+    """步超时随媒体时长伸缩(纯函数,便于测)。
+
+    有 per_min 且能读到 duration → max(base, ceil(分钟)*per_min),再 clamp 到 cap(若给);
+    否则原样返回 base(行为不变)。用于长音频/视频 whisper:固定 1800s 会把无 GPU 的长集硬杀。"""
+    import math
+    if not per_min or not duration_sec or duration_sec <= 0:
+        return base
+    scaled = math.ceil(duration_sec / 60.0) * int(per_min)
+    eff = max(int(base), scaled)
+    if cap and cap > 0:
+        eff = min(eff, int(cap))
+    return eff
+
+
+def _read_media_duration(work_dir: Path) -> float | None:
+    """从 input/metadata.json(01_download 写)读 duration_sec。缺文件/字段 → None。"""
+    meta = work_dir / "input" / "metadata.json"
+    if not meta.is_file():
+        return None
+    try:
+        d = json.loads(meta.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    dur = d.get("duration_sec")
+    return float(dur) if isinstance(dur, (int, float)) else None
+
+
 def _worker_spec() -> dict:
     """worker 自报:版本(构建时注入的 FLORI_VERSION,便于查代码漂移)+ 机器配置。"""
     from shared.version import FLORI_VERSION
@@ -345,10 +375,24 @@ class Worker:
             use_gpu = ("gpu" in self.tags) and (
                 pool == "gpu" or "gpu" in set(raw.get("tags", []))
             )
+            # 超时随媒体时长伸缩(仅 pipeline 给了 timeout_per_min 的步,如 02_whisper):
+            # 无 GPU 时长集 whisper 固定 1800s 会被硬杀。缺 metadata/duration 时退回静态 timeout。
+            step_node = step_cfg["step"]
+            effective_timeout = compute_effective_timeout(
+                step_node["timeout_sec"],
+                step_node.get("timeout_per_min"),
+                _read_media_duration(work_dir),
+                step_node.get("timeout_max_sec"),
+            )
+            if effective_timeout != step_node["timeout_sec"]:
+                logger.info(
+                    "dynamic_timeout", worker_id=self.worker_id, job_id=job_id, step=step,
+                    base=step_node["timeout_sec"], effective=effective_timeout,
+                )
             ctx = StepContext(
                 job_id=job_id, step=step, work_dir=work_dir, exec_id=exec_id,
                 step_cfg=step_cfg, module=module, image=image,
-                timeout_sec=step_cfg["step"]["timeout_sec"],
+                timeout_sec=effective_timeout,
                 pool=pool, use_gpu=use_gpu,
             )
 

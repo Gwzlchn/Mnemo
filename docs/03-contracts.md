@@ -713,7 +713,7 @@ Base: `/api/collections`。集合是内容分组；当 `source_type`+`source_id`
 | `bilibili_fav` | B 站收藏夹 | media_id（纯数字）或 favlist URL（取其中 `fid`） | `bilibili` | video |
 | `bilibili_collection` | B 站合集/系列 | 合集/列表 URL，或紧凑式 `mid:season:sid` / `mid:series:sid` | `bilibili` | video |
 | `youtube_channel` | YouTube 频道/用户全部投稿 | 频道 URL（`/@handle`、`/channel/UC...`、`/c/...`、`/user/...`）、裸 handle（`@xxx`）或裸频道 id（`UC...`） | `youtube` | video |
-| `rss` | 通用 RSS/Atom feed（含 RSSHub/公众号桥、博客、arxiv、播客、YouTube 频道 RSS 等） | feed URL | `rss` | 按 entry 判定：arxiv→paper、youtube→video、audio enclosure→audio，否则 article |
+| `rss` | 通用 RSS/Atom feed（含 RSSHub/公众号桥、博客、arxiv、播客、YouTube 频道 RSS 等） | feed URL | `rss` | 按 entry 判定：arxiv→paper、youtube→video、audio enclosure→audio，否则 article。**audio 条目的 `url` = 音频 enclosure 真链**（非页面 link），下载步据此取音源；`item_id` 仍用 guid/link 作去重键 |
 | `local_dir` | 本地目录（挂进 api+worker 容器的监听目录） | 容器内绝对路径（约定 `/data/inbox`） | `local` | 按扩展名：pdf→paper、mp4/mkv/webm/mov→video、mp3/m4a/wav/flac→audio、md/txt/html→article（其它扩展名忽略） |
 
 - 同一来源种类细分到同一**来源标签**（`SOURCE_LABELS`）：三种 B 站来源都收敛到 `bilibili`。
@@ -1675,7 +1675,9 @@ video:
       image: flori/step-gpu
       pool: gpu
       needs: ["01_download"]
-      timeout: 1800
+      timeout: 1800                     # 静态下限(短集)
+      timeout_per_min: 90              # 可选:超时随媒体时长伸缩(每分钟音/视频 90s 墙钟预算)
+      timeout_max_sec: 21600           # 可选:动态超时上限(6h,防失控)
       retry: 2
       tags: ["gpu"]
       rules:
@@ -1737,6 +1739,9 @@ video:
   - `04_translate_article`(AI):`rules.exists: intermediate/needs_translation.json` 门控——**仅非中文文章触发**,把 `output/original.md` 忠实全文翻译为简体中文 → `output/translated.md`(保留 Markdown 结构与 `![](assets/…)` 图位),供前端「译文」tab。
   - `04_smart_article` / `05_concepts` **`needs` 含 `04_translate_article`**:非中文文章的中文产出**基于译文**(术语一致,不重复英→中)——`04_smart` 有 `translated.md` 则笔记基于译文;`05_concepts` 源优先级 **智能笔记 > 译文 > 原文章节**。译文被跳过(中文文章)时依赖视为满足,两步照常读原文。
 - **audio**：`01_download` → `02_whisper` → `03_transcript_parse` → `04_smart_podcast` → `05_review`。
+  - `01_download`(`content_type=audio`):支持音频直链(`.mp3/.m4a/.wav/.aac/.flac`)与播客**页面 URL**(best-effort 从页面 `og:audio`/`<audio>`/`<source>`/`<enclosure>`/裸 `*.mp3` 链解析音频真链);下载后 **ffprobe 校验**(无可解码时长=拿到 HTML/404 → `InputInvalidError`,不再拖到 whisper 才报晦涩 ffmpeg 错)。
+  - `02_whisper`:超时**随时长伸缩**(见 `timeout_per_min`/`timeout_max_sec`)——无 GPU 时长集 CPU 转写远超固定 1800s。worker 跑步前读 `input/metadata.json.duration_sec`,有效超时 = `clamp(max(timeout, ceil(分钟)*timeout_per_min), timeout_max_sec)`;缺 `timeout_per_min` 或读不到时长则用静态 `timeout`(行为不变)。机制通用,任何步均可在 pipeline 加这两字段启用。
+  - `04_smart_podcast`:**不再 12k 截断**。转写 ≤ `SINGLE_PASS_CHAR_LIMIT`(24000 字)单次成稿;超过则 **map-reduce**(按 segment 边界分段提炼要点 → 合并成完整笔记),覆盖全集不丢正文。`result.meta` 增 `mode`(`single`/`map_reduce`)与 `chunks`。
 
 新增内容类型只需在此文件添加一段 `variables`/`jobs`，无需改调度器/Worker 代码。
 

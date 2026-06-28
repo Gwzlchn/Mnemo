@@ -90,11 +90,12 @@ async def test_rss_content_type_detection():
     assert by_id["urn:guid:paper-1"].content_type == "paper"
     assert by_id["urn:guid:video-1"].content_type == "video"
 
-    # 第 4 条无 guid → item_id 回退为 link;audio enclosure(type=audio/mpeg)→ audio
+    # 第 4 条无 guid → item_id 回退为页面 link;audio enclosure(type=audio/mpeg)→ audio。
+    # url 用音频 enclosure 真链(而非页面 link),否则下载步 curl 到的是网页 → whisper 挂。
     audio = next(it for it in items if it.title == "播客单集")
     assert audio.content_type == "audio"
-    assert audio.item_id == "https://podcast.example.com/ep/5"
-    assert audio.url == "https://podcast.example.com/ep/5"
+    assert audio.item_id == "https://podcast.example.com/ep/5"   # 去重键仍用页面 link
+    assert audio.url == "https://cdn.example.com/ep5.mp3"        # 下载用音频真链
 
 
 @pytest.mark.asyncio
@@ -114,8 +115,10 @@ async def test_atom_parses_and_audio_by_suffix():
     by_id = {it.item_id: it for it in items}
     # Atom entry.id 作 item_id
     assert by_id["https://wechat.example.com/s/aaa"].content_type == "article"
-    # 仅靠 .m4a 后缀(无 audio type)也判 audio
-    assert by_id["https://wechat.example.com/s/bbb"].content_type == "audio"
+    # 仅靠 .m4a 后缀(无 audio type)也判 audio;url = enclosure 真链(非页面)
+    bbb = by_id["https://wechat.example.com/s/bbb"]
+    assert bbb.content_type == "audio"
+    assert bbb.url == "https://cdn.example.com/show.m4a"
 
 
 @pytest.mark.asyncio

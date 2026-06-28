@@ -39,6 +39,11 @@ class DownloadStep(StepBase):
             self._copy_local_file(url, content_type)
         elif source == "upload":
             self.log.info("upload_mode", content_type=content_type)
+        elif content_type == "audio" and source not in ("bilibili", "youtube"):
+            # 显式音频任务:无论 URL 是音频直链(podcast 源)还是播客页面,都走音频下载——
+            # 否则页面 URL 被 detect_source 判成 http_article 走文章分支,whisper 无音源 → 挂(08 审计 §4)。
+            # bilibili/youtube 留给各自带凭证/字幕的下载器(那类应作 video,不在此拦)。
+            self._download_audio(url)
         elif source == "bilibili":
             self._download_bilibili(url)
         elif source == "youtube":
@@ -322,18 +327,71 @@ class DownloadStep(StepBase):
         self.write_output("input/article_meta.json", article_meta)
 
     def _download_audio(self, url: str) -> None:
-        """单集音频 URL → 下载写 input/source.mp3。无 RSS,只取单文件。
-        同时落一份 input/source.mp4(复用现有 whisper 步,其入参约定为 source.mp4;
-        ffmpeg 按内容嗅探解码,扩展名不影响转写)。"""
+        """音频任务下载 → input/source.mp3(后续复制为 source.mp4 供 whisper;ffmpeg 按内容
+        嗅探解码,扩展名不影响转写)。支持音频直链(mp3/m4a/wav/aac/flac)与播客「页面 URL」
+        (best-effort 从页面解析音频真链)。下载后 ffprobe 校验:挡 404/HTML 存成 mp3 拖到
+        whisper 才报晦涩 ffmpeg 错(08 审计 §4)。"""
+        from shared.errors import InputInvalidError
         from shared.net import assert_public_url
+        from shared.source_detect import detect_source, extract_audio_enclosure
 
         assert_public_url(url)  # 下载前挡内网/回环目标(SSRF)
         input_dir = self.job_dir / "input"
         input_dir.mkdir(parents=True, exist_ok=True)
-
         dest = input_dir / "source.mp3"
-        cmd = ["curl", "-fSL", "-o", str(dest), "--", url]
+
+        media_url = url
+        # 给的是网页(非音频直链)→ 先抓页面解析出音频真链再下。
+        if detect_source(url) != "podcast":
+            resolved = self._resolve_audio_from_page(url)
+            if resolved:
+                assert_public_url(resolved)
+                self.log.info("audio_enclosure_resolved", src=resolved[:200])
+                media_url = resolved
+
+        self._curl_to(media_url, dest)
+
+        if not self._verify_audio(dest):
+            # 直链回来的可能是落地页 HTML(部分 CDN 对裸 UA 返回页面)→ 从内容里再解析真链重试一次。
+            try:
+                content = dest.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                content = ""
+            recovered = extract_audio_enclosure(content, base_url=media_url)
+            if recovered and recovered != media_url:
+                assert_public_url(recovered)
+                self.log.info("audio_enclosure_recovered", src=recovered[:200])
+                self._curl_to(recovered, dest)
+            if not self._verify_audio(dest):
+                raise InputInvalidError(
+                    f"audio download is not a playable media file (HTML/404?): {url}"
+                )
+
+    def _curl_to(self, url: str, dest: Path) -> None:
+        """curl 下载到 dest。带浏览器 UA:部分 CDN 对裸 curl UA 返回落地页而非音频文件。"""
+        cmd = ["curl", "-fSL", "-A", "Mozilla/5.0", "-o", str(dest), "--", url]
         self.run_subprocess(cmd, timeout=self.config["step"]["timeout_sec"])
+
+    def _resolve_audio_from_page(self, page_url: str) -> str | None:
+        """抓播客页面 HTML,解析出音频直链(og:audio/<audio>/<enclosure>/<a *.mp3>)。
+        best-effort:网络/解析失败返回 None,由调用方按原 URL 继续(再失败则校验拦下)。"""
+        from shared.source_detect import extract_audio_enclosure
+        try:
+            r = self.run_subprocess(
+                ["curl", "-fsSL", "-A", "Mozilla/5.0", "--", page_url], timeout=60,
+            )
+            return extract_audio_enclosure(r.stdout or "", base_url=page_url)
+        except Exception as e:
+            self.log.warning("audio_page_resolve_failed", error=str(e)[:160])
+            return None
+
+    def _verify_audio(self, path: Path) -> bool:
+        """音频下载验收:文件存在 + >2KB + ffprobe 读得出时长(>0.5s)。
+        HTML 错误页/404 体没有可解码时长 → ffprobe 失败 → False。"""
+        if not path.exists() or path.stat().st_size < 2048:
+            return False
+        dur = self._get_video_duration(path)  # ffprobe format=duration,音频同样适用
+        return bool(dur and dur > 0.5)
 
     def _link_audio_for_whisper(self, input_dir: Path) -> None:
         """把已下载/已上传的单集音频复制为 source.mp4,满足复用 whisper 步的入参约定。"""

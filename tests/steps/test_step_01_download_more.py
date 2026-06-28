@@ -361,6 +361,7 @@ class TestDownloadAudio:
         job_dir = _make_job_dir(tmp_path)
         step = _make_step(job_dir, tmp_path, source="podcast", content_type="audio")
         with patch("shared.net.assert_public_url") as ap, \
+             patch.object(step, "_verify_audio", return_value=True), \
              patch.object(step, "run_subprocess") as run:
             step._download_audio("https://cdn.example.com/ep/1.mp3")
             ap.assert_called_once_with("https://cdn.example.com/ep/1.mp3")
