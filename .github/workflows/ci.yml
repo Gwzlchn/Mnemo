@@ -26,6 +26,12 @@ jobs:
       # ghcr 缓存引用必须全小写;owner 含大写 → 统一算一个小写 owner 供 cache 引用(见 build-push 同款注释)。
       - name: Lowercase owner
         run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      # 抹 pyproject version→占位(0.0.0)稳定 COPY pyproject 缓存层(version 每提交变,否则下游 pip 全废冷建);
+      # 真实版本读出经 FLORI_VERSION build-arg 注入镜像 ENV(shared/version.py 用它覆盖,显示仍准)。
+      - name: 稳定 pip 缓存(取真实版本 + 抹 pyproject version 为占位)
+        run: |
+          echo "FLORI_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)" >> "$GITHUB_ENV"
+          sed -i 's/^version = .*/version = "0.0.0"/' pyproject.toml
       - uses: docker/setup-buildx-action@v4
       - name: Log in to ghcr.io
         if: github.ref == 'refs/heads/main'   # 仅 main 需登录(写 buildcache);PR 只读缓存(私有包读不到则优雅回退 gha)
@@ -44,7 +50,9 @@ jobs:
           target: test
           tags: flori-test:latest
           load: true
-          build-args: USE_USTC_MIRROR=0
+          build-args: |
+            USE_USTC_MIRROR=0
+            FLORI_VERSION=${{ env.FLORI_VERSION }}
           cache-from: |
             type=registry,ref=ghcr.io/${{ env.OWNER_LC }}/flori-test:buildcache
             type=gha,scope=flori-test
@@ -139,6 +147,11 @@ jobs:
       # 这里统一算一个小写 owner 供 images / cache 引用复用。
       - name: Lowercase owner
         run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      # 抹 pyproject version→占位稳定 pip 缓存层;真实版本经 FLORI_VERSION build-arg 注入(见 unit job 同款注释)。
+      - name: 稳定 pip 缓存(取真实版本 + 抹 pyproject version 为占位)
+        run: |
+          echo "FLORI_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)" >> "$GITHUB_ENV"
+          sed -i 's/^version = .*/version = "0.0.0"/' pyproject.toml
       # 注:不装 setup-qemu —— 全部 platforms: linux/amd64(原生,所有目标机 x86),无需 QEMU/binfmt 跨架构模拟。
       #     装了反而让 4 个并行 build job 抢同一 binfmt GHA 缓存 key,刷 "Unable to reserve cache" 警告。
       - uses: docker/setup-buildx-action@v4
@@ -169,6 +182,7 @@ jobs:
           build-args: |
             USE_USTC_MIRROR=0
             FLORI_BUILD_SHA=${{ github.sha }}
+            FLORI_VERSION=${{ env.FLORI_VERSION }}
           # registry 缓存常驻 ghcr(不被 GHA 10GB LRU 淘汰)→ 依赖层 digest 稳定,远程 worker 重拉
           # 只下变动的代码层(几 MB),不再整包重下 1GB+ 依赖。PR 无 ghcr 登录则回退 gha。
           cache-from: |

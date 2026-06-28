@@ -25,6 +25,8 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 OWNER="${IMAGE_OWNER:-gwzlchn}"
 TAG="uptest"
 USTC="${USE_USTC_MIRROR:-1}"
+# 真实语义版本(注入镜像 ENV FLORI_VERSION;本地不抹 pyproject——靠 cache mount 提速,且不动用户文件)。
+VER="$(sed -n 's/^version = "\(.*\)"/\1/p' "${REPO}/pyproject.toml" | head -1)"
 
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 cat > "$work/build.yml" <<YAML
@@ -34,7 +36,7 @@ services:
       context: ${REPO}
       dockerfile: docker/base.Dockerfile
       target: scheduler
-      args: { USE_USTC_MIRROR: "${USTC}" }
+      args: { USE_USTC_MIRROR: "${USTC}", FLORI_VERSION: "${VER}" }
       cache_from: [ "type=registry,ref=ghcr.io/${OWNER}/flori-scheduler:buildcache" ]
     image: ghcr.io/${OWNER}/flori-scheduler:${TAG}
   api:
@@ -42,7 +44,7 @@ services:
       context: ${REPO}
       dockerfile: docker/base.Dockerfile
       target: api
-      args: { USE_USTC_MIRROR: "${USTC}" }
+      args: { USE_USTC_MIRROR: "${USTC}", FLORI_VERSION: "${VER}" }
       cache_from: [ "type=registry,ref=ghcr.io/${OWNER}/flori-api:buildcache" ]
     image: ghcr.io/${OWNER}/flori-api:${TAG}
   worker:
@@ -50,7 +52,7 @@ services:
       context: ${REPO}
       dockerfile: docker/base.Dockerfile
       target: worker
-      args: { USE_USTC_MIRROR: "${USTC}" }
+      args: { USE_USTC_MIRROR: "${USTC}", FLORI_VERSION: "${VER}" }
       cache_from: [ "type=registry,ref=ghcr.io/${OWNER}/flori-worker:buildcache" ]
     image: ghcr.io/${OWNER}/flori-worker:${TAG}
   frontend:

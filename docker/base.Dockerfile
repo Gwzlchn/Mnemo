@@ -11,6 +11,11 @@
 #   改源码 → 只重算末尾 COPY 层,apt/npm/pip 依赖层恒命中 registry buildcache → CI 不再每次 push 冷建依赖。
 #   (旧版把 COPY shared/ 放进 common,任何 shared/ 改动都让子 stage 的 FROM common 基底变 → 依赖层全废重建。)
 #
+# ★版本解耦(buildcache 命中关键之二):每次提交 bump pyproject [project].version 会让 `COPY pyproject.toml` 层
+#   随之变 → 下游 pip 依赖层全废冷建。故 CI/build 在构建【前】把上下文里的 pyproject version 抹成占位(0.0.0,见
+#   ci.yml / build-uptest.sh)→ COPY pyproject 层跨提交稳定 → pip 缓存命中。真实语义版本经 build-arg FLORI_VERSION
+#   注入(各 stage ENV FLORI_VERSION);shared/version.py 用此 env 覆盖,不读已安装包版本,故显示仍准。
+#
 # 注:不用 `# syntax=...` 指令(会去 docker.io 拉 frontend 镜像,被 NAS 代理 reset);
 #    --mount=type=cache 靠引擎内置 BuildKit frontend 即可(已实测 `docker compose build` 支持)。
 
@@ -44,6 +49,8 @@ COPY scheduler/ scheduler/
 COPY tunnel_stats/ tunnel_stats/
 ARG FLORI_BUILD_SHA=
 ENV FLORI_BUILD_SHA=${FLORI_BUILD_SHA}
+ARG FLORI_VERSION=
+ENV FLORI_VERSION=${FLORI_VERSION}
 
 # ── api:+[api,mcp](api + mcp_server),无 claude/ffmpeg。/data/prompts seed(profiles 管理读它)──
 FROM common AS api
@@ -56,6 +63,8 @@ COPY api/ api/
 COPY configs/prompts/ /data/prompts/
 ARG FLORI_BUILD_SHA=
 ENV FLORI_BUILD_SHA=${FLORI_BUILD_SHA}
+ARG FLORI_VERSION=
+ENV FLORI_VERSION=${FLORI_VERSION}
 
 # ── worker:重镜像 —— ffmpeg(steps 调 ffmpeg/ffprobe + PyAV 解码)+ nodejs/claude-code(claude-cli)
 #    + [steps,gpu,worker] + cn_domains bake(net-zone CN 表)+ /data/prompts seed(AI 步读 profiles)──
@@ -89,6 +98,8 @@ COPY worker/ worker/
 COPY configs/prompts/ /data/prompts/
 ARG FLORI_BUILD_SHA=
 ENV FLORI_BUILD_SHA=${FLORI_BUILD_SHA}
+ARG FLORI_VERSION=
+ENV FLORI_VERSION=${FLORI_VERSION}
 
 # ── test:精简测试镜像 —— 全 pip extras + [test] 依赖,仅给测试(docker-compose.test.yml
 #    --cov=shared,api,scheduler,worker,steps 需 import 全部模块)。
@@ -115,3 +126,5 @@ COPY tunnel_stats/ tunnel_stats/
 COPY configs/prompts/ /data/prompts/
 ARG FLORI_BUILD_SHA=
 ENV FLORI_BUILD_SHA=${FLORI_BUILD_SHA}
+ARG FLORI_VERSION=
+ENV FLORI_VERSION=${FLORI_VERSION}
