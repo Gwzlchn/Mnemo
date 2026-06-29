@@ -590,23 +590,41 @@ class TestClaudeCLIProvider:
 
     @pytest.mark.asyncio
     async def test_cli_timeout_raises(self):
-        """Timeout should kill process and raise AIProviderError."""
-        provider = ClaudeCLIProvider(
-            command_template=["sh", "-c", "sleep 999"]
-        )
+        """Timeout 应 kill 进程并抛 AIProviderError。
+        用 mock 子进程(communicate 永挂)触发超时路径——【不起真子进程】:真子进程的 communicate 被
+        wait_for 取消后,其 transport 会残留到本测试事件循环关闭【之后】才 GC,__del__ 关管道报
+        'Event loop is closed'(PytestUnraisableExceptionWarning;生产循环长驻不触发,纯测试噪声)。"""
         import asyncio
+        provider = ClaudeCLIProvider(command_template=["claude", "-p"])
+        killed = {"n": 0}
+
+        class HangingProc:
+            returncode = -9
+            async def communicate(self, data=None):
+                await asyncio.sleep(999)        # 永挂 → 触发 communicate 的 wait_for 超时
+            def kill(self):
+                killed["n"] += 1
+            async def wait(self):
+                return -9
+
+        async def fake_exec(*cmd, **kw):
+            return HangingProc()
+
         original_wait_for = asyncio.wait_for
 
         async def fast_timeout(coro, timeout):
-            return await original_wait_for(coro, timeout=0.1)
+            # 只缩短大超时(communicate,≥600s)触发超时路径;proc.wait()(timeout=5)保持原样。
+            return await original_wait_for(coro, timeout=0.1 if timeout > 10 else timeout)
 
         req = LLMRequest(
             messages=[{"role": "user", "content": "hello"}],
             model="subscription",
         )
-        with patch("shared.ai_gateway.asyncio.wait_for", side_effect=fast_timeout):
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
+             patch("shared.ai_gateway.asyncio.wait_for", side_effect=fast_timeout):
             with pytest.raises(AIProviderError, match="timeout"):
                 await provider.complete(req)
+        assert killed["n"] == 1                 # 超时路径确实 kill 了进程
 
 
 class TestClaudeCLIVision:
