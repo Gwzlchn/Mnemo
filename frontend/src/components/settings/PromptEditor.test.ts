@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
-// PromptEditor 直接调 useApi(get 读详情/历史版本、put 存(overwrite/new)、del 恢复默认)。
+// PromptEditor 直接调 useApi(get 读详情/历史版本、put 存(overwrite/new)、post 切激活指针(activate)、del 彻底删除)。
 const get = vi.fn()
+const post = vi.fn()
 const put = vi.fn()
 const del = vi.fn()
 vi.mock('../../composables/useApi', () => ({
-  useApi: () => ({ get, post: vi.fn(), put, del, upload: vi.fn(), getText: vi.fn() }),
+  useApi: () => ({ get, post, put, del, upload: vi.fn(), getText: vi.fn() }),
 }))
 
 import PromptEditor from './PromptEditor.vue'
@@ -39,6 +40,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockGet()
   put.mockResolvedValue({ status: 'saved', active_version: 3 })
+  post.mockResolvedValue({ status: 'activated', active_version: 1 })
   del.mockResolvedValue(null)
 })
 
@@ -122,16 +124,55 @@ describe('PromptEditor 版本管理', () => {
     })
   })
 
-  it('「恢复默认」→ DELETE 覆盖', async () => {
+  it('「回到内置默认」→ POST activate{version:null}(非破坏,不 DELETE,emit changed)', async () => {
     const w = await mountEditor()
-    await btn(w, '恢复默认').trigger('click')
+    await btn(w, '回到内置默认').trigger('click')
     await flushPromises()
-    expect(del).toHaveBeenCalledWith('/api/prompts/video/11_smart?scope=global')
-    expect(put).not.toHaveBeenCalled()
-    expect(w.emitted('saved')).toBeTruthy()
+    expect(post).toHaveBeenCalledWith('/api/prompts/video/11_smart/activate', {
+      scope: 'global',
+      domain: undefined,
+      version: null,
+    })
+    expect(del).not.toHaveBeenCalled() // 不再删历史
+    expect(w.emitted('changed')).toBeTruthy()
   })
 
-  it('无覆盖:预填默认 + 标默认 + 恢复默认禁用', async () => {
+  it('「设为当前激活」选历史版本 vN → POST activate{version:vN}', async () => {
+    const w = await mountEditor()
+    const opts = w.find('[data-test="version-select"]').findAll('option')
+    await opts[1].setSelected() // 选 v1(当前激活是 v2 → 可设激活)
+    await flushPromises()
+    await w.find('[data-test="set-active"]').trigger('click')
+    await flushPromises()
+    expect(post).toHaveBeenCalledWith('/api/prompts/video/11_smart/activate', {
+      scope: 'global',
+      domain: undefined,
+      version: 1,
+    })
+    expect(w.emitted('changed')).toBeTruthy()
+  })
+
+  it('「设为当前激活」选默认 → POST activate{version:null}(停用回内置默认)', async () => {
+    const w = await mountEditor()
+    const opts = w.find('[data-test="version-select"]').findAll('option')
+    await opts[0].setSelected() // 默认(当前有激活 v2 → 可停用)
+    await flushPromises()
+    await w.find('[data-test="set-active"]').trigger('click')
+    await flushPromises()
+    expect(post).toHaveBeenCalledWith('/api/prompts/video/11_smart/activate', {
+      scope: 'global',
+      domain: undefined,
+      version: null,
+    })
+  })
+
+  it('「设为当前激活」对已激活版本禁用(选中激活 v2 时不可点)', async () => {
+    const w = await mountEditor()
+    // 初始选中 = 激活版本 v2 → 已是激活态 → 按钮禁用
+    expect((w.find('[data-test="set-active"]').element as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('无覆盖:预填默认 + 标默认 + 回到内置默认禁用 + 设为当前激活禁用(默认已是激活态)', async () => {
     mockGet({
       default_template: 'DEFAULT TEMPLATE BODY',
       default_templates: [{ name: '11_smart', content: 'DEFAULT TEMPLATE BODY' }],
@@ -142,9 +183,32 @@ describe('PromptEditor 版本管理', () => {
     const w = await mountEditor()
     expect(taVal(w)).toBe('DEFAULT TEMPLATE BODY')
     expect(w.text()).toContain('当前为默认')
-    expect((btn(w, '恢复默认').element as HTMLButtonElement).disabled).toBe(true)
+    expect((btn(w, '回到内置默认').element as HTMLButtonElement).disabled).toBe(true)
+    // 默认已是激活态 → 设为当前激活禁用
+    expect((w.find('[data-test="set-active"]').element as HTMLButtonElement).disabled).toBe(true)
     // 首次保存:覆盖按钮文案为「保存为覆盖」
     expect(btn(w, '保存为覆盖')).toBeTruthy()
+  })
+
+  it('无覆盖但有历史(已 deactivate):选 v1 可重新激活 → POST activate{version:1}', async () => {
+    mockGet({
+      default_template: 'DEFAULT TEMPLATE BODY',
+      default_templates: [{ name: '11_smart', content: 'DEFAULT TEMPLATE BODY' }],
+      override: null,
+      active_version: null,
+      versions: [{ version: 1, note: '首版', created_at: 't1' }],
+    })
+    const w = await mountEditor()
+    const opts = w.find('[data-test="version-select"]').findAll('option')
+    await opts[1].setSelected() // 选 v1(历史还在,可重新激活)
+    await flushPromises()
+    await w.find('[data-test="set-active"]').trigger('click')
+    await flushPromises()
+    expect(post).toHaveBeenCalledWith('/api/prompts/video/11_smart/activate', {
+      scope: 'global',
+      domain: undefined,
+      version: 1,
+    })
   })
 
   it('领域作用域:显示领域输入,PUT 带 domain', async () => {

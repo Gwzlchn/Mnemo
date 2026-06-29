@@ -87,6 +87,6 @@ function onSaved() {
     </template>
 
     <PromptEditor v-if="editing" :pipeline="editing.pipeline" :step="editing.step" :label="editing.label"
-      @close="editing = null" @saved="onSaved" />
+      @close="editing = null" @saved="onSaved" @changed="load" />
   </section>
 </template>

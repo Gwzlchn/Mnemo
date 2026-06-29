@@ -5,15 +5,18 @@
 //    选某历史版本 → 调 GET versions/{n} 把该版本全文载入 textarea(可基于它改)。
 //  · 保存有两个动作:「覆盖当前版本」(mode=overwrite,改激活版本内容,版本号不变)/
 //    「另存为新版本」(mode=new,version=max+1 并激活,可填一行 note)。首次保存恒为 v1。
-//  · 「恢复默认」= 删除该 scope 覆盖(连同全部版本历史),恢复默认。
+//  · 「设为当前激活」(1.1.11)= 把下拉所选设为激活指针(POST .../activate):选默认→version:null
+//    停用回内置默认(非破坏,留历史);选 vN→version:vN 把该历史版本设为激活(派发用它)。激活后原地刷新。
+//  · 「回到内置默认」(1.1.11,原「恢复默认」)= activate{version:null}(停用覆盖、保留全部历史版本),
+//    不再 DELETE 删历史。彻底删除入口不在此面板(如需可走 DELETE)。
 // 变体多模板步(08_punctuate/11_smart)预填用主模板,其余变体在下方只读列出。覆盖存 DB,下个 job 派发时注入。
 // 复用 ProfileEditor 的 modal 范式(.overlay/.modal/.field/.btn 全局类)。
 import { ref, onMounted, inject, computed } from 'vue'
 import { useApi } from '../../composables/useApi'
-import { X, Check, RotateCcw, GitBranch } from 'lucide-vue-next'
+import { X, Check, RotateCcw, GitBranch, Power } from 'lucide-vue-next'
 
 const props = defineProps<{ pipeline: string; step: string; label?: string }>()
-const emit = defineEmits<{ (e: 'close'): void; (e: 'saved'): void }>()
+const emit = defineEmits<{ (e: 'close'): void; (e: 'saved'): void; (e: 'changed'): void }>()
 
 const api = useApi()
 const showToast = inject<(m: string, t?: string) => void>('showToast', () => {})
@@ -58,8 +61,17 @@ const mainName = computed(() => {
 // 其余变体(只读参考,不进可编辑框):如 11_smart.vision、08_punctuate 的另一态。
 const otherVariants = computed(() => defaultTemplates.value.filter((t) => t.name !== mainName.value))
 
-// 有无覆盖(决定「恢复默认」是否可点 + 「覆盖当前版本」按钮文案带版本号)。
+// 有无激活覆盖(决定「回到内置默认」是否可点 + 「覆盖当前版本」按钮文案带版本号)。
 const hasOverride = computed(() => activeVersion.value != null)
+
+// 下拉所选是否已是【当前激活态】(决定「设为当前激活」是否禁用):
+//  · 选「默认」→ 当且仅当当前无激活(activeVersion==null)即已是默认态;
+//  · 选 vN → 当且仅当 vN 已是激活版本。
+const selectedIsActive = computed(() =>
+  selectedVersion.value === 'default'
+    ? activeVersion.value == null
+    : selectedVersion.value === activeVersion.value,
+)
 
 function _query(): string {
   if (scope.value === 'domain' && domain.value.trim()) {
@@ -132,19 +144,44 @@ async function save(mode: 'overwrite' | 'new') {
   }
 }
 
-// 恢复默认 = 删除该 scope 覆盖(连同全部版本历史)。无覆盖则禁用。
-async function restoreDefault() {
-  if (!hasOverride.value) return
+// activate 指针操作的公共体:version=null 停用回内置默认、version=vN 设激活。成功后原地刷新
+// (active 标记移到所选)+ 通知父组件刷新 ● 标记(不关闭面板)。
+async function _activate(version: number | null, okMsg: string) {
+  if (scope.value === 'domain' && !domain.value.trim()) {
+    showToast('请先填写领域', 'error')
+    return
+  }
   saving.value = true
   try {
-    await api.del(`/api/prompts/${props.pipeline}/${props.step}${_query()}`)
-    showToast('已恢复默认(删除覆盖)', 'success')
-    emit('saved')
+    await api.post(`/api/prompts/${props.pipeline}/${props.step}/activate`, {
+      scope: scope.value,
+      domain: scope.value === 'domain' ? domain.value.trim() : undefined,
+      version,
+    })
+    showToast(okMsg, 'success')
+    await load() // 原地刷新:active 标记移到新激活态
+    emit('changed') // 父组件刷新 ● 标记(不关闭面板)
   } catch (e: any) {
-    showToast('恢复失败:' + (e?.message || e), 'error')
+    showToast('操作失败:' + (e?.message || e), 'error')
   } finally {
     saving.value = false
   }
+}
+
+// 设为当前激活:把下拉所选设为激活指针。选默认→停用回内置默认;选 vN→该历史版本设为激活。
+async function setActive() {
+  if (selectedIsActive.value) return
+  if (selectedVersion.value === 'default') {
+    await _activate(null, '已回到内置默认(保留历史版本)')
+  } else {
+    await _activate(selectedVersion.value, `已激活 v${selectedVersion.value}`)
+  }
+}
+
+// 回到内置默认 = 停用覆盖(activate version:null),【保留全部历史版本】(非破坏,不再 DELETE)。无激活则禁用。
+async function restoreDefault() {
+  if (!hasOverride.value) return
+  await _activate(null, '已回到内置默认(保留历史版本)')
 }
 </script>
 
@@ -184,14 +221,22 @@ async function restoreDefault() {
             <span v-if="hasOverride" class="state-tag s-override">当前激活 v{{ activeVersion }}</span>
             <span v-else class="state-tag s-default">当前为默认(无覆盖)</span>
           </label>
-          <select class="input" v-model="selectedVersion" @change="onSelectVersion" data-test="version-select"
-            style="max-width:360px">
-            <option value="default">默认(无覆盖)</option>
-            <option v-for="v in versions" :key="v.version" :value="v.version">
-              v{{ v.version }}{{ v.version === activeVersion ? ' · 当前激活' : '' }}{{ v.note ? ' — ' + v.note : '' }}
-            </option>
-          </select>
-          <div class="note-tip">选历史版本可查看其内容并基于它改;再「另存为新版本」或「覆盖当前版本」。</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select class="input" v-model="selectedVersion" @change="onSelectVersion" data-test="version-select"
+              style="max-width:360px;flex:1">
+              <option value="default">默认(无覆盖)</option>
+              <option v-for="v in versions" :key="v.version" :value="v.version">
+                v{{ v.version }}{{ v.version === activeVersion ? ' · 当前激活' : '' }}{{ v.note ? ' — ' + v.note : '' }}
+              </option>
+            </select>
+            <button class="btn" :disabled="saving || selectedIsActive" @click="setActive" data-test="set-active"
+              :title="selectedVersion === 'default' ? '停用覆盖,派发回内置默认(保留历史)' : '把该历史版本设为当前激活,下个 job 派发用它'">
+              <Power :size="15" />设为当前激活
+            </button>
+          </div>
+          <div class="note-tip">
+            选历史版本可查看其内容并基于它改;「设为当前激活」把所选(默认 = 停用回内置默认,保留历史)设为派发所用。
+          </div>
         </div>
 
         <!-- prompt 编辑(预填当前生效 prompt;直接改) -->
@@ -229,8 +274,9 @@ async function restoreDefault() {
       </div>
 
       <div v-if="!loading" class="ft">
-        <button class="btn" :disabled="saving || !hasOverride" @click="restoreDefault">
-          <RotateCcw :size="15" />恢复默认
+        <button class="btn" :disabled="saving || !hasOverride" @click="restoreDefault"
+          data-test="restore-default" title="停用覆盖,派发回内置默认;保留全部历史版本(不删除)">
+          <RotateCcw :size="15" />回到内置默认
         </button>
         <span style="flex:1"></span>
         <button class="btn" @click="emit('close')">取消</button>
