@@ -1,13 +1,16 @@
 <script setup lang="ts">
-// Prompt 白盒 Phase 2:编辑某 AI 步的 prompt 覆盖(全局 / 按领域)。
-// UX(1.1.4 重做):打开即【一个可编辑 textarea,预填当前生效 prompt】——有覆盖填覆盖,否则填默认模板内容;
-// 直接在上面改。保存时 trim 后 == 默认 → 删除该 scope 覆盖(视为无覆盖);否则存覆盖。「恢复默认」把
-// textarea 重置回默认(保存后即清除覆盖)。变体多模板步(08_punctuate/11_smart)预填用主模板,其余变体
-// 在下方只读列出(不混进可编辑框)。覆盖存 DB,下个 job 派发时注入。
+// Prompt 白盒 Phase 2 + 版本管理(类 Grafana save):编辑某 AI 步的 prompt 覆盖(全局 / 按领域)。
+// UX(1.1.7 加版本):
+//  · 顶部「版本」下拉 = `默认(无覆盖)` + 各历史版本 v{n}(标当前激活)。选默认 → 载入默认模板内容;
+//    选某历史版本 → 调 GET versions/{n} 把该版本全文载入 textarea(可基于它改)。
+//  · 保存有两个动作:「覆盖当前版本」(mode=overwrite,改激活版本内容,版本号不变)/
+//    「另存为新版本」(mode=new,version=max+1 并激活,可填一行 note)。首次保存恒为 v1。
+//  · 「恢复默认」= 删除该 scope 覆盖(连同全部版本历史),恢复默认。
+// 变体多模板步(08_punctuate/11_smart)预填用主模板,其余变体在下方只读列出。覆盖存 DB,下个 job 派发时注入。
 // 复用 ProfileEditor 的 modal 范式(.overlay/.modal/.field/.btn 全局类)。
 import { ref, onMounted, inject, computed } from 'vue'
 import { useApi } from '../../composables/useApi'
-import { X, Check, RotateCcw } from 'lucide-vue-next'
+import { X, Check, RotateCcw, GitBranch } from 'lucide-vue-next'
 
 const props = defineProps<{ pipeline: string; step: string; label?: string }>()
 const emit = defineEmits<{ (e: 'close'): void; (e: 'saved'): void }>()
@@ -21,17 +24,25 @@ const refBlockHint = '{{ref_block}}'
 const scope = ref<'global' | 'domain'>('global')
 const domain = ref('')
 const content = ref('')
+const note = ref('')                                  // 「另存为新版本」的一行备注
 const defaultTemplate = ref<string | null>(null)
 const defaultTemplates = ref<{ name: string; content: string }[]>([])
 const defaultSystem = ref<string | null>(null)
+// 版本管理:激活版本号(无覆盖 null)+ 全部历史版本元信息 + 当前下拉选中项('default' 或版本号)。
+const activeVersion = ref<number | null>(null)
+const versions = ref<{ version: number; note: string; created_at: string }[]>([])
+const selectedVersion = ref<'default' | number>('default')
 const loading = ref(true)
 const saving = ref(false)
 
+interface VersionMeta { version: number; note: string; created_at: string }
 interface PromptDetail {
   default_template: string | null
   default_templates?: { name: string; content: string }[]
   default_system?: string | null
-  override: { scope: string; domain: string; content: string; updated_at: string } | null
+  override: { scope: string; domain: string; content: string; version?: number; updated_at: string } | null
+  active_version?: number | null
+  versions?: VersionMeta[]
 }
 
 // 主模板内容(预填默认用):后端 default_template 已取「主模板({step}.md)否则首个变体」。
@@ -47,8 +58,8 @@ const mainName = computed(() => {
 // 其余变体(只读参考,不进可编辑框):如 11_smart.vision、08_punctuate 的另一态。
 const otherVariants = computed(() => defaultTemplates.value.filter((t) => t.name !== mainName.value))
 
-// 当前 textarea 是否 == 默认(trim 后):决定保存是"删覆盖"还是"存覆盖"。
-const isDefault = computed(() => content.value.trim() === defaultContent.value.trim())
+// 有无覆盖(决定「恢复默认」是否可点 + 「覆盖当前版本」按钮文案带版本号)。
+const hasOverride = computed(() => activeVersion.value != null)
 
 function _query(): string {
   if (scope.value === 'domain' && domain.value.trim()) {
@@ -64,10 +75,15 @@ async function load() {
     defaultTemplate.value = d.default_template ?? null
     defaultTemplates.value = d.default_templates ?? []
     defaultSystem.value = d.default_system ?? null
+    versions.value = d.versions ?? []
     // domain scope 但未填领域时:后端归一会回 global 覆盖,不能据此预填 → 视为无覆盖,预填默认。
-    const ov = scope.value === 'domain' && !domain.value.trim() ? null : (d.override?.content ?? null)
-    // 预填【当前生效 prompt】:有覆盖填覆盖,否则填默认模板内容。
+    const noDomain = scope.value === 'domain' && !domain.value.trim()
+    activeVersion.value = noDomain ? null : (d.active_version ?? null)
+    const ov = noDomain ? null : (d.override?.content ?? null)
+    // 预填【当前生效 prompt】:有覆盖填覆盖(激活版本),否则填默认模板内容;下拉相应选激活版本 / 默认。
     content.value = ov ?? defaultContent.value
+    selectedVersion.value = activeVersion.value ?? 'default'
+    note.value = ''
   } catch (e: any) {
     showToast('读取失败:' + (e?.message || e), 'error')
   } finally {
@@ -76,25 +92,38 @@ async function load() {
 }
 onMounted(load)
 
-async function save() {
+// 切换版本下拉:默认 → 载入默认模板内容;历史版本 → 拉该版本全文载入 textarea(可基于它改)。
+async function onSelectVersion() {
+  if (selectedVersion.value === 'default') {
+    content.value = defaultContent.value
+    return
+  }
+  try {
+    const v = await api.get<{ content: string }>(
+      `/api/prompts/${props.pipeline}/${props.step}/versions/${selectedVersion.value}${_query()}`,
+    )
+    content.value = v.content ?? ''
+  } catch (e: any) {
+    showToast('读取版本失败:' + (e?.message || e), 'error')
+  }
+}
+
+// 两种保存:overwrite=覆盖当前激活版本;new=另存为新版本(带 note)。统一走 PUT(空内容由后端当删除)。
+async function save(mode: 'overwrite' | 'new') {
   if (scope.value === 'domain' && !domain.value.trim()) {
     showToast('请先填写领域', 'error')
     return
   }
   saving.value = true
   try {
-    if (isDefault.value) {
-      // 内容 == 默认 → 视为无覆盖:删除该 scope 覆盖(无则后端 no-op)。
-      await api.del(`/api/prompts/${props.pipeline}/${props.step}${_query()}`)
-      showToast('已是默认(无覆盖)', 'success')
-    } else {
-      await api.put(`/api/prompts/${props.pipeline}/${props.step}`, {
-        scope: scope.value,
-        domain: scope.value === 'domain' ? domain.value.trim() : undefined,
-        content: content.value,
-      })
-      showToast('已保存覆盖', 'success')
-    }
+    await api.put(`/api/prompts/${props.pipeline}/${props.step}`, {
+      scope: scope.value,
+      domain: scope.value === 'domain' ? domain.value.trim() : undefined,
+      content: content.value,
+      mode,
+      note: mode === 'new' ? (note.value.trim() || undefined) : undefined,
+    })
+    showToast(mode === 'new' ? '已另存为新版本' : '已覆盖当前版本', 'success')
     emit('saved')
   } catch (e: any) {
     showToast('保存失败:' + (e?.message || e), 'error')
@@ -103,10 +132,19 @@ async function save() {
   }
 }
 
-// 恢复默认:把 textarea 重置回默认模板内容(本地);保存后因 == 默认即清除覆盖。
-function restoreDefault() {
-  content.value = defaultContent.value
-  showToast('已填回默认,保存后将清除覆盖', 'success')
+// 恢复默认 = 删除该 scope 覆盖(连同全部版本历史)。无覆盖则禁用。
+async function restoreDefault() {
+  if (!hasOverride.value) return
+  saving.value = true
+  try {
+    await api.del(`/api/prompts/${props.pipeline}/${props.step}${_query()}`)
+    showToast('已恢复默认(删除覆盖)', 'success')
+    emit('saved')
+  } catch (e: any) {
+    showToast('恢复失败:' + (e?.message || e), 'error')
+  } finally {
+    saving.value = false
+  }
 }
 </script>
 
@@ -139,22 +177,41 @@ function restoreDefault() {
           <div class="note-tip">覆盖存 DB,下个 job 派发时注入该步;领域覆盖优先于全局。</div>
         </div>
 
+        <!-- 版本下拉:默认 + 各历史版本(标当前激活) -->
+        <div class="field" style="margin-bottom:10px">
+          <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span>版本</span>
+            <span v-if="hasOverride" class="state-tag s-override">当前激活 v{{ activeVersion }}</span>
+            <span v-else class="state-tag s-default">当前为默认(无覆盖)</span>
+          </label>
+          <select class="input" v-model="selectedVersion" @change="onSelectVersion" data-test="version-select"
+            style="max-width:360px">
+            <option value="default">默认(无覆盖)</option>
+            <option v-for="v in versions" :key="v.version" :value="v.version">
+              v{{ v.version }}{{ v.version === activeVersion ? ' · 当前激活' : '' }}{{ v.note ? ' — ' + v.note : '' }}
+            </option>
+          </select>
+          <div class="note-tip">选历史版本可查看其内容并基于它改;再「另存为新版本」或「覆盖当前版本」。</div>
+        </div>
+
         <!-- prompt 编辑(预填当前生效 prompt;直接改) -->
         <div class="field" style="margin-bottom:6px">
           <label style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
             <span>Prompt(直接编辑)</span>
-            <span class="state-tag" :class="isDefault ? 's-default' : 's-override'">
-              {{ isDefault ? '当前为默认(无覆盖)' : '已修改 · 保存为覆盖' }}
-            </span>
             <span style="flex:1"></span>
             <span class="char-count">{{ content.length }} 字</span>
           </label>
-          <textarea v-model="content" class="input" rows="16"
-            placeholder="该步的 prompt;直接修改即可,内容与默认一致则视为无覆盖" />
+          <textarea v-model="content" class="input" rows="15"
+            placeholder="该步的 prompt;直接修改即可。「覆盖当前版本」改激活版本,「另存为新版本」加一版" />
           <div class="note-tip">
-            预填当前生效内容(有覆盖填覆盖,否则填默认)。评审等步含 <code>{{ refBlockHint }}</code> 等占位符,
-            由运行期按本步实参注入,请保留。
+            评审等步含 <code>{{ refBlockHint }}</code> 等占位符,由运行期按本步实参注入,请保留。
           </div>
+        </div>
+
+        <!-- 新版本备注(另存为新版本时记录) -->
+        <div class="field" style="margin-bottom:6px">
+          <label>版本备注(另存为新版本时记录,可空)</label>
+          <input v-model="note" class="input" placeholder="如:加了配图要求 / 收紧字数" data-test="version-note" />
         </div>
 
         <!-- 其余变体(只读参考):多模板步(如 11_smart.vision、08_punctuate 另一态)不进可编辑框 -->
@@ -172,13 +229,16 @@ function restoreDefault() {
       </div>
 
       <div v-if="!loading" class="ft">
-        <button class="btn" :disabled="saving || isDefault" @click="restoreDefault">
+        <button class="btn" :disabled="saving || !hasOverride" @click="restoreDefault">
           <RotateCcw :size="15" />恢复默认
         </button>
         <span style="flex:1"></span>
         <button class="btn" @click="emit('close')">取消</button>
-        <button class="btn pri" :disabled="saving" @click="save">
-          <Check :size="16" />{{ saving ? '保存中…' : '保存' }}
+        <button class="btn" :disabled="saving" @click="save('overwrite')">
+          <Check :size="16" />{{ hasOverride ? `覆盖当前版本 v${activeVersion}` : '保存为覆盖' }}
+        </button>
+        <button class="btn pri" :disabled="saving" @click="save('new')">
+          <GitBranch :size="15" />另存为新版本
         </button>
       </div>
     </div>
