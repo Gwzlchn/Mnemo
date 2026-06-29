@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from shared.config import AppConfig
 from shared.db import Database
 from api.deps import get_config, get_db, validate_path_segment, verify_token
-from api.schemas import PromptOverrideRequest
+from api.schemas import PromptActivateRequest, PromptOverrideRequest
 
 router = APIRouter(prefix="/api/prompts", tags=["prompts"], dependencies=[Depends(verify_token)])
 
@@ -238,6 +238,50 @@ async def put_prompt(
     }
 
 
+@router.post("/{pipeline}/{step}/activate")
+async def activate_prompt(
+    pipeline: str,
+    step: str,
+    req: PromptActivateRequest,
+    config: AppConfig = Depends(get_config),
+    db: Database = Depends(get_db),
+):
+    """切换该步 (scope,domain) 的【激活指针】(非破坏,历史版本始终保留)。
+    - version=数字 → 把该历史版本设为当前激活(派发用它);该版本不存在 → 404。
+    - version=null → 停用覆盖回内置默认(deactivate;主表指针清掉,历史全留,下拉仍能再激活)。
+    返回新 active_version(null=已回内置默认)。"""
+    validate_path_segment(pipeline, "pipeline")
+    validate_path_segment(step, "step")
+    if req.domain:
+        validate_path_segment(req.domain, "domain")
+    s = _find_step(config, pipeline, step)
+    if s is None:
+        raise HTTPException(404, f"step '{step}' not found in pipeline '{pipeline}'")
+    if s.get("pool") != "ai":
+        raise HTTPException(400, f"step '{step}' is not an AI step")
+    if req.scope == "domain" and not (req.domain or "").strip():
+        raise HTTPException(400, "domain scope requires a non-empty domain")
+    if req.version is None:
+        await asyncio.to_thread(
+            db.deactivate_prompt_override, req.scope, req.domain, pipeline, step
+        )
+        return {
+            "status": "deactivated", "pipeline": pipeline, "step": step,
+            "scope": req.scope, "domain": (req.domain or "") if req.scope == "domain" else "",
+            "active_version": None,
+        }
+    ok = await asyncio.to_thread(
+        db.set_active_prompt_version, req.scope, req.domain, pipeline, step, req.version
+    )
+    if not ok:
+        raise HTTPException(404, f"version {req.version} not found for {pipeline}/{step}")
+    return {
+        "status": "activated", "pipeline": pipeline, "step": step,
+        "scope": req.scope, "domain": (req.domain or "") if req.scope == "domain" else "",
+        "active_version": req.version,
+    }
+
+
 @router.delete("/{pipeline}/{step}")
 async def delete_prompt(
     pipeline: str,
@@ -246,7 +290,9 @@ async def delete_prompt(
     domain: str | None = None,
     db: Database = Depends(get_db),
 ):
-    """删该步 (scope,domain) 覆盖(恢复默认)。无则 no-op。"""
+    """【彻底删除】该步 (scope,domain) 覆盖,连同其全部历史版本一并清除。无则 no-op。
+    注:「恢复默认/回内置默认」请用 POST .../activate {version:null}(非破坏,保留历史);
+    此 DELETE 仅用于真正要丢弃所有版本的场景。"""
     validate_path_segment(pipeline, "pipeline")
     validate_path_segment(step, "step")
     if domain:

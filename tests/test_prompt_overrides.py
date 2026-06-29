@@ -135,6 +135,58 @@ class TestPromptOverrideVersions:
         assert r["11_smart"] == {"content": "B", "version": 2}
 
 
+class TestPromptActivateDeactivateDB:
+    """非破坏的「回内置默认」(deactivate) + 「设为当前激活」(set_active):
+    deactivate 删激活指针但保留历史;set_active 切激活;re-activate 后 resolve 返回该版本。"""
+
+    def test_deactivate_clears_active_but_keeps_history(self, pdb):
+        pdb.set_prompt_override("global", None, "video", "11_smart", "A")
+        pdb.set_prompt_override("global", None, "video", "11_smart", "B", mode="new")  # 激活 v2
+        pdb.deactivate_prompt_override("global", None, "video", "11_smart")
+        # 激活指针清掉 → 主表无行 → resolve 空(回内置默认)
+        assert pdb.get_prompt_override("global", None, "video", "11_smart") is None
+        assert pdb.resolve_prompt_overrides("video", "general") == {}
+        # 但历史版本完整保留(下拉仍能看到 v1/v2,可再激活)
+        hist = pdb.list_prompt_override_versions("global", None, "video", "11_smart")
+        assert [h["version"] for h in hist] == [1, 2]
+        assert pdb.get_prompt_override_version("global", None, "video", "11_smart", 2)["content"] == "B"
+
+    def test_deactivate_noop_when_no_pointer(self, pdb):
+        # 从未覆盖时 deactivate 是 no-op,不报错
+        pdb.deactivate_prompt_override("global", None, "video", "11_smart")
+        assert pdb.get_prompt_override("global", None, "video", "11_smart") is None
+
+    def test_set_active_switches_pointer(self, pdb):
+        pdb.set_prompt_override("global", None, "video", "11_smart", "A")
+        pdb.set_prompt_override("global", None, "video", "11_smart", "B", mode="new")  # 激活 v2
+        assert pdb.set_active_prompt_version("global", None, "video", "11_smart", 1) is True
+        ov = pdb.get_prompt_override("global", None, "video", "11_smart")
+        assert ov["version"] == 1 and ov["content"] == "A"
+        assert pdb.resolve_prompt_overrides("video", "general") == {"11_smart": {"content": "A", "version": 1}}
+
+    def test_set_active_unknown_version_false(self, pdb):
+        pdb.set_prompt_override("global", None, "video", "11_smart", "A")
+        assert pdb.set_active_prompt_version("global", None, "video", "11_smart", 9) is False
+        # 原激活不动
+        assert pdb.get_prompt_override("global", None, "video", "11_smart")["version"] == 1
+
+    def test_reactivate_after_deactivate(self, pdb):
+        pdb.set_prompt_override("global", None, "video", "11_smart", "A")
+        pdb.set_prompt_override("global", None, "video", "11_smart", "B", mode="new")  # 激活 v2
+        pdb.deactivate_prompt_override("global", None, "video", "11_smart")
+        assert pdb.resolve_prompt_overrides("video", "general") == {}
+        # 重新激活 v2 → 主表指针重建,resolve 返回该版本
+        assert pdb.set_active_prompt_version("global", None, "video", "11_smart", 2) is True
+        assert pdb.resolve_prompt_overrides("video", "general") == {"11_smart": {"content": "B", "version": 2}}
+
+    def test_delete_still_clears_history(self, pdb):
+        # delete_prompt_override 仍是真·删整个(含历史),与 deactivate 区分
+        pdb.set_prompt_override("global", None, "video", "11_smart", "A")
+        pdb.set_prompt_override("global", None, "video", "11_smart", "B", mode="new")
+        pdb.delete_prompt_override("global", None, "video", "11_smart")
+        assert pdb.list_prompt_override_versions("global", None, "video", "11_smart") == []
+
+
 # ── step_base 注入回退 ──
 
 
@@ -452,6 +504,72 @@ class TestPromptVersionAPI:
         # global 历史与 domain 历史互不干扰
         gg = (await client.get("/api/prompts/video/11_smart/versions/1")).json()
         assert gg["content"] == "G"
+
+
+@pytest.mark.asyncio
+class TestPromptActivateAPI:
+    """POST .../activate:version=null 停用回内置默认(非破坏,留历史);version=数字 设激活;未知版本 404。"""
+
+    async def test_deactivate_keeps_versions(self, client):
+        await client.put("/api/prompts/video/11_smart", json={"scope": "global", "content": "A", "note": "首版"})
+        await client.put(
+            "/api/prompts/video/11_smart",
+            json={"scope": "global", "content": "B", "mode": "new", "note": "第二版"},
+        )
+        r = await client.post("/api/prompts/video/11_smart/activate", json={"scope": "global", "version": None})
+        assert r.status_code == 200
+        assert r.json()["status"] == "deactivated" and r.json()["active_version"] is None
+        # GET:active_version 归 null,但 versions[] 仍非空(历史保留),override 为 null
+        g = (await client.get("/api/prompts/video/11_smart")).json()
+        assert g["active_version"] is None
+        assert [v["version"] for v in g["versions"]] == [1, 2]
+        assert g["override"] is None
+
+    async def test_activate_sets_active_version(self, client):
+        await client.put("/api/prompts/video/11_smart", json={"scope": "global", "content": "A"})
+        await client.put(
+            "/api/prompts/video/11_smart", json={"scope": "global", "content": "B", "mode": "new"},
+        )  # 激活 v2
+        r = await client.post("/api/prompts/video/11_smart/activate", json={"scope": "global", "version": 1})
+        assert r.status_code == 200 and r.json()["active_version"] == 1
+        g = (await client.get("/api/prompts/video/11_smart")).json()
+        assert g["active_version"] == 1 and g["override"]["content"] == "A"
+
+    async def test_reactivate_after_deactivate(self, client):
+        await client.put("/api/prompts/video/11_smart", json={"scope": "global", "content": "A"})
+        await client.put(
+            "/api/prompts/video/11_smart", json={"scope": "global", "content": "B", "mode": "new"},
+        )
+        await client.post("/api/prompts/video/11_smart/activate", json={"scope": "global", "version": None})
+        # 再激活 v2 → override 回来,active_version=2
+        r = await client.post("/api/prompts/video/11_smart/activate", json={"scope": "global", "version": 2})
+        assert r.status_code == 200 and r.json()["active_version"] == 2
+        g = (await client.get("/api/prompts/video/11_smart")).json()
+        assert g["active_version"] == 2 and g["override"]["content"] == "B"
+
+    async def test_activate_unknown_version_404(self, client):
+        await client.put("/api/prompts/video/11_smart", json={"scope": "global", "content": "A"})
+        r = await client.post("/api/prompts/video/11_smart/activate", json={"scope": "global", "version": 9})
+        assert r.status_code == 404
+
+    async def test_activate_unknown_step_404(self, client):
+        r = await client.post("/api/prompts/video/nope_step/activate", json={"scope": "global", "version": None})
+        assert r.status_code == 404
+
+    async def test_activate_domain_scope_requires_domain_400(self, client):
+        r = await client.post("/api/prompts/video/11_smart/activate", json={"scope": "domain", "version": None})
+        assert r.status_code == 400
+
+    async def test_deactivate_does_not_touch_default_resolved_job(self, client):
+        # deactivate 后 resolve 空 → 该步派发回内置默认(借 create_job 注入验证不再带覆盖)
+        await client.put(
+            "/api/prompts/article/04_smart_article", json={"scope": "global", "content": "ART"},
+        )
+        await client.post(
+            "/api/prompts/article/04_smart_article/activate", json={"scope": "global", "version": None},
+        )
+        g = (await client.get("/api/prompts/article/04_smart_article")).json()
+        assert g["active_version"] is None and g["versions"]  # 历史还在
 
 
 @pytest.mark.asyncio

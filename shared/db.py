@@ -146,7 +146,9 @@ CREATE INDEX IF NOT EXISTS idx_ai_task_logs_task ON ai_task_logs(task_id);
 -- 注入 job.json.prompt_overrides[step],worker step_base 优先用(pure worker 无 DB → 派发时带过去)。
 -- domain NOT NULL DEFAULT '' 以保证复合主键唯一(SQLite 把 PK 里的 NULL 视作互异会破唯一)。
 -- version=当前【激活】版本号(类 Grafana save 的指针);content 仍存激活内容供注入快速读。
--- 历史全量在 prompt_override_versions;主表始终指向其中一行(version 列)。
+-- 历史全量在 prompt_override_versions;主表存在时指向其中一行(version 列)。
+-- 「停用覆盖回内置默认」(deactivate)= 删本表那一行(激活指针),历史表完整保留 → 主表【可缺行】而历史仍在;
+-- 缺行即 resolve 返回空(回内置默认),可经 set_active_prompt_version 重建指针重新激活某历史版本。
 CREATE TABLE IF NOT EXISTS prompt_overrides (
     scope TEXT NOT NULL DEFAULT 'global',
     domain TEXT NOT NULL DEFAULT '',
@@ -160,7 +162,8 @@ CREATE TABLE IF NOT EXISTS prompt_overrides (
 
 -- prompt 覆盖的【版本历史】(类 Grafana save):每次「另存为新版本」加一行(version=max+1),
 -- 「覆盖当前版本」更新对应 version 行的 content/note。主表 prompt_overrides.version 指向激活版本。
--- 删 override(恢复默认)= 连同此处所有版本一并删除。created_at=该版本首次创建时间。
+-- 「停用覆盖回默认」(deactivate)只删主表指针,本表【全保留】;唯有 delete_prompt_override(彻底删除)
+-- 才连同此处所有版本一并清除。created_at=该版本首次创建时间。
 CREATE TABLE IF NOT EXISTS prompt_override_versions (
     scope TEXT NOT NULL DEFAULT 'global',
     domain TEXT NOT NULL DEFAULT '',
@@ -1352,6 +1355,46 @@ class Database:
                 (scope, dom, pipeline, step),
             )
             self._conn.commit()
+
+    def deactivate_prompt_override(
+        self, scope: str, domain: str | None, pipeline: str, step: str
+    ) -> None:
+        """停用某步覆盖(恢复内置默认)——【非破坏】:只删主表 prompt_overrides 那一行(激活指针),
+        prompt_override_versions【全部历史版本完整保留】(下拉里仍能看到 v1/v2…,可重新激活)。
+        删指针后 resolve_prompt_overrides 返回空 → 派发回内置默认。无指针则 no-op。
+        注:version 列 NOT NULL DEFAULT 1(C1 加,不可空),故用「删激活行」而非置 NULL 表达停用。"""
+        scope, dom = self._norm_override_key(scope, domain)
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM prompt_overrides WHERE scope=? AND domain=? AND pipeline=? AND step=?",
+                (scope, dom, pipeline, step),
+            )
+            self._conn.commit()
+
+    def set_active_prompt_version(
+        self, scope: str, domain: str | None, pipeline: str, step: str, version: int
+    ) -> bool:
+        """把激活指针指向某【历史版本】(re-activate):主表 content/version 同步成该版本,
+        下次派发即用它。该版本不存在于 prompt_override_versions → 返回 False(不动);成功 True。
+        主表此前可能无行(已 deactivate 状态)——直接 INSERT OR REPLACE 重建激活指针。"""
+        scope, dom = self._norm_override_key(scope, domain)
+        key = (scope, dom, pipeline, step)
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT content FROM prompt_override_versions WHERE scope=? AND domain=? "
+                "AND pipeline=? AND step=? AND version=?",
+                (*key, version),
+            ).fetchone()
+            if row is None:
+                return False
+            self._conn.execute(
+                """INSERT OR REPLACE INTO prompt_overrides
+                   (scope, domain, pipeline, step, content, version, updated_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (*key, row["content"], version, _now_iso()),
+            )
+            self._conn.commit()
+        return True
 
     def get_prompt_override(
         self, scope: str, domain: str | None, pipeline: str, step: str

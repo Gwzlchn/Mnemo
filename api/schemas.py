@@ -150,6 +150,14 @@ class PromptOverrideRequest(BaseModel):
     note: str | None = None
 
 
+class PromptActivateRequest(BaseModel):
+    # 激活指针操作:version=数字 → 设该历史版本为当前激活(派发用它);version=null → 停用覆盖回内置默认
+    # (非破坏,保留全部历史版本)。scope/domain 同 PromptOverrideRequest。
+    scope: str = "global"
+    domain: str | None = None
+    version: int | None = None
+
+
 # ── 集合 ──
 
 
