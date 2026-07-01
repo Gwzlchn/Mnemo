@@ -7,7 +7,7 @@ services:
     container_name: flori-worker-cpu
     network_mode: host
     restart: unless-stopped
-    command: sh -c "mkdir -p /data/db && python -m worker.main --type cpu"
+    command: sh -c "mkdir -p /data/db && python -m worker.main --pools cpu"
     environment:
       - REDIS_URL=redis://127.0.0.1:6379/0
       - DATA_DIR=/data
@@ -26,7 +26,7 @@ services:
     container_name: flori-worker-ai
     network_mode: host
     restart: unless-stopped
-    command: sh -c "mkdir -p /data/db && python -m worker.main --type ai --tags vision text-only"
+    command: sh -c "mkdir -p /data/db && python -m worker.main --pools ai --tags vision text-only"
     environment:
       - REDIS_URL=redis://127.0.0.1:6379/0
       - DATA_DIR=/data

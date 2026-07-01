@@ -16,23 +16,21 @@ from shared.redis_client import RedisClient
 from shared.storage import GatewayStorage, create_storage
 
 from .transport import create_transport
-from .worker import WORKER_POOLS, Worker, auto_discover_tags
+from .worker import Worker, auto_discover_tags
 
 logger = structlog.get_logger(component="worker")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Worker process")
+    # 能力 = 订阅的资源池(可多个),这是【唯一】的能力表达。步按 pool 派活;一台机器会几种活就 --pools 几个,
+    # 无主次(如 cpu+gpu 强机:--pools cpu gpu)。旧 --type 已删除(路由本就 pool-first,type 纯冗余)。
     parser.add_argument(
-        "--type", required=True,
-        # choices 从 WORKER_POOLS 派生(单一事实源):新增/重命名 worker 类型只改 worker.py
-        # 的 WORKER_POOLS 一处,不必再同步这里的字面量列表。
-        choices=sorted(WORKER_POOLS),
-        help="Worker type (determines default pools)",
+        "--pools", nargs="+", required=True,
+        help="本 worker 订阅的资源池(能力集合,可多个),如 --pools cpu gpu。",
     )
     parser.add_argument("--tags", nargs="*", default=None, help="Capability tags")
     parser.add_argument("--reject-tags", nargs="*", default=None, help="Reject tags")
-    parser.add_argument("--pools", nargs="*", default=None, help="Override default pools")
     parser.add_argument(
         "--concurrency", type=int, default=None,
         help="同时执行的 step 数(本机容量;默认 1,或 env WORKER_CONCURRENCY)。"
@@ -83,7 +81,9 @@ async def main() -> None:
     else:
         storage = create_storage(config.jobs_dir)
 
-    pools = args.pools or WORKER_POOLS[args.type]
+    pools = args.pools
+    # worker_type 仅作【显示标签】(路由一律按 pools);从 pools 集合派生:单池="cpu",多池="cpu+gpu"。
+    worker_type = "+".join(sorted(set(pools)))
     tags = set(args.tags) if args.tags else auto_discover_tags()
     reject_tags = set(args.reject_tags) if args.reject_tags else set()
     concurrency = (
@@ -93,7 +93,7 @@ async def main() -> None:
 
     worker = Worker(
         transport=transport, config=config, storage=storage,
-        worker_type=args.type, pools=pools,
+        worker_type=worker_type, pools=pools,
         tags=tags, reject_tags=reject_tags, concurrency=concurrency,
     )
 

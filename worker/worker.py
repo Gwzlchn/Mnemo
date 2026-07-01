@@ -83,16 +83,8 @@ def _worker_spec() -> dict:
         pass
     return spec
 
-# worker 类型 → 订阅的池(拓扑权威,不在 pools.yaml;新增/重命名池在此维护)。
-# 下载隔离:只有 io 类型订 io 池 → 唯一下载/出网 worker;cpu/ai/gpu 都不下载。
-# scene 已并入 cpu 池(取消独立 scene 池 + scene↔cpu 全局冻结);单机抢资源由 per-worker
-# WORKER_CONCURRENCY 控制,池间不再有冻结互斥。gpu 保留 cpu fallback(空闲帮跑 cpu 步)。
-WORKER_POOLS: dict[str, list[str]] = {
-    "io": ["io"],
-    "cpu": ["cpu"],
-    "ai": ["ai"],
-    "gpu": ["gpu", "cpu"],
-}
+# 注:旧 WORKER_POOLS(type→默认池映射)已删——能力统一用 --pools 显式表达(worker/main.py),
+# 路由本就按 pool 走,type 纯冗余。多池强机(如 gpu+cpu)直接 `--pools gpu cpu`,无主次、无隐式 fallback。
 
 
 def _resolve_worker_id(worker_type: str) -> str:
@@ -110,9 +102,11 @@ def _resolve_worker_id(worker_type: str) -> str:
     本地文件,可【不挂 /data 卷】纯出站 HTTPS 跑(configs 在镜像、work_dir 在 /tmp、产物经网关)。
     此时缓存文件写不了是预期的,降级为 debug 不报 warning。"""
     id_file = Path(default_worker_id_file())
+    # worker_type 多池派生时形如 "cpu+gpu";id 会进 redis key / 容器 label,前缀里 '+' 换 '-' 保守。
+    safe_type = worker_type.replace("+", "-")
     name = os.environ.get("WORKER_NAME", "").strip()
     if name:
-        worker_id = f"{worker_type}-{hashlib.sha256(name.encode()).hexdigest()[:8]}"
+        worker_id = f"{safe_type}-{hashlib.sha256(name.encode()).hexdigest()[:8]}"
     else:
         try:
             cached = id_file.read_text().strip()
@@ -120,7 +114,7 @@ def _resolve_worker_id(worker_type: str) -> str:
                 return cached
         except OSError:
             pass
-        worker_id = generate_worker_id(worker_type)
+        worker_id = generate_worker_id(safe_type)
     try:
         id_file.parent.mkdir(parents=True, exist_ok=True)
         id_file.write_text(worker_id)

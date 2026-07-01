@@ -17,7 +17,7 @@ from shared.db import Database
 from shared.models import AITask, Job, LLMRequest, LLMResponse, Step, StepStatus
 from shared.storage import LocalStorage
 from worker.worker import (
-    Worker, WORKER_POOLS, auto_discover_tags, _resolve_worker_id, _probe_net_zones,
+    Worker, auto_discover_tags, _resolve_worker_id, _probe_net_zones,
     compute_effective_timeout, _read_media_duration,
 )
 from worker.transport import RedisTransport
@@ -461,25 +461,29 @@ class TestNetZoneProbe:
                 assert _probe_net_zones() == {"net-global"}
 
 
-class TestWorkerPools:
-    def test_default_pools(self):
-        # Structural validation instead of copying hardcoded values
-        for wtype, pools in WORKER_POOLS.items():
-            assert isinstance(pools, list), f"{wtype} pools should be a list"
-            assert len(pools) > 0, f"{wtype} should have at least one pool"
-        # gpu 保留 cpu fallback;scene 已并入 cpu(无独立 scene 池)。
-        assert WORKER_POOLS["gpu"] == ["gpu", "cpu"]
-        assert WORKER_POOLS["cpu"] == ["cpu"]
-        assert WORKER_POOLS["io"] == ["io"]
-        assert WORKER_POOLS["ai"] == ["ai"]
-        # 下载隔离:只有 io 订 io 池;cpu/ai/gpu 都不下载。
-        assert "io" not in WORKER_POOLS["cpu"]
-        assert "io" not in WORKER_POOLS["ai"]
-        assert "io" not in WORKER_POOLS["gpu"]
-        # 无 scene 池残留。
-        assert all("scene" not in p for p in WORKER_POOLS.values())
-        # All types should exist
-        assert set(WORKER_POOLS.keys()) >= {"io", "cpu", "ai", "gpu"}
+class TestWorkerPoolsCli:
+    """能力统一用 --pools(旧 --type / WORKER_POOLS 已删):--pools 必填、worker_type 从 pools 派生、
+    多池派生 type 的 worker_id 前缀 '+'→'-'。"""
+
+    def test_pools_required_and_no_type_arg(self, monkeypatch):
+        import worker.main as wm
+        monkeypatch.setattr("sys.argv", ["worker"])           # 不给 --pools → 必填报错
+        with pytest.raises(SystemExit):
+            wm.parse_args()
+        monkeypatch.setattr("sys.argv", ["worker", "--pools", "cpu", "gpu"])
+        args = wm.parse_args()
+        assert args.pools == ["cpu", "gpu"]                   # 多池解析成列表
+        assert not hasattr(args, "type")                      # --type 已删
+
+    def test_worker_type_derived_from_pools(self):
+        # main 里 worker_type = "+".join(sorted(set(pools))):单池="cpu",多池="cpu+gpu"(无主次)。
+        assert "+".join(sorted(set(["gpu", "cpu"]))) == "cpu+gpu"
+        assert "+".join(sorted(set(["cpu"]))) == "cpu"
+
+    def test_resolve_worker_id_sanitizes_multi_pool_type(self, monkeypatch):
+        monkeypatch.setenv("WORKER_NAME", "gpu-rig")
+        wid = _resolve_worker_id("cpu+gpu")
+        assert wid.startswith("cpu-gpu-") and "+" not in wid  # id 前缀 '+' → '-'
 
 
 class TestUpdateWorkerStatus:
