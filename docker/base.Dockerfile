@@ -119,11 +119,25 @@ ENV FLORI_BUILD_SHA=${FLORI_BUILD_SHA}
 ARG FLORI_VERSION=
 ENV FLORI_VERSION=${FLORI_VERSION}
 
-# ── test-worker:FROM test + ffmpeg + libgl(opencv 需 X/GL 库)+ 现有 [steps] extra —— 跑【step/worker 测试】
-#    (tests/steps/ + tests/test_step_*.py + test_worker.py,真 import opencv/pymupdf/scikit-image/trafilatura/imagehash)。
-#    ★复用现有 [steps](无新概念);不含 [gpu](faster-whisper/torch,测试全 mock 不需)→ 比 worker 部署镜像更小。
-FROM test AS test-worker
+# ── test-worker(重):跑【step/worker 测试】(tests/steps/ + tests/test_step_*.py + test_worker.py,真 import
+#    opencv/pymupdf/scikit-image/trafilatura/imagehash)。★复用现有 [steps](无新概念),不含 [gpu](测试全 mock 不需)。
+#    ★★FROM common(【不】FROM test):否则 test 的源码 COPY 在中间 → 一改源码就把下面的 [steps] 层【全部冷重建】
+#    (装 opencv/scikit-image ~100s,违分层铁律,实测 unit-worker 148s 的元凶)。故 apt+全 pip 装在【前】、
+#    源码 COPY 放【最后】→ 改源码只重末层 COPY,apt/[steps] 层恒命中 buildcache。
+FROM common AS test-worker
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
     && rm -rf /var/lib/apt/lists/*
-RUN --mount=type=cache,target=/root/.cache/pip pip install ".[steps]"
+RUN --mount=type=cache,target=/root/.cache/pip pip install ".[api,worker,mcp,test,steps]"
+COPY shared/ shared/
+COPY configs/ configs/
+COPY steps/ steps/
+COPY api/ api/
+COPY scheduler/ scheduler/
+COPY worker/ worker/
+COPY tunnel_stats/ tunnel_stats/
+COPY configs/prompts/ /data/prompts/
+ARG FLORI_BUILD_SHA=
+ENV FLORI_BUILD_SHA=${FLORI_BUILD_SHA}
+ARG FLORI_VERSION=
+ENV FLORI_VERSION=${FLORI_VERSION}
