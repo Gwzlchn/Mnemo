@@ -59,14 +59,15 @@ done
 # ── 组装 pytest 参数 ──
 ARGS=(pytest -p no:cacheprovider -m 'not fuzz')
 if [ "$CHANGED" -eq 1 ]; then
-  ARGS+=(--testmon)                    # 只跑受改动影响用例;与 xdist 同用易冲突 → 走单进程(子集小,够快)
-else
-  ARGS+=(-n auto)                      # 多进程并行
-fi
-if [ "$MODE" = "all" ]; then
-  ARGS+=(--cov=shared --cov=api --cov=scheduler --cov=worker --cov=steps
+  ARGS+=(--testmon)                    # 只跑受改动影响用例(单进程;子集小,秒级)
+elif [ "$MODE" = "all" ]; then
+  # ★-n auto 只给全量:xdist 每 worker 要重导入整个 app,启动开销只有【大用例集】才摊得回;
+  #   单模块(-m,~100 用例)单进程更快(实测 -n auto 让 107 用例 pytest 3.4s→6.4s,负优化)。
+  ARGS+=(-n auto
+         --cov=shared --cov=api --cov=scheduler --cov=worker --cov=steps
          --cov-branch --cov-report=term-missing --cov-fail-under=75)
 fi
+# 单模块 -m / 透传:默认单进程(小集最快,不加 -n auto)
 for mod in "${MODULES[@]}"; do
   ARGS+=(tests/test_"${mod}"*.py)      # host glob(cd $REPO)→ 展开成实文件,与容器 /app/tests 对齐
 done
