@@ -8,6 +8,10 @@ FLORI_VERSION = 语义版本 + 构建短 sha,形如 ``0.2.0+f1d86f0``:
 
 显式 env ``FLORI_VERSION`` 仍可整体覆盖(测试/特殊场景)。
 api / scheduler / worker 三处共用本常量,避免各自读 env 漂移。
+
+注:CI/build 构建期把 pyproject ``version`` 抹成占位 ``0.0.0``(稳 pip 缓存层),故镜像内
+``importlib.metadata`` 读到的语义版本是 ``0.0.0``;真实版本靠 ``FLORI_VERSION`` build-arg → env
+覆盖(上面的分支),故运行时显示仍准。见 docker/base.Dockerfile / ci.yml「稳定 pip 缓存」步。
 """
 
 from __future__ import annotations
