@@ -5,7 +5,8 @@ RUN npm config set registry https://registry.npmmirror.com
 
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# npm 缓存走 BuildKit cache mount(CI buildx / compose 内置 BuildKit 支持):re-build 不重下依赖。
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY . .
 RUN npm run build
 

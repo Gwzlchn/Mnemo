@@ -2,6 +2,10 @@
 
 > 分层验证策略。利用原型产物做测试数据，每步独立验证。
 
+> **唯一入口 `scripts/test.sh`**（跨会话/多 agent 统一,权威规约见 CLAUDE.md §测试规约）:
+> `scripts/test.sh -m <模块>`(快测) / `--changed`(只跑受改动影响) / `--all`(全量+75%门) / `--fe`(前端)。
+> 用常驻热容器免启停税、`-n auto` 并行;全量回归 + 覆盖率门交 CI(`.github/workflows/ci.yml`:unit 3 分片 → coverage-gate)。**别再各写 `docker compose run …`**。
+
 ## 1. 测试金字塔
 
 ```

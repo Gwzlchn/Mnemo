@@ -177,13 +177,23 @@ flori/
 ### 运行时数据
 - 容器内统一 `/data`；NAS 生产用 bind：`FLORI_DATA_DIR=/volume2/DATA/flori`、`MINIO_DATA_DIR=…/minio`、MinIO bucket `flori`；临时产物 `/tmp/flori-work`。**数据永不放进仓库目录树**。（2026-06-24 从 HDD `/volume1` 冷迁到 **NVMe `/volume2`**；Docker 本体[镜像/命名卷如 redis]早在 /volume2。）
 
+### 测试规约（唯一入口 `scripts/test.sh` —— 跨会话/多 agent 统一,权威在此）
+
+> 所有 agent / 会话跑测试【一律走 `scripts/test.sh`】,**不要各写 `docker compose run …`**（命令漂移 + 漏 `-n auto` = 慢）。全容器内(宿主不装依赖),用【常驻热容器 flori-test-warm】免每次启停税;标准 flags(`-p no:cacheprovider -m 'not fuzz' -n auto`)已烤进脚本。
+
+- **入口子命令**：
+  - `scripts/test.sh -m <模块>`  → 只跑相关模块(本地快测,**默认**)。
+  - `scripts/test.sh --changed`  → 只跑受本次改动影响的用例(pytest-testmon,迭代秒级)。
+  - `scripts/test.sh --all`      → 全量 + 覆盖率门 75%(对齐 CI)。
+  - `scripts/test.sh --fe [参数]` → 前端 vitest;`--rebuild`(改了 pyproject `[test]` 依赖后重建镜像)、`--down`(收热容器)。
+- **本地/CI 分工**：本地只跑【新增/相关】用例(`-m` 或 `--changed`);**全量回归 + 覆盖率门(75%) + 前端 vitest 交 CI**（`.github/workflows/ci.yml`:unit **3 分片** → `coverage-gate` 合并判门 → `build-push`;纯文档提交 `paths-ignore` 跳 CI;前端-only 改动不重建后端镜像;schemathesis 独立每日 cron `fuzz.yml`）。
+
 ### 开发 / 测试 / 交付节奏（全容器内,宿主不装依赖）
 - 开发热更新：`docker compose -f docker-compose.dev.yml up -d`
-- 容器内测试（全量）：`docker compose -f docker-compose.test.yml run --rm test`（本地少用,全量回归交给 CI）
+- 容器内测试：**唯一入口 `scripts/test.sh`**（见上 §测试规约;全量 `scripts/test.sh --all` 本地少用,全量回归交 CI）
 - **本地快测 + CI 异步回归 + 即时部署**（提速节奏,务必遵守）：
-  1. 本地只跑【新增 / 直接相关】用例（不跑全量）：
-     `docker compose -f docker-compose.test.yml run --rm test pytest tests/test_<新模块>.py -p no:cacheprovider -q`（前端同理指定 vitest 文件）。
-     全量回归由 **CI 承担**：push/PR 自动跑后端全套 + 覆盖率门(75%) + schemathesis + 前端 vitest（`.github/workflows/ci.yml`）。
+  1. 本地只跑【新增 / 直接相关】用例（不跑全量）：**`scripts/test.sh -m <新模块>`**（或 `--changed` 只跑受影响用例;前端 `scripts/test.sh --fe`）。见 §测试规约。
+     全量回归由 **CI 承担**：push/PR 自动跑后端全套(3 分片) + 覆盖率门(75%) + 前端 vitest（`.github/workflows/ci.yml`);schemathesis 独立每日 cron。
   2. **「本地完成」判定** = 新增用例绿 + 本地 build 对应镜像 +（API 调用 或 Playwright MCP）手验通过。三者绿即算完成。
   3. 完成即：① 按 §提交规范 commit+bump → push main（触发 CI 全量回归,异步）；② **部署**：NAS 即时 recreate 对应容器（本地 build-uptest 镜像,不等 CI）；ECS 边缘**无手动直传**——git push → CI 建 ghcr → Watchtower（120s 轮询）自动 pull+重建（单一路径,不回退,见 §部署）。
   4. **CI 后台红灯 = fix-forward（默认）**：看失败用例 → 补 `fix(scope): …;<版本>` 提交修正 → push 复跑；**不回退**已部署版本。仅当线上功能明显坏才 `scripts/rollback.sh` 回滚。
