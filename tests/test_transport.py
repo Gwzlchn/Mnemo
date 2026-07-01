@@ -428,17 +428,21 @@ class TestGatewayRegister:
 
 class TestGatewayHeartbeat:
     @pytest.mark.asyncio
-    async def test_401_falls_through_to_inner_without_crash(
+    async def test_401_raises_worker_auth_rejected(
         self, redis, db, tmp_path, monkeypatch,
     ):
+        # 心跳被 401(per-worker token 失效)→ 抛 WorkerAuthRejected,交主循环走重注册/退避/6h自杀
+        # (worker 401 自愈,commit 65d18ab);不再 fall-through 到 inner——认证失败优先上抛,inner 不被调。
+        from worker.transport import WorkerAuthRejected
         gw, _ = make_gateway(redis, db, tmp_path)
         gw._client.post.return_value = make_response(status_code=401)
         inner_hb = AsyncMock()
         monkeypatch.setattr(gw._inner, "heartbeat", inner_hb)
 
-        await gw.heartbeat("w1")
+        with pytest.raises(WorkerAuthRejected):
+            await gw.heartbeat("w1")
 
-        inner_hb.assert_awaited_once_with("w1", load=None)
+        inner_hb.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_httpx_error_falls_back_to_inner(
