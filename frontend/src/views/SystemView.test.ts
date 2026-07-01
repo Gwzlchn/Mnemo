@@ -202,7 +202,7 @@ describe('SystemView', () => {
     await flushPromises()
     const t = w.text()
     expect(t).toContain('接入新 Worker')
-    expect(t).toContain('flori:latest')
+    expect(t).toContain('flori-worker:latest')   // 镜像拆分后 = flori-worker(旧 monolith flori:latest 已不存在)
     expect(t).toContain('GATEWAY_URL')
     const mintBtn = w.findAll('button').find(b => b.text().includes('生成接入 token'))
     await mintBtn!.trigger('click')

@@ -326,7 +326,8 @@ async function removeWorker(w: Worker) {
 }
 
 // ── 接入新 Worker（mintToken + docker 命令；折叠 <details>）──
-const IMAGE = import.meta.env.VITE_WORKER_IMAGE || 'ghcr.io/gwzlchn/flori:latest'
+// 镜像拆分后 worker 镜像 = flori-worker(旧 monolith flori:latest 已不存在);接入命令默认用它。
+const IMAGE = import.meta.env.VITE_WORKER_IMAGE || 'ghcr.io/gwzlchn/flori-worker:latest'
 const WORKER_TYPES = ['cpu', 'gpu', 'ai', 'io']
 const TABS = [
   { id: 'gateway', label: '分布式' },
